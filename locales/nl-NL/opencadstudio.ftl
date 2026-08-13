@@ -3190,7 +3190,7 @@ ui =
     .automatically-add-scales = Schalen automatisch toevoegen
     .backwards = Achteruit
     .block-block = Symbool: __ocs_arg_block__
-    .bring-above-object = Boven object brengen
+    .bring-above-object = Naar voorgrond
     .bring-to-front = Breng naar voren
     .building-scene-caches = Bouwen van scène caches...
     .cad-application-for-architecture-engineering = CAD toepassing voor architectuur & engineering
@@ -3291,8 +3291,8 @@ ui =
     .selection-filtering-limit-which-object-types-c =
         Selectiefilter
         Beperk welke objecttypen kunnen worden geselecteerd
-    .send-under-object = Verzenden onder object
-    .send-to-back = Stuur naar achteren
+    .send-under-object = Naar achtergrond
+    .send-to-back = Breng omlaag
     .show-annotation-objects = Annotatieobjecten tonen
     .show-lineweight = Lijndiktes tonen
     .show-lineweight-lwdisplay =
