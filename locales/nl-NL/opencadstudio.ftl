@@ -329,7 +329,7 @@ common =
     .convtosurface-select-a-solid-created-this-sess = CONVTOSURFACE: selecteer een vaste aangemaakte sessie.
     .coords-mode-label = COORDS = __ocs_fmt_0__ (__ocs_fmt_1__)
     .copy-specify-destination-count-copies-so-far-a = COPY Geef de bestemming op [__ocs_arg_count__ kopieën | Reeks | Enter=gereed | basis __ocs_arg_bx__,__ocs_arg_by__]:
-    .cancel = Annuleer
+    .cancel = Annuleren
     .cancel-active-command = Actief commando annuleren
     .cannot-delete-a-style-that-is-current-or-in-us = Kan een huidige of in gebruik zijnde stijl niet verwijderen.
     .cannot-delete-the-model-layout = Kan de modelindeling niet verwijderen.
@@ -406,10 +406,10 @@ common =
     .dim-style = Maatstijl
     .dimension = Bemating
     .dimensions = Bematingen
-    .discard = Gooien
+    .discard = Weggooien
     .discussions = Discussies
     .discussions-load-from-github = Discussies laden van GitHub.
-    .display = Beeldscherm
+    .display = Weergave
     .distance = Afstand
     .donate = Doneren
     .done = Klaar
@@ -2571,7 +2571,7 @@ properties =
     .manual-positions = Handmatige posities
     .map-size = Kaartgrootte
     .mass-properties = Massa-eigenschappen
-    .match = Overeenkomen
+    .match = Matchen
     .material = Materiaal
     .material-details = Materiaaldetails
     .maximum-intensity = Maximale intensiteit
@@ -2951,7 +2951,7 @@ styles =
     .fileassoc-set-to-0-unregistered-as-a-file-hand = FILEASSOC ingesteld op 0
     .fileassoc-registration-failed-e = FILEASSOC: registratie mislukt: __ocs_fmt_0__
     .fileassoc-unregister-failed-e = FILEASSOC: unregister mislukt: __ocs_fmt_0__
-    .findnonpurgeable-named-objects-in-use-not-purg = FINDNONPURGEABLE: benoemde objecten in gebruik (niet te zuiveren):
+    .findnonpurgeable-named-objects-in-use-not-purg = FINDNONPURGEABLE: benoemde objecten in gebruik (niet op te schonen):
     .face-style = Gezichtsstijl
     .font-file-title-case = Lettertypebestand
     .gradians = Graden
@@ -3008,7 +3008,7 @@ styles =
     .pickadd = PICKADD = __ocs_fmt_0__ (__ocs_fmt_1__)
     .pickdrag = PICKDRAG = __ocs_fmt_0__ (__ocs_fmt_1__)
     .purge-all-blocks-layers-linetypes-styles = PURGE [Alle / Blokken / Lagen / Lijntypen / Stijlen]:
-    .purge-nothing-to-purge = PURGE: niets te zuiveren.
+    .purge-nothing-to-purge = PURGE: niets op te schonen.
     .purge-unknown-option-sub-use-all-blocks-layers = PURGE: onbekende optie "__ocs_fmt_0__". Gebruik ALL, BLOCKS, LAYERS, LINETYPES of STYLES.
     .purge-item-s-removed = PURGE: __ocs_fmt_0__ item(s) verwijderd __ocs_fmt_1__.
     .paper-units = Papiereenheden
@@ -3122,7 +3122,7 @@ manage =
         Zuiverbare items
     .load-partial-cui = Gedeeltelijke belasting CUI
     .overkill = Overkill
-    .purge = Zuiveren
+    .purge = Opschonen
     .user-interface =
         Gebruiker
         Interface
