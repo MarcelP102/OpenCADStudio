@@ -83,7 +83,7 @@ impl OpenCADStudio {
                     (grip.origin_world, None)
                 }
                 crate::scene::pick::grip::GripEditMode::Lengthen => {
-                    (grip.origin_world, Some(crate::command::DynRole::Distance))
+                    (grip.origin_world, Some(crate::command::DynRole::Lengthen))
                 }
                 crate::scene::pick::grip::GripEditMode::Radius => {
                     (grip.origin_world, Some(crate::command::DynRole::Radius))
@@ -106,7 +106,15 @@ impl OpenCADStudio {
             });
 
         if let Some((origin, scalar_role)) = grip_input {
-            let wanted_roles: Vec<crate::command::DynRole> = if rectangle_frame.is_some() {
+            let is_arc_endpoint_extend = self.tabs[i].active_grip.as_ref().is_some_and(|grip| {
+                grip.mode == crate::scene::pick::grip::GripEditMode::Lengthen
+                    && matches!(grip.grip_id, 1 | 2)
+                    && self.tabs[i].scene.document.get_entity(grip.handle)
+                        .is_some_and(|entity| matches!(entity, acadrust::EntityType::Arc(_)))
+            });
+            let wanted_roles: Vec<crate::command::DynRole> = if is_arc_endpoint_extend {
+                vec![crate::command::DynRole::Lengthen, crate::command::DynRole::EndpointAngle, crate::command::DynRole::TotalArcLength]
+            } else if rectangle_frame.is_some() {
                 vec![crate::command::DynRole::Width, crate::command::DynRole::Height]
             } else {
                 scalar_role.map_or_else(
@@ -129,7 +137,11 @@ impl OpenCADStudio {
                 self.tabs[i].dyn_active = 0;
             }
 
-            self.tabs[i].dyn_guide = if rectangle_frame.is_some() {
+            self.tabs[i].dyn_guide = if is_arc_endpoint_extend {
+                // The three alternative Extend values belong together; the
+                // overlay renders a `None` guide as one compact TAB-able row.
+                crate::command::DynGuide::None
+            } else if rectangle_frame.is_some() {
                 crate::command::DynGuide::RectSides
             } else if scalar_role.is_some() {
                 crate::command::DynGuide::Radius

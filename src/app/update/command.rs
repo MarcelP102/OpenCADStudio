@@ -332,7 +332,7 @@ pub(super) fn on_tab_close(&mut self, idx: usize) -> Task<Message> {
                 if stale_interactive_grip_prompt {
                     self.grip_pending = None;
                 }
-                if let Some(pending) = self.grip_pending.take() {
+                if let Some(mut pending) = self.grip_pending.take() {
                     let i = self.active_tab;
                     if self.reject_locked_edit(i, pending.handle) {
                         self.cancel_active_grip_edit();
@@ -341,11 +341,31 @@ pub(super) fn on_tab_close(&mut self, idx: usize) -> Task<Message> {
                     // Dynamic Input keeps numeric typing in its focused field.
                     // Fall back to the command-line buffer so the established
                     // prompt workflow remains unchanged when DYN is disabled.
-                    let dyn_value = self.tabs[i]
-                        .dyn_fields
-                        .iter()
-                        .find_map(|field| field.buffer.as_deref());
+                    let active_field = self.tabs[i].dyn_active.min(self.tabs[i].dyn_fields.len().saturating_sub(1));
+                    let dyn_value = self.tabs[i].dyn_fields.get(active_field).and_then(|field| field.buffer.as_deref());
                     let entered = dyn_value.unwrap_or(self.command_line.input.trim());
+                    if pending.action == crate::scene::model::object::GripMenuAction::Lengthen {
+                        use crate::scene::model::object::GripMenuAction as A;
+                        let selected = match entered.trim().to_ascii_uppercase().as_str() {
+                            "L" | "LENGTHEN" => Some(A::Lengthen),
+                            "A" | "ANGLE" => Some(A::EndpointAngle),
+                            "T" | "TOTAL" | "TOTAL LENGTH" => Some(A::TotalArcLength),
+                            _ => None,
+                        };
+                        if let Some(action) = selected {
+                            pending.extend_action = action;
+                            pending.label = match action {
+                                A::EndpointAngle if pending.grip_id == 1 => "Start angle",
+                                A::EndpointAngle => "End angle",
+                                A::TotalArcLength => "Total arc length",
+                                _ => "Lengthen",
+                            };
+                            self.command_line.input.clear();
+                            self.command_line.push_info(crate::tf!("{}:", pending.label).as_ref());
+                            self.grip_pending = Some(pending);
+                            return self.focus_cmd_input();
+                        }
+                    }
                     let raw = crate::app::expr_eval::eval_to_string(entered);
                     self.command_line.input.clear();
                     let Ok(v) = raw.parse::<f64>() else {
@@ -390,9 +410,16 @@ pub(super) fn on_tab_close(&mut self, idx: usize) -> Task<Message> {
                     }
                     use crate::entities::traits::EntityTypeOps;
                     self.push_undo_snapshot(i, pending.label);
+                    let value_action = if pending.action == crate::scene::model::object::GripMenuAction::Lengthen {
+                        self.tabs[i].dyn_fields.get(active_field).map_or(pending.extend_action, |field| match field.role {
+                            crate::command::DynRole::EndpointAngle => crate::scene::model::object::GripMenuAction::EndpointAngle,
+                            crate::command::DynRole::TotalArcLength => crate::scene::model::object::GripMenuAction::TotalArcLength,
+                            _ => crate::scene::model::object::GripMenuAction::Lengthen,
+                        })
+                    } else { pending.action };
                     if let Some(entity) = self.tabs[i].scene.document.get_entity_mut(pending.handle)
                     {
-                        entity.apply_grip_menu_value(pending.grip_id, pending.action, v);
+                        entity.apply_grip_menu_value(pending.grip_id, value_action, v);
                     }
                     // A typed grip-menu value reshapes dimensions too — drop a
                     // stale baked *D block (no-op for non-dims). (#398)
@@ -406,6 +433,7 @@ pub(super) fn on_tab_close(&mut self, idx: usize) -> Task<Message> {
                     self.tabs[i].dirty = true;
                     self.refresh_selected_grips();
                     self.refresh_properties();
+                    self.command_line.set_step_options(Vec::new());
                     return Task::none();
                 }
 
@@ -1030,12 +1058,14 @@ pub(super) fn on_tab_close(&mut self, idx: usize) -> Task<Message> {
                 if self.tabs[self.active_tab].active_grip.is_some() {
                     self.grip_pending = None;
                     self.command_line.input.clear();
+                    self.command_line.set_step_options(Vec::new());
                     if self.cancel_active_grip_edit() {
                         return Task::none();
                     }
                 }
                 if self.grip_pending.take().is_some() {
                     self.command_line.input.clear();
+                    self.command_line.set_step_options(Vec::new());
                     return Task::none();
                 }
                 // A hot grip (click-move-click placement in progress) rolls
@@ -1509,6 +1539,7 @@ pub(super) fn on_tab_close(&mut self, idx: usize) -> Task<Message> {
                         handle: popup.handle,
                         grip_id: popup.grip_id,
                         action: item.action,
+                        extend_action: item.action,
                         label,
                     });
                     if matches!(
@@ -1591,9 +1622,12 @@ pub(super) fn on_tab_close(&mut self, idx: usize) -> Task<Message> {
                         } else if matches!(item.action, GripMenuAction::MoveParallel) {
                             self.command_line.push_info("Specify point or enter parallel offset:");
                         } else {
-                            self.command_line.push_info(
-                                crate::t!("Specify point or enter distance:").as_ref(),
-                            );
+                            self.command_line.push_info("Specify point or enter [Lengthen/Angle/Total length]:");
+                            self.command_line.set_step_options(vec![
+                                crate::command::CmdOption::new("Lengthen", "L"),
+                                crate::command::CmdOption::new("Angle", "A"),
+                                crate::command::CmdOption::new("Total length", "T"),
+                            ]);
                         }
                     } else {
                         self.command_line.push_info(crate::tf!("{label}:").as_ref());

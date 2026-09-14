@@ -104,6 +104,8 @@ pub struct GripPendingValue {
     pub handle: acadrust::Handle,
     pub grip_id: usize,
     pub action: crate::scene::model::object::GripMenuAction,
+    /// Value interpretation selected for the arc endpoint Extend workflow.
+    pub extend_action: crate::scene::model::object::GripMenuAction,
     pub label: &'static str,
 }
 

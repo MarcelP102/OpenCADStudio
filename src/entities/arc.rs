@@ -333,7 +333,7 @@ impl crate::entities::traits::Grippable for Arc {
                     action: GripMenuAction::Stretch,
                 },
                 GripMenuItem {
-                    label: "Lengthen",
+                    label: "Extend",
                     action: GripMenuAction::Lengthen,
                 },
             ],
@@ -354,6 +354,8 @@ impl crate::entities::traits::Grippable for Arc {
             A::Radius => Some("New radius"),
             A::ArcLength => Some("New arc length"),
             A::Lengthen => Some("Distance"),
+            A::EndpointAngle => Some(if _grip_id == 1 { "Start angle" } else { "End angle" }),
+            A::TotalArcLength => Some("Total arc length"),
             _ => None,
         }
     }
@@ -446,6 +448,23 @@ impl crate::entities::traits::Grippable for Arc {
                     _ => {}
                 }
             }
+            A::EndpointAngle if matches!(grip_id, 1 | 2) => {
+                let angle = value.to_radians().rem_euclid(TAU);
+                let next = if grip_id == 1 {
+                    (self.end_angle - angle).rem_euclid(TAU)
+                } else {
+                    (angle - self.start_angle).rem_euclid(TAU)
+                };
+                if next > 1.0e-9 && next < TAU - 1.0e-9 {
+                    if grip_id == 1 { self.start_angle = angle; } else { self.end_angle = angle; }
+                }
+            }
+            A::TotalArcLength if matches!(grip_id, 1 | 2) && value > 0.0 && self.radius > 1.0e-9 => {
+                let span = value / self.radius;
+                if span < TAU - 1.0e-9 {
+                    if grip_id == 1 { self.start_angle = self.end_angle - span; } else { self.end_angle = self.start_angle + span; }
+                }
+            }
             _ => {}
         }
     }
@@ -489,6 +508,23 @@ mod tests {
     use super::*;
     use crate::entities::traits::Grippable;
     use crate::scene::model::object::GripMenuAction;
+
+    #[test]
+    fn endpoint_extend_menu_and_numeric_modes() {
+        let mut arc = Arc::default();
+        arc.radius = 2.0;
+        arc.start_angle = 0.0;
+        arc.end_angle = std::f64::consts::FRAC_PI_2;
+        let menu = arc.grip_menu(2);
+        assert!(menu.iter().any(|item| item.label == "Extend" && item.action == GripMenuAction::Lengthen));
+        assert!(!menu.iter().any(|item| item.label == "Lengthen"));
+        arc.apply_grip_menu_value(2, GripMenuAction::Lengthen, 1.0);
+        assert!((arc.end_angle - (std::f64::consts::FRAC_PI_2 + 0.5)).abs() < 1.0e-9);
+        arc.apply_grip_menu_value(2, GripMenuAction::EndpointAngle, 180.0);
+        assert!((arc.end_angle - std::f64::consts::PI).abs() < 1.0e-9);
+        arc.apply_grip_menu_value(1, GripMenuAction::TotalArcLength, 2.0);
+        assert!((arc.start_angle - (std::f64::consts::PI - 1.0)).abs() < 1.0e-9);
+    }
 
     #[test]
     fn midpoint_grip_drives_radius_and_arc_length_in_entity_plane() {

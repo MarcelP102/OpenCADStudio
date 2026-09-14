@@ -173,6 +173,8 @@ pub struct GripMenuItem {
 pub enum GripMenuAction {
     Stretch,
     Lengthen,
+    EndpointAngle,
+    TotalArcLength,
     Radius,
     ArcLength,
     RectangleWidth,

@@ -1733,6 +1733,20 @@ impl OpenCADStudio {
                 let n = self.tabs[i].dyn_fields.len();
                 if n > 0 {
                     self.tabs[i].dyn_active = (self.tabs[i].dyn_active + 1) % n;
+                    // Arc endpoint Extend exposes three independent scalar
+                    // choices. Keep the shared command-line editor in sync
+                    // with the field TAB just focused, rather than carrying
+                    // the previous field's text into it.
+                    if self.tabs[i].active_grip.as_ref().is_some_and(|grip| {
+                        grip.mode == crate::scene::pick::grip::GripEditMode::Lengthen
+                            && n == 3
+                    }) {
+                        self.command_line.input = self.tabs[i].dyn_fields
+                            [self.tabs[i].dyn_active]
+                            .buffer
+                            .clone()
+                            .unwrap_or_default();
+                    }
                     // TAB locks the value just typed — reshape the rubber-band
                     // to the constrained point now (#356).
                     self.refresh_active_cmd_preview(i);

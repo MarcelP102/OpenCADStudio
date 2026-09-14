@@ -1100,6 +1100,31 @@ bg={bg_ms:.1}ms n={view_count}"
                             offset_from_center(project(height_center)?, 18.0),
                         ))
                     });
+                // Arc endpoint Extend has three alternative representations
+                // of the same edit. Derive each from the actual arc instead of
+                // letting both linear fields reuse the cursor distance.
+                let extend_values = tab.active_grip.as_ref().and_then(|grip| {
+                    if grip.mode != crate::scene::pick::grip::GripEditMode::Lengthen
+                        || !matches!(grip.grip_id, 1 | 2)
+                    {
+                        return None;
+                    }
+                    let acadrust::EntityType::Arc(arc) = tab.scene.document.get_entity(grip.handle)? else {
+                        return None;
+                    };
+                    let sweep = (arc.end_angle - arc.start_angle).rem_euclid(std::f64::consts::TAU);
+                    let total = arc.radius * sweep;
+                    let angle = if grip.grip_id == 1 { arc.start_angle } else { arc.end_angle }
+                        .rem_euclid(std::f64::consts::TAU)
+                        .to_degrees();
+                    let original_total = self.grip_originals.iter().find_map(|(handle, entity)| {
+                        if *handle != grip.handle { return None; }
+                        let acadrust::EntityType::Arc(original) = entity else { return None; };
+                        Some(original.radius * (original.end_angle - original.start_angle)
+                            .rem_euclid(std::f64::consts::TAU))
+                    }).unwrap_or(total);
+                    Some((total - original_total, angle, total))
+                });
                 let boxes: Vec<crate::ui::overlay::DynBox> = tab
                     .dyn_fields
                     .iter()
@@ -1107,6 +1132,15 @@ bg={bg_ms:.1}ms n={view_count}"
                     .map(|(idx, f)| {
                         let value = match (&f.buffer, live) {
                             (Some(b), _) => b.clone(),
+                            (None, _) if extend_values.is_some() => {
+                                let (lengthen, angle, total) = extend_values.unwrap();
+                                match f.role {
+                                    crate::command::DynRole::Lengthen => format!("{lengthen:.4}"),
+                                    crate::command::DynRole::EndpointAngle => format!("{angle:.1}"),
+                                    crate::command::DynRole::TotalArcLength => format!("{total:.4}"),
+                                    _ => String::new(),
+                                }
+                            }
                             (None, _) if rectangle_values.is_some() => {
                                 let (width, height) = rectangle_values.unwrap();
                                 match f.role {

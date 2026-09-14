@@ -853,6 +853,7 @@ mod marquee_cancel_tests {
             handle,
             grip_id: 1,
             action: GripMenuAction::Radius,
+            extend_action: GripMenuAction::Radius,
             label: "New radius",
         });
         app.command_line.input = "5".to_string();

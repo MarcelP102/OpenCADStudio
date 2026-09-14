@@ -2828,14 +2828,31 @@ impl DynInputCanvas {
 
     fn box_content(b: &DynBox) -> String {
         match b.role {
-            DynRole::Angle => format!("{}\u{00B0}", b.value),
+            DynRole::Angle | DynRole::EndpointAngle => format!("{}\u{00B0}", b.value),
             _ if b.label.is_empty() => b.value.clone(),
             _ => format!("{}{}", b.label, b.value),
         }
     }
 
+    /// Approximate the shaped text advance closely enough for the compact
+    /// numeric editor. Counting UTF-8 bytes made labels such as `ΔL` and `∠`
+    /// artificially wide, while a single fixed character width left short
+    /// decimal values with unnecessary empty space.
+    fn display_text_width(text: &str) -> f32 {
+        text.chars()
+            .map(|c| match c {
+                '.' | ',' | ':' => DYN_FONT * 0.32,
+                '-' | '+' => DYN_FONT * 0.48,
+                '1' => DYN_FONT * 0.52,
+                '0'..='9' => DYN_FONT * 0.60,
+                '°' => DYN_FONT * 0.45,
+                _ => DYN_CHAR_W,
+            })
+            .sum()
+    }
+
     fn box_width(b: &DynBox) -> f32 {
-        (Self::box_content(b).len() as f32 * DYN_CHAR_W) + DYN_PAD * 2.0
+        Self::display_text_width(&Self::box_content(b)) + DYN_PAD * 2.0
     }
 
     /// Draw a value box centred at `center`, clamped inside `bounds`.
@@ -3124,7 +3141,7 @@ impl DynInputCanvas {
         // ── Box placement by role ──
         for b in &self.boxes {
             let center = b.center.unwrap_or_else(|| match b.role {
-                DynRole::Angle => self.label_screen.unwrap_or_else(|| {
+                DynRole::Angle | DynRole::EndpointAngle => self.label_screen.unwrap_or_else(|| {
                     let a_mid = a_ref + sweep * 0.5;
                     let r = (len - DYN_BOX_H * 2.0).max(len * 0.5);
                     Point {
@@ -3147,6 +3164,10 @@ impl DynInputCanvas {
                         corner.x + 18.0
                     },
                     y: (base.y + cursor.y) * 0.5,
+                },
+                DynRole::TotalArcLength => Point {
+                    x: base.x + dx * len * 0.5 - nx * 16.0,
+                    y: base.y + dy * len * 0.5 - ny * 16.0,
                 },
                 // Perpendicular measure: on the measured segment / dim line.
                 _ if matches!(self.guide, DynGuide::Perp | DynGuide::PerpDim)
@@ -3199,7 +3220,9 @@ impl DynInputCanvas {
             .boxes
             .iter()
             .map(|b| {
-                if b.label.is_empty() {
+                if b.role == DynRole::EndpointAngle {
+                    format!("{}:{}\u{00B0}", b.label, b.value)
+                } else if b.label.is_empty() {
                     b.value.clone()
                 } else {
                     format!("{}:{}", b.label, b.value)
@@ -3208,7 +3231,7 @@ impl DynInputCanvas {
             .collect();
         let widths: Vec<f32> = texts
             .iter()
-            .map(|t| (t.len() as f32 * DYN_CHAR_W) + DYN_PAD * 2.0)
+            .map(|t| Self::display_text_width(t) + DYN_PAD * 2.0)
             .collect();
         let total_w: f32 =
             widths.iter().sum::<f32>() + DYN_GAP * (self.boxes.len() as f32 - 1.0);

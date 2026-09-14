@@ -1856,6 +1856,12 @@ pub enum DynRole {
     Z,
     /// Linear distance from the anchor.
     Distance,
+    /// Arc-endpoint extension amount (arc-length units).
+    Lengthen,
+    /// Absolute start/end angle of an arc, in degrees.
+    EndpointAngle,
+    /// Total arc length.
+    TotalArcLength,
     /// Angle from the anchor, degrees.
     Angle,
     /// Distance shown labelled `R` (circle/arc radius).
@@ -1898,6 +1904,9 @@ impl DynRole {
             DynRole::Y => "Y",
             DynRole::Z => "Z",
             DynRole::Distance | DynRole::Angle | DynRole::Factor => "",
+            DynRole::Lengthen => "ΔL",
+            DynRole::EndpointAngle => "∠",
+            DynRole::TotalArcLength => "L",
             DynRole::Radius => "R",
             DynRole::Diameter => "\u{2300}",
             DynRole::Width => "W",

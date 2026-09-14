@@ -83,8 +83,8 @@ pub(super) fn component_for_role(role: crate::command::DynRole) -> DynComponent 
         DynRole::X | DynRole::Width => DynComponent::X,
         DynRole::Y | DynRole::Height => DynComponent::Y,
         DynRole::Z => DynComponent::Z,
-        DynRole::Distance | DynRole::Radius | DynRole::Diameter => DynComponent::Distance,
-        DynRole::Angle => DynComponent::Angle,
+        DynRole::Distance | DynRole::Lengthen | DynRole::TotalArcLength | DynRole::Radius | DynRole::Diameter => DynComponent::Distance,
+        DynRole::Angle | DynRole::EndpointAngle => DynComponent::Angle,
         DynRole::Factor | DynRole::Count => DynComponent::Scalar,
     }
 }
