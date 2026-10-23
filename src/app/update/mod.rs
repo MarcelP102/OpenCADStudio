@@ -100,6 +100,8 @@ fn reorder_insertion_index(from: usize, to: usize, after: bool, len: usize) -> O
 
 #[cfg(test)]
 mod block_ops_tests;
+#[cfg(test)]
+mod placement_perf_probe;
 mod blocks_palette;
 mod command;
 mod context_menu;
