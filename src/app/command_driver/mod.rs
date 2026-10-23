@@ -886,6 +886,8 @@ impl OpenCADStudio {
                     ) {
                         return task;
                     }
+                    // Keep the next exploded block's ghost under the cursor.
+                    self.refresh_active_cmd_preview(i);
                 } else {
                     self.handle_commit_entities_and_exit(
                         pieces,

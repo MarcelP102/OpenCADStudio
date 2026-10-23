@@ -1,8 +1,13 @@
-//! Timing probe for the per-placement delay seen when placing blocks
-//! repeatedly from the Blocks palette, and when copying / moving a block.
-//! Run with:
+//! Repeated block placement: the per-click delay seen when placing blocks
+//! from the Blocks palette with Repeat on, and when copying a block.
+//!
+//! `placement_perf_probe` is a timing probe, not an assertion test: it prints
+//! where the time goes per click. Run it with:
 //!   PERF=1 cargo test --lib placement_perf_probe -- --nocapture --test-threads=1
-//! Not an assertion test: it prints where the time goes per click.
+//!
+//! The other tests pin the fix: a repeating placement or COPY keeps the next
+//! ghost under the cursor after each click instead of blanking it until the
+//! pointer moves again.
 
 use crate::app::OpenCADStudio;
 use crate::command::StepInput;
@@ -71,7 +76,8 @@ fn drawing(n: usize) -> OpenCADStudio {
     let texts: Vec<EntityType> = (0..n / 20)
         .map(|k| {
             let mut t = Text::new();
-            t.insertion_point = Vector3::new((k % 100) as f64 * 9.0, -900.0 - (k / 100) as f64 * 4.0, 0.0);
+            t.insertion_point =
+                Vector3::new((k % 100) as f64 * 9.0, -900.0 - (k / 100) as f64 * 4.0, 0.0);
             t.height = 2.0;
             t.value = format!("T{k}");
             EntityType::Text(t)
@@ -116,75 +122,185 @@ fn placement_perf_probe() {
         let _ = app.dispatch_command("LINE");
         click(&mut app, "line start", DVec3::new(0.0, -50.0, 0.0));
         for k in 1..5 {
-            click(&mut app, "line seg", DVec3::new(10.0 * k as f64, -50.0, 0.0));
+            click(
+                &mut app,
+                "line seg",
+                DVec3::new(10.0 * k as f64, -50.0, 0.0),
+            );
         }
 
         for block in ["B", "BT"] {
-        eprintln!("--- block {block} ---");
-        // Blocks palette, repeat on.
-        let mut app = drawing(n);
+            eprintln!("--- block {block} ---");
+            // Blocks palette, repeat on.
+            let mut app = drawing(n);
+            app.block_palette.options.repeat = true;
+            app.block_palette.options.insertion_point = true;
+            app.block_palette.options.scale = false;
+            app.block_palette.options.rotation = false;
+            app.start_block_placement(block);
+            for k in 0..5 {
+                click(
+                    &mut app,
+                    "palette place",
+                    DVec3::new(20.0 * k as f64, -100.0, 0.0),
+                );
+            }
+            {
+                let i = app.active_tab;
+                let ins = app.tabs[i]
+                    .scene
+                    .document
+                    .entities()
+                    .filter(|e| matches!(e, EntityType::Insert(_)))
+                    .map(|e| e.common().handle)
+                    .last();
+                if let Some(h) = ins {
+                    let w = app.tabs[i].scene.wire_models_for(&[h]);
+                    eprintln!(
+                        "[probe] insert wires={} instanced={} with_text={} with_fill={} names={:?}",
+                        w.len(),
+                        w.iter().filter(|w| w.render_instance.is_some()).count(),
+                        w.iter().filter(|w| !w.text_verts.is_empty()).count(),
+                        w.iter().filter(|w| !w.fill_tris.is_empty()).count(),
+                        w.iter().take(3).map(|w| w.name.clone()).collect::<Vec<_>>(),
+                    );
+                }
+            }
+            let t = Instant::now();
+            let cfg = app.current_config();
+            let json = serde_json::to_string_pretty(&cfg).unwrap_or_default();
+            eprintln!(
+                "[probe] settings.json build+serialize={:.2}ms bytes={}",
+                ms(t),
+                json.len()
+            );
+
+            // COPY of one INSERT, multiple placements.
+            let i = app.active_tab;
+            let _ = app.feed_command(StepInput::Enter);
+            let insert = app.tabs[i]
+                .scene
+                .document
+                .entities()
+                .find_map(|e| matches!(e, EntityType::Insert(_)).then(|| e.common().handle))
+                .expect("an INSERT");
+            app.tabs[i].scene.deselect_all();
+            app.tabs[i].scene.select_entity(insert, true);
+            let _ = app.dispatch_command("COPY");
+            click(&mut app, "copy base", DVec3::new(0.0, -100.0, 0.0));
+            for k in 1..5 {
+                click(
+                    &mut app,
+                    "copy place",
+                    DVec3::new(15.0 * k as f64, -150.0, 0.0),
+                );
+            }
+            let _ = app.feed_command(StepInput::Enter);
+
+            // MOVE of one INSERT.
+            app.tabs[i].scene.deselect_all();
+            app.tabs[i].scene.select_entity(insert, true);
+            let _ = app.dispatch_command("MOVE");
+            click(&mut app, "move base", DVec3::new(0.0, -100.0, 0.0));
+            click(&mut app, "move place", DVec3::new(5.0, -300.0, 0.0));
+        }
+    }
+}
+
+/// The cursor sits on `p` with the command's preview drawn, then clicks.
+/// Returns the preview wire count before and right after the click.
+fn preview_around_click(app: &mut OpenCADStudio, p: DVec3) -> (usize, usize) {
+    let i = app.active_tab;
+    app.tabs[i].last_cursor_world = p;
+    app.refresh_active_cmd_preview(i);
+    let before = app.tabs[i].scene.preview_wires.len();
+    let _ = app.feed_command(StepInput::Point(p));
+    (before, app.tabs[i].scene.preview_wires.len())
+}
+
+#[test]
+fn repeat_palette_placement_keeps_the_ghost_after_each_click() {
+    for block in ["B", "BT"] {
+        let mut app = drawing(200);
         app.block_palette.options.repeat = true;
         app.block_palette.options.insertion_point = true;
         app.block_palette.options.scale = false;
         app.block_palette.options.rotation = false;
-        app.start_block_placement(block);
-        for k in 0..5 {
-            click(&mut app, "palette place", DVec3::new(20.0 * k as f64, -100.0, 0.0));
-        }
-        {
-            let i = app.active_tab;
-            let ins = app.tabs[i]
+        let inserts = |app: &OpenCADStudio| {
+            app.tabs[app.active_tab]
                 .scene
                 .document
                 .entities()
                 .filter(|e| matches!(e, EntityType::Insert(_)))
-                .map(|e| e.common().handle)
-                .last();
-            if let Some(h) = ins {
-                let w = app.tabs[i].scene.wire_models_for(&[h]);
-                eprintln!(
-                    "[probe] insert wires={} instanced={} with_text={} with_fill={} names={:?}",
-                    w.len(),
-                    w.iter().filter(|w| w.render_instance.is_some()).count(),
-                    w.iter().filter(|w| !w.text_verts.is_empty()).count(),
-                    w.iter().filter(|w| !w.fill_tris.is_empty()).count(),
-                    w.iter().take(3).map(|w| w.name.clone()).collect::<Vec<_>>(),
-                );
-            }
+                .count()
+        };
+        let existing = inserts(&app);
+        app.start_block_placement(block);
+        for k in 0..3 {
+            let (before, after) =
+                preview_around_click(&mut app, DVec3::new(20.0 * k as f64, -100.0, 0.0));
+            assert!(before > 0, "{block}: ghost drawn before click {k}");
+            assert_eq!(after, before, "{block}: ghost stays after click {k}");
         }
-        let t = Instant::now();
-        let cfg = app.current_config();
-        let json = serde_json::to_string_pretty(&cfg).unwrap_or_default();
-        eprintln!(
-            "[probe] settings.json build+serialize={:.2}ms bytes={}",
-            ms(t),
-            json.len()
+        assert_eq!(
+            inserts(&app) - existing,
+            3,
+            "{block}: every click placed one block"
         );
-
-        // COPY of one INSERT, multiple placements.
-        let i = app.active_tab;
-        let _ = app.feed_command(StepInput::Enter);
-        let insert = app.tabs[i]
-            .scene
-            .document
-            .entities()
-            .find_map(|e| matches!(e, EntityType::Insert(_)).then(|| e.common().handle))
-            .expect("an INSERT");
-        app.tabs[i].scene.deselect_all();
-        app.tabs[i].scene.select_entity(insert, true);
-        let _ = app.dispatch_command("COPY");
-        click(&mut app, "copy base", DVec3::new(0.0, -100.0, 0.0));
-        for k in 1..5 {
-            click(&mut app, "copy place", DVec3::new(15.0 * k as f64, -150.0, 0.0));
-        }
-        let _ = app.feed_command(StepInput::Enter);
-
-        // MOVE of one INSERT.
-        app.tabs[i].scene.deselect_all();
-        app.tabs[i].scene.select_entity(insert, true);
-        let _ = app.dispatch_command("MOVE");
-        click(&mut app, "move base", DVec3::new(0.0, -100.0, 0.0));
-        click(&mut app, "move place", DVec3::new(5.0, -300.0, 0.0));
-        }
     }
+}
+
+#[test]
+fn repeat_exploded_palette_placement_keeps_the_ghost() {
+    let mut app = drawing(200);
+    app.block_palette.options.repeat = true;
+    app.block_palette.options.explode = true;
+    app.block_palette.options.insertion_point = true;
+    app.block_palette.options.scale = false;
+    app.block_palette.options.rotation = false;
+    app.start_block_placement("B");
+    for k in 0..2 {
+        let (before, after) =
+            preview_around_click(&mut app, DVec3::new(20.0 * k as f64, -100.0, 0.0));
+        assert!(before > 0);
+        assert_eq!(after, before, "ghost stays after exploded click {k}");
+    }
+}
+
+#[test]
+fn multiple_copy_keeps_the_ghost_after_each_placement() {
+    let mut app = drawing(200);
+    let i = app.active_tab;
+    app.start_block_placement("B");
+    let _ = app.feed_command(StepInput::Point(DVec3::new(0.0, -100.0, 0.0)));
+    let insert = app.tabs[i]
+        .scene
+        .document
+        .entities()
+        .find_map(|e| matches!(e, EntityType::Insert(_)).then(|| e.common().handle))
+        .expect("an INSERT");
+    app.tabs[i].scene.deselect_all();
+    app.tabs[i].scene.select_entity(insert, true);
+    let _ = app.dispatch_command("COPY");
+    let _ = app.feed_command(StepInput::Point(DVec3::new(0.0, -100.0, 0.0)));
+    for k in 1..4 {
+        let (before, after) =
+            preview_around_click(&mut app, DVec3::new(15.0 * k as f64, -150.0, 0.0));
+        assert!(before > 0, "ghost drawn before copy {k}");
+        assert_eq!(after, before, "ghost stays after copy {k}");
+    }
+}
+
+#[test]
+fn single_palette_placement_still_clears_the_ghost() {
+    let mut app = drawing(200);
+    app.block_palette.options.repeat = false;
+    app.block_palette.options.insertion_point = true;
+    app.block_palette.options.scale = false;
+    app.block_palette.options.rotation = false;
+    app.start_block_placement("B");
+    let (before, after) = preview_around_click(&mut app, DVec3::new(0.0, -100.0, 0.0));
+    assert!(before > 0);
+    assert_eq!(after, 0, "the command ended, so no ghost is left behind");
+    assert!(app.tabs[app.active_tab].active_cmd.is_none());
 }

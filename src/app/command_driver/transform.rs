@@ -71,6 +71,9 @@ impl OpenCADStudio {
         if let Some(pd) = pending {
             self.commit_undo_delta(i, pd);
         }
+        // COPY keeps going: redraw the next copy's ghost at the cursor now,
+        // instead of leaving it blank until the pointer moves again.
+        self.refresh_active_cmd_preview(i);
         None
     }
 

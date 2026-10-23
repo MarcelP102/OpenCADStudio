@@ -1142,6 +1142,11 @@ impl OpenCADStudio {
                 if let Some(pd) = pending {
                     self.commit_undo_delta(i, pd);
                 }
+                // Redraw the next block's ghost under the cursor now, instead
+                // of leaving it blank until the pointer moves again.
+                if keep {
+                    self.refresh_active_cmd_preview(i);
+                }
             }
         } else {
             // Attributes are placed through the same base-point convention as
