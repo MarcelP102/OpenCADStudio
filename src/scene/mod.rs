@@ -954,6 +954,9 @@ pub(crate) struct ResidentWireLayout {
     /// Entity handles in final submission order. A temporarily hidden entity
     /// remains here with no range so grip commit can restore it in place.
     order: Vec<Handle>,
+    /// The same handles as `order`, for O(1) membership. Kept in step with
+    /// `order` so a patch never rebuilds it from the whole drawing.
+    order_set: HashSet<Handle>,
     /// Flat wire range `(start, len)` for each currently visible entity.
     ranges: HashMap<Handle, (usize, usize)>,
     /// Blanked ranges retained in the flat Vec. Undo/Redo and grip hide/show can
@@ -2798,6 +2801,10 @@ pub struct Scene {
     pub(crate) has_underlays: std::cell::Cell<Option<bool>>,
     /// Conservative hint for whether any Face3D entities exist in the document.
     pub(crate) has_face3d: std::cell::Cell<Option<bool>>,
+    /// Conservative hint for whether any section object (SECTIONPLANE) exists
+    /// in the document. `Some(false)` lets the per-edit live-section lookup
+    /// skip its scan of every entity; `None` re-scans once.
+    has_section_objects: std::cell::Cell<Option<bool>>,
     /// Cached resolved document render environment (fog and background image), keyed by (geometry_epoch, document.objects.len()).
     document_render_env_cache: RefCell<
         Option<(
@@ -3227,6 +3234,7 @@ impl Scene {
             has_associative_centers: std::cell::Cell::new(None),
             has_underlays: std::cell::Cell::new(None),
             has_face3d: std::cell::Cell::new(None),
+            has_section_objects: std::cell::Cell::new(None),
             document_render_env_cache: RefCell::new(None),
             background_image_cache: RefCell::new(HashMap::default()),
             block_defn_cache: RefCell::new(HashMap::default()),
@@ -4305,6 +4313,24 @@ impl Scene {
         }) {
             self.has_face3d.set(Some(true));
         }
+        // A removal may take the last section object away (re-scan once);
+        // an added or edited one makes the hint true.
+        if self.has_section_objects.get() == Some(true)
+            && changes
+                .iter()
+                .any(|(_, kind)| matches!(kind, ChangeKind::Removed))
+        {
+            self.has_section_objects.set(None);
+        }
+        if self.has_section_objects.get() == Some(false)
+            && changes.iter().any(|(handle, _)| {
+                self.document
+                    .get_entity(*handle)
+                    .is_some_and(Self::is_section_object)
+            })
+        {
+            self.has_section_objects.set(Some(true));
+        }
         let epoch = GEOMETRY_EPOCH.fetch_add(1, Ordering::Relaxed);
         self.geometry_epoch = epoch;
         self.invalidate_projection_bounds();
@@ -4376,6 +4402,7 @@ impl Scene {
         self.background_image_cache.borrow_mut().clear();
         self.has_underlays.set(None);
         self.has_face3d.set(None);
+        self.has_section_objects.set(None);
         // Default: also invalidate block definitions. Safe for every caller;
         // operations that know blocks are untouched use `bump_geometry_no_blocks`.
         self.block_epoch = GEOMETRY_EPOCH.fetch_add(1, Ordering::Relaxed);
@@ -4478,6 +4505,7 @@ impl Scene {
         *self.document_render_env_cache.borrow_mut() = None;
         self.background_image_cache.borrow_mut().clear();
         self.has_face3d.set(None);
+        self.has_section_objects.set(None);
         self.invalidate_dependency_index();
         self.push_geometry_delta(epoch, Vec::new(), true);
     }
@@ -7796,6 +7824,44 @@ impl Scene {
         };
     }
 
+    /// [`Self::bind_memo_to_set`] for a patch that edited the backing set in
+    /// place. Every run outside `changes` kept its range, and the previous
+    /// bind already marked it `InSet`, so only the changed handles are
+    /// rebound. Matches the full rebind: a changed handle with a run in
+    /// `ranges` is `InSet`; one without loses a `Pending` or `InSet` run (the
+    /// old set it pointed into is the one just patched), and keeps an `Owned`
+    /// copy.
+    fn rebind_memo_changes(
+        &self,
+        set: &Arc<Vec<WireModel>>,
+        ranges: &HashMap<Handle, (usize, usize)>,
+        changes: &[(Handle, ChangeKind)],
+    ) {
+        let mut backing = self.resident_memo_backing.borrow_mut();
+        backing.set = Arc::downgrade(set);
+        backing.keep = None;
+        let mut memo = self.resident_tess_memo.borrow_mut();
+        for &(handle, _) in changes {
+            match ranges.get(&handle) {
+                Some(&range) => {
+                    backing.ranges.insert(handle, range);
+                    if let Some(run) = memo.get_mut(&handle) {
+                        *run = MemoRun::InSet;
+                    }
+                }
+                None => {
+                    backing.ranges.remove(&handle);
+                    if matches!(
+                        memo.get(&handle),
+                        Some(MemoRun::InSet | MemoRun::Pending)
+                    ) {
+                        memo.remove(&handle);
+                    }
+                }
+            }
+        }
+    }
+
     /// Give every `InSet` run a copy of its own and drop the backing, before
     /// a build whose set will not match the memo.
     fn detach_memo_backing(&self) {
@@ -7827,8 +7893,38 @@ impl Scene {
         backing.keep = Some(keep);
     }
 
+    /// Whether every `added` handle comes after the last visible (ranged)
+    /// older entity in submission `order`, so the GPU arena can append them.
+    /// Walks back from the end until that older entity: the cost is the tail
+    /// of `order`, not the whole drawing, and the result equals the forward
+    /// scan "no ranged non-added handle follows an added one".
+    fn added_handles_are_suffix(
+        order: &[Handle],
+        order_set: &HashSet<Handle>,
+        ranges: &HashMap<Handle, (usize, usize)>,
+        added: &HashSet<Handle>,
+    ) -> bool {
+        let in_order = added
+            .iter()
+            .filter(|handle| order_set.contains(handle))
+            .count();
+        let mut seen = 0;
+        for handle in order.iter().rev() {
+            if seen == in_order {
+                break;
+            }
+            if added.contains(handle) {
+                seen += 1;
+            } else if ranges.contains_key(handle) {
+                break;
+            }
+        }
+        seen == in_order
+    }
+
     fn resident_wire_layout(wires: &[WireModel]) -> Option<ResidentWireLayout> {
         let mut order = Vec::new();
+        let mut order_set = HashSet::default();
         let mut ranges = HashMap::default();
         let mut current: Option<(Handle, usize)> = None;
         let mut marker_start = wires.len();
@@ -7859,6 +7955,7 @@ impl Scene {
                     return None;
                 }
                 order.push(handle);
+                order_set.insert(handle);
                 current = Some((handle, index));
             }
         }
@@ -7872,6 +7969,7 @@ impl Scene {
         }
         Some(ResidentWireLayout {
             order,
+            order_set,
             ranges,
             vacant: HashMap::default(),
             tombstoned_wires: 0,
@@ -7948,9 +8046,17 @@ impl Scene {
                     .ptr_eq(&Arc::downgrade(&entry.wires));
             (entry.epoch, backed_here)
         };
-        let Some(deltas) = self.replay_since(cached_epoch) else {
+        let Some(mut deltas) = self.replay_since(cached_epoch) else {
             return declined("journal-too-old");
         };
+        // The journal folds changes through a hash map, so their order is
+        // arbitrary. New handles must be appended in submission order: one
+        // spliced in ahead of a lower new handle leaves that one mid-set, and
+        // the patch below then gives up for a full rebuild. Several entities
+        // added before one frame (exploded placement, paste, multi-object
+        // COPY) hit that on most edits. Handle order is the submission order
+        // of anything without a SortEntitiesTable entry.
+        deltas.sort_unstable_by_key(|(handle, _)| handle.value());
 
         // Take ownership of the cached assembly (guaranteed unique above).
         // `prev_gen` is the content id the GPU currently holds for this set — the
@@ -8097,20 +8203,16 @@ impl Scene {
                     .copied()
                     .unwrap_or(handle.value())
             };
-            // Hashed once: a linear `order.contains` per re-shown entity made
-            // turning a big layer back on quadratic.
-            let ordered: HashSet<Handle> = if visible_changed.is_empty() {
-                HashSet::default()
-            } else {
-                layout.order.iter().copied().collect()
-            };
+            // `order_set` mirrors `order`: a linear `order.contains` per
+            // re-shown entity made turning a big layer back on quadratic, and
+            // rebuilding the set per patch cost a whole-drawing pass per edit.
             for &(handle, kind) in &deltas {
                 if matches!(kind, ChangeKind::Removed) {
                     // Keep the order entry as a tombstone. Undo/Redo can then
                     // restore the exact physical slot and submission position.
                     continue;
                 }
-                if visible_changed.contains(&handle) && !ordered.contains(&handle) {
+                if visible_changed.contains(&handle) && layout.order_set.insert(handle) {
                     let key = effective(handle);
                     let position = layout
                         .order
@@ -8258,16 +8360,12 @@ impl Scene {
             .iter()
             .filter_map(|&(handle, kind)| matches!(kind, ChangeKind::Added).then_some(handle))
             .collect();
-        let mut saw_added = false;
-        let mut new_handles_are_suffix = true;
-        for handle in &layout.order {
-            if added.contains(handle) {
-                saw_added = true;
-            } else if saw_added && layout.ranges.contains_key(handle) {
-                new_handles_are_suffix = false;
-                break;
-            }
-        }
+        let new_handles_are_suffix = Self::added_handles_are_suffix(
+            &layout.order,
+            &layout.order_set,
+            &layout.ranges,
+            &added,
+        );
         let face_pass_changed = old_face_pass_changed
             || deltas.iter().any(|&(handle, _)| {
                 matches!(
@@ -8313,7 +8411,15 @@ impl Scene {
             *pending = combined;
         }
         if shareable {
-            self.bind_memo_to_set(&arc, &layout.ranges);
+            if backed_here {
+                // The patch edited the memo's own backing set in place: only
+                // the changed handles moved, so rebinding just them keeps the
+                // memo exactly as a full rebind would, without a pass over
+                // every entity per edit.
+                self.rebind_memo_changes(&arc, &layout.ranges, &deltas);
+            } else {
+                self.bind_memo_to_set(&arc, &layout.ranges);
+            }
         }
         let cur_epoch = self.geometry_epoch;
         let mut sets = self.resident_wire_sets.borrow_mut();
@@ -9437,7 +9543,32 @@ impl Scene {
         all
     }
 
+    fn is_section_object(entity: &EntityType) -> bool {
+        matches!(
+            entity,
+            EntityType::Extended(extended) if matches!(
+                extended.data,
+                codec::entities::ExtendedEntityData::SectionObject(_)
+            )
+        )
+    }
+
+    /// Whether the document holds any section object, cached between edits.
+    fn has_section_objects(&self) -> bool {
+        if let Some(known) = self.has_section_objects.get() {
+            return known;
+        }
+        let any = self.document.entities().any(Self::is_section_object);
+        self.has_section_objects.set(Some(any));
+        any
+    }
+
     fn active_live_section(&self, target_block: Handle) -> Option<LiveSection> {
+        // Most drawings have no section planes: skip the scan of every entity
+        // that each edit's resident-set patch would otherwise pay.
+        if !self.has_section_objects() {
+            return None;
+        }
         self.document
             .entities()
             .filter_map(|entity| {
@@ -14363,6 +14494,187 @@ mod section_tests {
         let (min, max) = bounds(clipped);
         assert_near(min, [0.0, 0.0, 0.0]);
         assert_near(max, [5.0, 10.0, 10.0]);
+    }
+
+    #[test]
+    fn live_section_hint_follows_adds_and_erases() {
+        let mut scene = Scene::new();
+        let model = scene.model_space_block_handle();
+        let mut l = codec::entities::Line::new();
+        l.end = Vector3::new(10.0, 0.0, 0.0);
+        scene.add_entity(EntityType::Line(l));
+        assert!(scene.active_live_section(model).is_none());
+        assert_eq!(scene.has_section_objects.get(), Some(false), "scanned once");
+
+        let plane = scene.add_entity(EntityType::Extended(Box::new(ExtendedEntity {
+            common: EntityCommon::new(),
+            data: ExtendedEntityData::SectionObject(section(1, 0.0)),
+        })));
+        assert!(
+            scene.active_live_section(model).is_some(),
+            "a section plane added after the scan is found"
+        );
+
+        scene.erase_entities(&[plane]);
+        assert!(
+            scene.active_live_section(model).is_none(),
+            "the erased plane no longer sections"
+        );
+        assert_eq!(scene.has_section_objects.get(), Some(false));
+    }
+}
+
+#[cfg(test)]
+mod resident_patch_tests {
+    //! The per-edit resident patch must leave the tessellation memo exactly as
+    //! a full rebind would, while touching only the changed entities.
+    use super::*;
+    use crate::command::EntityTransform;
+    use codec::entities::Line;
+    use codec::types::Vector3;
+    use glam::DVec3;
+
+    fn line(x: f64, y: f64) -> EntityType {
+        let mut l = Line::new();
+        l.start = Vector3::new(x, y, 0.0);
+        l.end = Vector3::new(x + 2.0, y + 1.0, 0.0);
+        EntityType::Line(l)
+    }
+
+    type MemoState = (Vec<(u64, u8)>, Vec<(u64, (usize, usize))>, bool);
+
+    fn memo_state(scene: &Scene, set: &Arc<Vec<WireModel>>) -> MemoState {
+        let mut runs: Vec<(u64, u8)> = scene
+            .resident_tess_memo
+            .borrow()
+            .iter()
+            .map(|(h, run)| {
+                let kind = match run {
+                    MemoRun::Owned(_) => 0,
+                    MemoRun::InSet => 1,
+                    MemoRun::Pending => 2,
+                };
+                (h.value(), kind)
+            })
+            .collect();
+        runs.sort_unstable();
+        let backing = scene.resident_memo_backing.borrow();
+        let mut ranges: Vec<(u64, (usize, usize))> =
+            backing.ranges.iter().map(|(h, r)| (h.value(), *r)).collect();
+        ranges.sort_unstable();
+        let bound = backing.set.upgrade().is_some_and(|b| Arc::ptr_eq(&b, set));
+        (runs, ranges, bound)
+    }
+
+    /// Rebuild the resident set the way a frame would, check it came from a
+    /// patch, and check the memo equals what a full rebind produces.
+    fn patch_and_check(scene: &Scene, what: &str) {
+        let hits = scene.resident_patch_hits.get();
+        drop(scene.hit_test_wires());
+        assert_eq!(
+            scene.resident_patch_hits.get(),
+            hits + 1,
+            "{what}: the edit took the patch path"
+        );
+        let (set, ranges) = {
+            let sets = scene.resident_wire_sets.borrow();
+            let entry = sets
+                .values()
+                .find(|entry| entry.epoch == scene.geometry_epoch && entry.layout.is_some())
+                .expect("a current resident set");
+            (
+                Arc::clone(&entry.wires),
+                entry.layout.as_ref().unwrap().ranges.clone(),
+            )
+        };
+        let patched = memo_state(scene, &set);
+        assert!(patched.2, "{what}: the memo is backed by the patched set");
+        scene.bind_memo_to_set(&set, &ranges);
+        assert_eq!(
+            patched,
+            memo_state(scene, &set),
+            "{what}: incremental rebind equals a full rebind"
+        );
+    }
+
+    /// The forward scan `added_handles_are_suffix` replaced.
+    fn suffix_forward(
+        order: &[Handle],
+        ranges: &HashMap<Handle, (usize, usize)>,
+        added: &HashSet<Handle>,
+    ) -> bool {
+        let mut saw_added = false;
+        for handle in order {
+            if added.contains(handle) {
+                saw_added = true;
+            } else if saw_added && ranges.contains_key(handle) {
+                return false;
+            }
+        }
+        true
+    }
+
+    #[test]
+    fn suffix_check_from_the_tail_matches_the_forward_scan() {
+        // Deterministic pseudo-random layouts: ranged, hidden and added
+        // handles in every arrangement, including added handles not in order.
+        let mut seed = 0x9E37_79B9_7F4A_7C15_u64;
+        let mut next = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        for _ in 0..5_000 {
+            let len = 1 + next(12) as usize;
+            let order: Vec<Handle> = (1..=len as u64).map(Handle::new).collect();
+            let order_set: HashSet<Handle> = order.iter().copied().collect();
+            let mut ranges = HashMap::default();
+            let mut added = HashSet::default();
+            for (i, &handle) in order.iter().enumerate() {
+                if next(3) != 0 {
+                    ranges.insert(handle, (i, 1));
+                }
+                if next(4) == 0 {
+                    added.insert(handle);
+                }
+            }
+            if next(3) == 0 {
+                added.insert(Handle::new(1_000 + next(5)));
+            }
+            assert_eq!(
+                Scene::added_handles_are_suffix(&order, &order_set, &ranges, &added),
+                suffix_forward(&order, &ranges, &added),
+                "order={order:?} ranges={ranges:?} added={added:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn patched_memo_matches_a_full_rebind_through_add_move_erase() {
+        let mut scene = Scene::new();
+        let lines: Vec<EntityType> = (0..300)
+            .map(|k| line((k % 20) as f64 * 3.0, (k / 20) as f64 * 3.0))
+            .collect();
+        let handles = scene.add_entities(lines);
+        drop(scene.hit_test_wires());
+
+        scene.add_entity(line(100.0, 0.0));
+        patch_and_check(&scene, "add one");
+
+        for k in 0..5 {
+            scene.add_entity(line(100.0, 5.0 * k as f64));
+        }
+        patch_and_check(&scene, "add five before a frame");
+
+        scene.transform_entities(&handles[10..12], &EntityTransform::Translate(DVec3::X));
+        patch_and_check(&scene, "move two");
+
+        scene.erase_entities(&handles[20..21]);
+        patch_and_check(&scene, "erase one");
+
+        scene.add_entity(line(200.0, 0.0));
+        patch_and_check(&scene, "add after erase");
     }
 }
 
