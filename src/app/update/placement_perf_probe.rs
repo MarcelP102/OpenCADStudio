@@ -87,14 +87,20 @@ fn drawing(n: usize) -> OpenCADStudio {
 /// One click: the command step, then the "next frame" resident rebuild.
 fn click(app: &mut OpenCADStudio, label: &str, p: DVec3) {
     let i = app.active_tab;
+    // The cursor sits at the click point with the preview drawn, as on screen.
+    app.tabs[i].last_cursor_world = p;
+    app.refresh_active_cmd_preview(i);
+    let before = app.tabs[i].scene.preview_wires.len();
     let t = Instant::now();
     let _ = app.feed_command(StepInput::Point(p));
+    eprint!("[probe] preview before click={before} ");
     let cmd_ms = ms(t);
     let t = Instant::now();
     let wires = app.tabs[i].scene.hit_test_wires();
     let frame_ms = ms(t);
     eprintln!(
-        "[probe] {label:<14} command={cmd_ms:>8.2}ms frame-wires={frame_ms:>8.2}ms wires={} entities={}",
+        "[probe] {label:<14} command={cmd_ms:>8.2}ms frame-wires={frame_ms:>8.2}ms preview={} wires={} entities={}",
+        app.tabs[i].scene.preview_wires.len(),
         wires.len(),
         app.tabs[i].scene.document.entities().count(),
     );
