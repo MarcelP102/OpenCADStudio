@@ -71,7 +71,7 @@ impl Ribbon {
                 let module_id = self.modules[index].id();
                 (
                     Point::new(panel.x, panel.y),
-                    self.floating_panel(module_id, group, ts),
+                    self.floating_panel(module_id, group, panel, ts),
                 )
             })
             .collect();
@@ -92,11 +92,13 @@ impl Ribbon {
         &'a self,
         module_id: &str,
         group: &'a RibbonGroup,
+        floating: &FloatingPanel,
         ts: super::widgets::ToggleState,
     ) -> Element<'a, Message> {
         let key = extras::panel_key(module_id, group.title);
         let style_ctx = self.style_context();
         let look = self.float_look(&key);
+        let right = floating.extras_right;
         let body = render_group(
             false,
             group,
@@ -125,6 +127,33 @@ impl Ribbon {
         let extras = draw_panel::panel_for_group(&key);
         let (content, edge, on_click): (Element<'a, Message>, Edge, Option<Message>) =
             match (extras, look) {
+                // The title at the side: a strip on the right, or the band
+                // of extra tools with its own strip at the far right.
+                (Some(panel), SlideLook::Open | SlideLook::Pinned) if right => {
+                    let pinned = look == SlideLook::Pinned;
+                    let band = self.float_band(panel, pinned);
+                    let strip =
+                        side_strip(group.title, Some(true), draw_panel::launcher(panel), look);
+                    (
+                        iced::widget::row![body, band, strip].into(),
+                        Edge::Right(metrics::FLOAT_SIDE_STRIP_W),
+                        Some(Message::RibbonFloat(FloatMsg::Collapse(key.clone()))),
+                    )
+                }
+                _ if right => {
+                    let launcher = extras::for_panel(&key).and_then(draw_panel::launcher);
+                    let strip = side_strip(
+                        group.title,
+                        extras.map(|_| false),
+                        launcher,
+                        SlideLook::Closed,
+                    );
+                    (
+                        iced::widget::row![body, strip].into(),
+                        Edge::Right(metrics::FLOAT_SIDE_STRIP_W),
+                        extras.map(|_| Message::RibbonFloat(FloatMsg::ToggleExtras(key.clone()))),
+                    )
+                }
                 (Some(panel), SlideLook::Open | SlideLook::Pinned) => {
                     // The extra tools continue the panel downward, over its
                     // title strip; their footer is the title now.
@@ -194,6 +223,79 @@ impl Ribbon {
             threshold: metrics::FLOAT_MOVE_THRESHOLD,
         };
         PosReport::owned(floating_id(&key), grip).into()
+    }
+
+    /// The extra tools of `panel` as a band to the right of a panel whose
+    /// title is at its side: three rows of buttons, the tool groups side by
+    /// side with a line between them, as high as the panel.
+    fn float_band<'a>(
+        &self,
+        panel: &'static extras::PanelExtras,
+        pinned: bool,
+    ) -> Element<'a, Message> {
+        let active = self.lit_tool().as_deref();
+        let cell = metrics::FLOAT_BAND_BUTTON;
+        let mut parts: Vec<Element<'a, Message>> = Vec::new();
+        let separator = || -> Element<'a, Message> {
+            container(
+                iced::widget::Space::new()
+                    .width(crate::ui::icons::hairline())
+                    .height(Length::Fill),
+            )
+            .style(|theme: &Theme| container::Style {
+                background: Some(Background::Color(chrome::border(theme))),
+                ..Default::default()
+            })
+            .padding([metrics::FLOAT_BAND_PAD, 0.0])
+            .into()
+        };
+        let gap = || -> Element<'a, Message> {
+            iced::widget::Space::new()
+                .width(metrics::FLOAT_BAND_GROUP_GAP)
+                .into()
+        };
+        for group in panel.more.iter().filter(|group| !group.tools.is_empty()) {
+            if !parts.is_empty() {
+                parts.extend([gap(), separator(), gap()]);
+            }
+            let columns = group.tools.chunks(3).map(|chunk| {
+                iced::widget::Column::with_children(chunk.iter().map(|tool| {
+                    draw_panel::sized_tool_button(tool, tool.is_active(active), panel.id, cell)
+                }))
+                .spacing(metrics::GAP)
+                .into()
+            });
+            parts.push(
+                iced::widget::Row::with_children(columns)
+                    .spacing(metrics::GAP)
+                    .into(),
+            );
+        }
+        if let Some(special) = draw_panel::extra_special(self, panel) {
+            if !parts.is_empty() {
+                parts.extend([gap(), separator(), gap()]);
+            }
+            parts.push(
+                container(special)
+                    .width(metrics::FLOAT_BAND_LIST_W)
+                    .height(Length::Fill)
+                    .clip(true)
+                    .into(),
+            );
+        }
+        container(iced::widget::Row::with_children(parts).height(Length::Fill))
+            .height(metrics::CONTENT_H)
+            .center_y(metrics::CONTENT_H)
+            .padding([0.0, metrics::FLOAT_BAND_PAD])
+            .style(move |theme: &Theme| container::Style {
+                background: Some(Background::Color(if pinned {
+                    chrome::panel(theme)
+                } else {
+                    chrome::open_panel(theme)
+                })),
+                ..Default::default()
+            })
+            .into()
     }
 
     /// How the extra tools of floating panel `key` show.
@@ -354,6 +456,20 @@ impl Ribbon {
                 self.float_ui.closing = None;
                 false
             }
+            FloatMsg::ToggleOrientation(key) => {
+                match self
+                    .layout
+                    .floating
+                    .iter_mut()
+                    .find(|panel| panel.key == key)
+                {
+                    Some(panel) => {
+                        panel.extras_right ^= true;
+                        true
+                    }
+                    None => false,
+                }
+            }
             FloatMsg::Raise(key) => {
                 let top = self.top_float_z();
                 match self.layout.floating.iter_mut().find(|p| p.key == key) {
@@ -433,6 +549,10 @@ pub enum FloatMsg {
     Footer(Option<String>),
     /// A press off the panel whose extra tools are open and unpinned.
     Outside,
+    /// Put the title at the side and open the extra tools to the right, or
+    /// back.
+    #[allow(dead_code)] // The hover buttons send it (B7).
+    ToggleOrientation(String),
 }
 
 /// What the floating panels' pointer and extra tools are doing; not saved.
@@ -472,7 +592,6 @@ pub(super) struct FloatDrag {
 #[derive(Clone, Copy, Debug)]
 enum Edge {
     Bottom(f32),
-    #[allow(dead_code)]
     Right(f32),
 }
 
@@ -692,6 +811,154 @@ impl<'a> Widget<Message, Theme, Renderer> for Grip<'a> {
 impl<'a> From<Grip<'a>> for Element<'a, Message> {
     fn from(grip: Grip<'a>) -> Self {
         Element::new(grip)
+    }
+}
+
+/// The title strip at the side of a floating panel, as high as its tools:
+/// the title written downward, cut off with "…" when it is too long (the
+/// tooltip names it in full), with ▸ under it for a panel with extra tools
+/// (◂ while they are open: `extras` is whether they are), and the dialog
+/// launcher at the bottom. Coloured as the title strip or footer of `look`.
+fn side_strip<'a>(
+    title: &'static str,
+    extras: Option<bool>,
+    launcher: Option<Element<'a, Message>>,
+    look: SlideLook,
+) -> Element<'a, Message> {
+    let label = crate::t!(title).into_owned();
+    let vertical = iced::widget::canvas(VerticalTitle {
+        label: label.clone(),
+        arrow: extras,
+        strong: look == SlideLook::Open,
+    })
+    .width(Length::Fill)
+    .height(Length::Fill);
+    let vertical = iced::widget::tooltip(
+        vertical,
+        super::widgets::make_tip(label),
+        iced::widget::tooltip::Position::Right,
+    )
+    .delay(std::time::Duration::from_millis(400))
+    .style(super::widgets::tip_style);
+    let mut strip = iced::widget::column![vertical].align_x(iced::Center);
+    if let Some(launcher) = launcher {
+        strip = strip.push(launcher);
+    }
+    let strip = container(strip)
+        .width(metrics::FLOAT_SIDE_STRIP_W - crate::ui::icons::hairline())
+        .height(metrics::CONTENT_H)
+        .style(move |theme: &Theme| container::Style {
+            background: Some(Background::Color(match look {
+                SlideLook::Open => chrome::hover(theme),
+                _ => chrome::title_bar(theme),
+            })),
+            ..Default::default()
+        });
+    // A line of `page` between the tools and the strip, as over the title
+    // strip at the bottom.
+    let line = container(
+        iced::widget::Space::new()
+            .width(crate::ui::icons::hairline())
+            .height(metrics::CONTENT_H),
+    )
+    .style(|theme: &Theme| container::Style {
+        background: Some(Background::Color(chrome::page(theme))),
+        ..Default::default()
+    });
+    iced::widget::row![line, strip].into()
+}
+
+/// A floating panel's title written downward in its side strip, with an
+/// arrow under it when the panel has extra tools: ▸ to open them, ◂ while
+/// they are open (`arrow`).
+struct VerticalTitle {
+    label: String,
+    arrow: Option<bool>,
+    /// In `strong` rather than `title_text`: the extra tools are open and
+    /// not pinned.
+    strong: bool,
+}
+
+impl VerticalTitle {
+    /// `label` cut off with "…" so it is at most `room` px long.
+    fn fitted(label: &str, room: f32) -> String {
+        let size = metrics::FLOAT_TITLE_SIZE;
+        let width = |text: &str| crate::ui::style::text_metrics::width(text, size, false);
+        if width(label) <= room {
+            return label.to_string();
+        }
+        let mut chars: Vec<char> = label.chars().collect();
+        while !chars.is_empty() {
+            chars.pop();
+            let cut = format!("{}…", chars.iter().collect::<String>().trim_end());
+            if width(&cut) <= room {
+                return cut;
+            }
+        }
+        "…".to_string()
+    }
+}
+
+impl iced::widget::canvas::Program<Message> for VerticalTitle {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<iced::widget::canvas::Geometry> {
+        use iced::widget::canvas::{Frame, Path, Text};
+        let mut frame = Frame::new(renderer, bounds.size());
+        let color = if self.strong {
+            chrome::strong(theme)
+        } else {
+            chrome::title_text(theme)
+        };
+        let arrow_room = if self.arrow.is_some() {
+            metrics::FLOAT_SIDE_ARROW + 2.0 * metrics::FLOAT_SIDE_ARROW_GAP
+        } else {
+            0.0
+        };
+        let room = (bounds.height - 2.0 * metrics::FLOAT_SIDE_TEXT_PAD - arrow_room).max(0.0);
+        let label = Self::fitted(&self.label, room);
+        let size = metrics::FLOAT_TITLE_SIZE;
+        let length = crate::ui::style::text_metrics::width(&label, size, false);
+        let top = metrics::FLOAT_SIDE_TEXT_PAD;
+        let center_x = bounds.width / 2.0;
+        frame.with_save(|frame| {
+            frame.translate(Vector::new(center_x, top + length / 2.0));
+            frame.rotate(std::f32::consts::FRAC_PI_2);
+            frame.fill_text(Text {
+                content: label,
+                position: Point::ORIGIN,
+                color,
+                size: size.into(),
+                align_x: iced::alignment::Horizontal::Center.into(),
+                align_y: iced::alignment::Vertical::Center,
+                ..Text::default()
+            });
+        });
+        if let Some(open) = self.arrow {
+            // A small solid triangle under the title.
+            let a = metrics::FLOAT_SIDE_ARROW;
+            let y = top + length + metrics::FLOAT_SIDE_ARROW_GAP;
+            let (tip, back) = if open {
+                (center_x - a / 3.0, center_x + a / 3.0)
+            } else {
+                (center_x + a / 3.0, center_x - a / 3.0)
+            };
+            let triangle = Path::new(|path| {
+                path.move_to(Point::new(back, y));
+                path.line_to(Point::new(tip, y + a / 2.0));
+                path.line_to(Point::new(back, y + a));
+                path.close();
+            });
+            frame.fill(&triangle, color);
+        }
+        vec![frame.into_geometry()]
     }
 }
 
@@ -1046,6 +1313,32 @@ mod tests {
         assert!(ribbon.on_float(FloatMsg::Collapse("draw/Draw".into()), t0));
         assert_eq!(ribbon.float_look("draw/Draw"), SlideLook::Closed);
         assert!(!ribbon.layout.floating[0].pinned);
+    }
+
+    #[test]
+    fn a_side_title_is_cut_off_to_fit_and_the_orientation_toggles() {
+        use super::{FloatMsg, VerticalTitle};
+        assert_eq!(VerticalTitle::fitted("Draw", 60.0), "Draw");
+        let cut = VerticalTitle::fitted("Block Definition", 50.0);
+        assert!(cut.ends_with('…'), "{cut}");
+        assert!(crate::ui::style::text_metrics::width(&cut, 11.5, false) <= 50.0);
+        assert_eq!(VerticalTitle::fitted("Block Definition", 1.0), "…");
+
+        let mut ribbon = Ribbon::default();
+        ribbon.set_layout(RibbonLayout {
+            floating: vec![floating("draw/Draw", 1)],
+            ..RibbonLayout::default()
+        });
+        let now = iced::time::Instant::now();
+        assert!(ribbon.on_float(FloatMsg::ToggleOrientation("draw/Draw".into()), now));
+        assert!(ribbon.layout.floating[0].extras_right);
+        // It builds in both orientations, its extra tools open or not.
+        for _ in 0..2 {
+            assert!(ribbon.floating_layer(false).is_some());
+            ribbon.on_float(FloatMsg::ToggleExtras("draw/Draw".into()), now);
+            assert!(ribbon.floating_layer(false).is_some());
+            ribbon.on_float(FloatMsg::ToggleOrientation("draw/Draw".into()), now);
+        }
     }
 
     #[test]

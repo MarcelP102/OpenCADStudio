@@ -88,6 +88,19 @@ pub const FLOAT_MOVE_THRESHOLD: f32 = 3.0;
 pub const FLOAT_EXTRAS_MIN_W: f32 = 120.0;
 /// Size of a floating panel's title in its footer and side strip.
 pub const FLOAT_TITLE_SIZE: f32 = 11.5;
+/// A floating panel's band of extra tools, to the right of a side title:
+/// its buttons, the room at its ends and above and below the lines
+/// between its groups, the gap on either side of those lines, and the
+/// width of a list in it (the text or center layer list).
+pub const FLOAT_BAND_BUTTON: f32 = 21.0;
+pub const FLOAT_BAND_PAD: f32 = 6.0;
+pub const FLOAT_BAND_GROUP_GAP: f32 = 6.0;
+pub const FLOAT_BAND_LIST_W: f32 = 180.0;
+/// The side title strip: the room above the title, the arrow under it and
+/// the gap around that arrow.
+pub const FLOAT_SIDE_TEXT_PAD: f32 = 5.0;
+pub const FLOAT_SIDE_ARROW: f32 = 6.0;
+pub const FLOAT_SIDE_ARROW_GAP: f32 = 4.0;
 /// Width of a floating panel's title strip at its side, and of the footer
 /// at the end of its extra tools band.
 pub const FLOAT_SIDE_STRIP_W: f32 = 20.0;
