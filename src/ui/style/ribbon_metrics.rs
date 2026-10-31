@@ -29,6 +29,10 @@ pub const QAT_SEPARATOR_MARGIN: f32 = 4.0;
 /// The Quick Access menu buttons (Switch Windows, User Interface): icon
 /// and arrow.
 pub const QAT_MENU_BUTTON_W: f32 = QAT_BUTTON + QAT_SPLIT_ARROW_W;
+/// The Quick Access Toolbar's own row below the ribbon: its height and
+/// the room at either end.
+pub const QAT_ROW_H: f32 = 26.0;
+pub const QAT_ROW_PAD: f32 = 6.0;
 /// The customize button at the end of the Quick Access Toolbar.
 pub const QAT_CUSTOMIZE_W: f32 = 20.0;
 /// The title of a Quick Access menu.

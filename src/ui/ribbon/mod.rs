@@ -1050,7 +1050,14 @@ impl Ribbon {
         visibility: Option<crate::ui::window::block_visibility::RibbonContext>,
     ) -> Element<'a, Message> {
         // ── Quick Access Toolbar, one flow ───────────────────────────────
-        let lead = self.qat_row(is_start, undo_count, redo_count);
+        // Below the ribbon it has a row of its own, except while the ribbon
+        // is closed, when it comes back to the top row.
+        let qat_below = self.layout.qat_below && !closed;
+        let lead: Element<'_, Message> = if qat_below {
+            Space::new().into()
+        } else {
+            self.qat_row(is_start, undo_count, redo_count)
+        };
 
         // The quick-access flow and the tabs flow each flex-wrap; WrapBar stacks
         // them so a wrapped tab never shares a row with a quick-access button.
@@ -1187,7 +1194,7 @@ impl Ribbon {
         tab_row = tab_row.push(
             container(
                 WrapBar::new(lead, tabs.into())
-                    .spacing(6.0)
+                    .spacing(if qat_below { 0.0 } else { 6.0 })
                     .min_row_h(TAB_ROW_H)
                     .report_height(self.tab_bar_h.clone()),
             )
@@ -1240,6 +1247,12 @@ impl Ribbon {
             RibbonMinimize::PanelTitles | RibbonMinimize::PanelButtons => {
                 ribbon = ribbon.push(self.minimized_row(is_start));
             }
+        }
+        if qat_below {
+            // The tool area and the minimized rows end with a line of their
+            // own; under the bare tab row the toolbar's row draws it.
+            let line = self.layout.minimize == RibbonMinimize::Tabs;
+            ribbon = ribbon.push(self.qat_below_row(is_start, undo_count, redo_count, line));
         }
         keytips::ribbon_area(ribbon_menu::RightPress::new(ribbon))
     }
@@ -2441,6 +2454,31 @@ mod tests {
                 (mode == CollapseMode::Collapsed).then(|| first_panel.to_string());
             let view = ribbon.view(None, false, false, false, 0, 0, false, None);
             std::hint::black_box(view);
+        }
+    }
+
+    #[test]
+    fn the_toolbar_below_the_ribbon_builds_in_every_minimize_state() {
+        use super::layout::{QatBuiltin, QatItem};
+        let mut ribbon = Ribbon::default();
+        let mut layout = RibbonLayout {
+            qat_below: true,
+            ..RibbonLayout::default()
+        };
+        layout.qat.push(QatItem::Separator);
+        layout.qat.push(QatItem::Builtin(QatBuiltin::LayerCombo));
+        for minimize in [
+            super::RibbonMinimize::Off,
+            super::RibbonMinimize::Tabs,
+            super::RibbonMinimize::PanelTitles,
+            super::RibbonMinimize::PanelButtons,
+        ] {
+            layout.minimize = minimize;
+            ribbon.set_layout(layout.clone());
+            for closed in [false, true] {
+                let view = ribbon.view(None, closed, false, false, 3, 1, false, None);
+                std::hint::black_box(view);
+            }
         }
     }
 

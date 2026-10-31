@@ -362,6 +362,41 @@ impl Ribbon {
             .into()
     }
 
+    /// The toolbar in its own row below the ribbon: `bar` coloured, its
+    /// items centred in it, with a line of `page` on top when `line`.
+    /// Right-clicked on its empty space it offers to move back up.
+    pub(super) fn qat_below_row(
+        &self,
+        is_start: bool,
+        undo_count: usize,
+        redo_count: usize,
+        line: bool,
+    ) -> Element<'_, Message> {
+        let bar = container(self.qat_row(is_start, undo_count, redo_count))
+            .center_y(metrics::QAT_ROW_H)
+            .padding([0.0, metrics::QAT_ROW_PAD])
+            .width(Fill)
+            .style(|theme: &Theme| container::Style {
+                background: Some(Background::Color(chrome::bar(theme))),
+                ..Default::default()
+            });
+        let bar: Element<'_, Message> = if line {
+            iced::widget::column![
+                container(Space::new().width(Fill).height(icons::hairline())).style(
+                    |theme: &Theme| container::Style {
+                        background: Some(Background::Color(chrome::page(theme))),
+                        ..Default::default()
+                    }
+                ),
+                bar
+            ]
+            .into()
+        } else {
+            bar.into()
+        };
+        RightPress::for_target(MenuTarget::TabRow, bar).into()
+    }
+
     /// The command the face of the split item `id` runs: the one last
     /// chosen from its list, else the dropdown's default.
     pub(super) fn qat_face_command(
