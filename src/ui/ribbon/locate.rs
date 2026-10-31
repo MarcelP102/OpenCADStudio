@@ -209,7 +209,7 @@ impl Ribbon {
             .chain((0..self.modules.len()).filter(move |i| *i != self.active));
         order.flat_map(|i| {
             let module_id = self.modules[i].id();
-            self.groups_for(i)
+            self.shown_groups(i)
                 .flat_map(move |group| {
                     group_entries(&extras::panel_key(module_id, group.title), group)
                 })
@@ -251,7 +251,7 @@ impl Ribbon {
         let id = self.active_tool.as_deref()?;
         let holds = |i: usize| {
             let module_id = self.modules[i].id();
-            self.groups_for(i)
+            self.shown_groups(i)
                 .any(|group| group_holds(&extras::panel_key(module_id, group.title), group, id))
         };
         if self

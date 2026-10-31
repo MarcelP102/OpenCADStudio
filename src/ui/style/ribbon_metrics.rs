@@ -75,6 +75,12 @@ pub const THIN_STRIP_H: f32 = 10.0;
 pub const THIN_LAUNCHER_H: f32 = 9.0;
 pub const SLIDE_OUT_TOP_THIN: f32 = THIN_STRIP_H + 1.0;
 
+// ── Floating panels ────────────────────────────────────────────────────────
+
+/// Width of a floating panel's title strip at its side, and of the footer
+/// at the end of its extra tools band.
+pub const FLOAT_SIDE_STRIP_W: f32 = 20.0;
+
 // ── Buttons ────────────────────────────────────────────────────────────────
 
 /// Height of a small button and of a row of small buttons.

@@ -82,6 +82,72 @@ pub fn default_qat() -> Vec<QatItem> {
     ]
 }
 
+/// A ribbon panel dragged out of the ribbon, floating over the drawing.
+/// It keeps its slot in `panel_order`, so it can go back there.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FloatingPanel {
+    /// Its panel key (`extras::panel_key`).
+    pub key: String,
+    /// The module id of the tab it belongs to.
+    pub module_id: String,
+    /// Its top-left corner in logical px, in the window's content area.
+    pub x: f32,
+    pub y: f32,
+    /// Its title at the side and its extra tools opening to the right,
+    /// instead of the title at the bottom and the tools opening downward.
+    pub extras_right: bool,
+    /// Its extra tools are pinned open.
+    pub pinned: bool,
+    /// Stacking order: higher is on top.
+    pub z: u32,
+}
+
+impl Default for FloatingPanel {
+    fn default() -> Self {
+        Self {
+            key: String::new(),
+            module_id: String::new(),
+            x: 0.0,
+            y: 0.0,
+            extras_right: false,
+            pinned: false,
+            z: 0,
+        }
+    }
+}
+
+impl FloatingPanel {
+    /// Where the panel may be, `size` big (unknown until it is drawn), in a
+    /// window `win` big, so that at least its title strip stays inside:
+    /// the bottom strip, or the side strip with the title on the right.
+    /// Returns (x range, y range).
+    fn allowed(&self, size: (f32, f32), win: (f32, f32)) -> ((f32, f32), (f32, f32)) {
+        use crate::ui::style::ribbon_metrics as metrics;
+        let (w, h) = size;
+        let range = |low: f32, high: f32| (low.min(high), high);
+        if self.extras_right {
+            (
+                range(metrics::FLOAT_SIDE_STRIP_W - w, win.0 - w),
+                range(0.0, win.1 - h),
+            )
+        } else {
+            (
+                range(0.0, win.0 - w),
+                range(metrics::TITLE_STRIP_H - h, win.1 - h),
+            )
+        }
+    }
+
+    /// Move the panel, `size` big, so its title strip is inside a window
+    /// `win` big.
+    pub(super) fn clamp(&mut self, size: (f32, f32), win: (f32, f32)) {
+        let ((x0, x1), (y0, y1)) = self.allowed(size, win);
+        self.x = self.x.clamp(x0, x1.max(x0));
+        self.y = self.y.clamp(y0, y1.max(y0));
+    }
+}
+
 /// The ribbon's persisted layout. Panels are named by their panel key
 /// (`extras::panel_key`), tabs by their module id.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -107,6 +173,8 @@ pub struct RibbonLayout {
     pub qat_below: bool,
     /// Per split item, the command its face runs (the last one chosen).
     pub qat_faces: BTreeMap<String, String>,
+    /// The panels floating over the drawing.
+    pub floating: Vec<FloatingPanel>,
 }
 
 impl Default for RibbonLayout {
@@ -123,6 +191,7 @@ impl Default for RibbonLayout {
             qat: default_qat(),
             qat_below: false,
             qat_faces: BTreeMap::new(),
+            floating: Vec::new(),
         }
     }
 }
@@ -231,6 +300,32 @@ impl RibbonLayout {
         self.qat = tidy;
     }
 
+    /// The panel `title` of module `module_id`, if it floats.
+    pub(super) fn floating_panel(&self, module_id: &str, title: &str) -> Option<&FloatingPanel> {
+        self.floating
+            .iter()
+            .find(|panel| is_key(&panel.key, module_id, title))
+    }
+
+    /// Keep each floating panel's title strip inside a window `win` big;
+    /// `size_of` gives a panel's size by its key once it has been drawn.
+    pub(super) fn clamp_floating(
+        &mut self,
+        win: (f32, f32),
+        size_of: impl Fn(&str) -> Option<(f32, f32)>,
+    ) {
+        use crate::ui::style::ribbon_metrics as metrics;
+        if !(win.0.is_finite() && win.1.is_finite()) {
+            return;
+        }
+        for panel in &mut self.floating {
+            // Before it is drawn, as small as its title strip.
+            let size = size_of(&panel.key)
+                .unwrap_or((metrics::FLOAT_SIDE_STRIP_W, metrics::TITLE_STRIP_H));
+            panel.clamp(size, win);
+        }
+    }
+
     pub(super) fn panel_hidden(&self, module_id: &str, title: &str) -> bool {
         self.hidden_panels
             .iter()
@@ -294,6 +389,57 @@ mod tests {
             keys.iter().map(|key| key.to_string()).collect(),
         );
         layout
+    }
+
+    #[test]
+    fn a_floating_panel_keeps_its_title_strip_in_the_window() {
+        let win = (1000.0, 800.0);
+        let size = (200.0, 99.0);
+        let mut down = FloatingPanel {
+            x: -50.0,
+            y: 900.0,
+            ..FloatingPanel::default()
+        };
+        down.clamp(size, win);
+        assert_eq!((down.x, down.y), (0.0, 701.0));
+        // Above the window, the strip at the bottom may stay just inside.
+        down.y = -500.0;
+        down.clamp(size, win);
+        assert_eq!(down.y, 20.0 - 99.0);
+
+        // With the title at the side, the panel may hang off the left edge
+        // up to its side strip, but not off the top.
+        let mut right = FloatingPanel {
+            x: -500.0,
+            y: -10.0,
+            extras_right: true,
+            ..FloatingPanel::default()
+        };
+        right.clamp(size, win);
+        assert_eq!((right.x, right.y), (20.0 - 200.0, 0.0));
+        right.x = 5000.0;
+        right.clamp(size, win);
+        assert_eq!(right.x, 800.0);
+    }
+
+    #[test]
+    fn floating_panels_clamp_to_a_smaller_window_and_are_found_by_key() {
+        let mut layout = RibbonLayout::default();
+        layout.floating.push(FloatingPanel {
+            key: "draw/Draw".into(),
+            module_id: "draw".into(),
+            x: 900.0,
+            y: 500.0,
+            ..FloatingPanel::default()
+        });
+        assert!(layout.floating_panel("draw", "Draw").is_some());
+        assert!(layout.floating_panel("draw", "Modify").is_none());
+        layout.clamp_floating((600.0, 400.0), |_| Some((300.0, 99.0)));
+        let panel = &layout.floating[0];
+        assert_eq!((panel.x, panel.y), (300.0, 301.0));
+        // An unknown window size changes nothing.
+        layout.clamp_floating((f32::INFINITY, f32::INFINITY), |_| None);
+        assert_eq!(layout.floating[0].x, 300.0);
     }
 
     #[test]

@@ -297,7 +297,7 @@ impl Ribbon {
                 continue;
             }
             let tab = crate::i18n::ribbon_module_title(module.id(), module.title());
-            for group in self.groups_for(index) {
+            for group in self.shown_groups(index) {
                 let path = format!("{ribbon_tab}: {tab} › {}", crate::t!(group.title));
                 // Label, command line, icon, message and highlight id of each
                 // button of the panel.
@@ -556,7 +556,7 @@ impl Ribbon {
         let Some(module) = self.modules.get(tab) else {
             return false;
         };
-        !self.groups_for(tab).any(|group| {
+        !self.shown_groups(tab).any(|group| {
             super::locate::group_holds(&extras::panel_key(module.id(), group.title), group, id)
                 && recent_bounds(&super::minimize::opener_id(group.title)).is_some()
         })

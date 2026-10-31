@@ -56,7 +56,9 @@ pub use keytips::{
     note_command_finished as keytip_note_command_finished,
     note_focus_changed as keytip_note_focus_changed, pointer_pressed as keytip_pointer_pressed,
 };
-pub use layout::{default_qat, MinimizePref, QatBuiltin, QatItem, RibbonLayout, RibbonMinimize};
+pub use layout::{
+    default_qat, FloatingPanel, MinimizePref, QatBuiltin, QatItem, RibbonLayout, RibbonMinimize,
+};
 pub use minimize::{MinimizeMsg, Opener};
 pub(crate) use qat::QAT_SWITCH_ID;
 pub use qat::{QatMsg, QatOutcome, QAT_PICKER_INPUT};
@@ -205,6 +207,11 @@ fn panel_measure_key(
     }
     format!("{visibility:?}").hash(&mut hasher);
     hasher.finish()
+}
+
+/// The id a floating panel reports its bounds under.
+fn floating_id(key: &str) -> String {
+    format!("float:{key}")
 }
 
 /// Height of a tab, and of the tab row it stands at the bottom of.
@@ -570,6 +577,7 @@ impl Ribbon {
         let was_narrow = self.win_w < search::NARROW;
         self.win_w = w;
         self.win_h = h;
+        self.layout.clamp_floating((w, h), Self::floating_size);
         self.search_resized(was_narrow);
     }
 
@@ -584,6 +592,8 @@ impl Ribbon {
     pub fn set_layout(&mut self, layout: RibbonLayout) {
         self.layout = layout;
         self.layout.dedupe_qat();
+        self.layout
+            .clamp_floating((self.win_w, self.win_h), Self::floating_size);
         self.show_a_visible_tab();
     }
 
@@ -747,13 +757,30 @@ impl Ribbon {
         groups.unwrap_or_default()
     }
 
-    /// The panels of tab `index` as the ribbon shows them: in the user's
-    /// order, without the hidden ones.
+    /// The panels of tab `index` as its ribbon row shows them: in the
+    /// user's order, without the hidden and the floating ones.
     fn groups_for(&self, index: usize) -> impl Iterator<Item = &RibbonGroup> {
+        let module_id = self.modules.get(index).map_or("", |module| module.id());
+        let mut groups = self.ordered_groups(index);
+        groups.retain(|group| {
+            !self.layout.panel_hidden(module_id, group.title)
+                && self.layout.floating_panel(module_id, group.title).is_none()
+        });
+        groups.into_iter()
+    }
+
+    /// The panels of tab `index` the user can reach: those in its ribbon row
+    /// and those floating.
+    fn shown_groups(&self, index: usize) -> impl Iterator<Item = &RibbonGroup> {
         let module_id = self.modules.get(index).map_or("", |module| module.id());
         let mut groups = self.ordered_groups(index);
         groups.retain(|group| !self.layout.panel_hidden(module_id, group.title));
         groups.into_iter()
+    }
+
+    /// The size panel `key` floated at when last drawn.
+    fn floating_size(key: &str) -> Option<(f32, f32)> {
+        crate::ui::wrap_bar::recent_bounds(&floating_id(key)).map(|b| (b.width, b.height))
     }
 
     /// Save the panels of module `module_id` in the order a drag left them.
@@ -2481,6 +2508,32 @@ mod tests {
                 std::hint::black_box(view);
             }
         }
+    }
+
+    #[test]
+    fn a_floating_panel_leaves_its_row_but_keeps_its_slot() {
+        let mut ribbon = Ribbon::default();
+        let draw = ribbon
+            .modules
+            .iter()
+            .position(|module| module.id() == "draw")
+            .unwrap();
+        let before: Vec<_> = ribbon.groups_for(draw).map(|g| g.title).collect();
+        let mut layout = RibbonLayout::default();
+        layout.floating.push(super::FloatingPanel {
+            key: "draw/Modify".into(),
+            module_id: "draw".into(),
+            ..super::FloatingPanel::default()
+        });
+        ribbon.set_layout(layout);
+        let row: Vec<_> = ribbon.groups_for(draw).map(|g| g.title).collect();
+        assert!(!row.contains(&"Modify"));
+        assert_eq!(row.len() + 1, before.len());
+        // It is still one of the tab's panels, in its place, and its tools
+        // are still found.
+        let shown: Vec<_> = ribbon.shown_groups(draw).map(|g| g.title).collect();
+        assert_eq!(shown, before);
+        assert!(ribbon.tool_for_command("TRIM").is_some());
     }
 
     #[test]
