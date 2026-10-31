@@ -211,6 +211,10 @@ fn panel_measure_key(
     hasher.finish()
 }
 
+/// The id the whole ribbon (with the Quick Access row below it) reports its
+/// bounds under: floating panels snap to its bottom.
+const RIBBON_ID: &str = "ribbon_whole";
+
 /// The id a floating panel reports its bounds under.
 fn floating_id(key: &str) -> String {
     format!("float:{key}")
@@ -1328,7 +1332,7 @@ impl Ribbon {
             let line = self.layout.minimize == RibbonMinimize::Tabs;
             ribbon = ribbon.push(self.qat_below_row(is_start, undo_count, redo_count, line));
         }
-        keytips::ribbon_area(ribbon_menu::RightPress::new(ribbon))
+        keytips::ribbon_area(ribbon_menu::RightPress::new(PosReport::new(RIBBON_ID, ribbon)))
     }
 
     /// The menu row with the search box at its right end.

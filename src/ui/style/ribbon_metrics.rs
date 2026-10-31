@@ -101,6 +101,9 @@ pub const FLOAT_BAND_LIST_W: f32 = 180.0;
 pub const FLOAT_SIDE_TEXT_PAD: f32 = 5.0;
 pub const FLOAT_SIDE_ARROW: f32 = 6.0;
 pub const FLOAT_SIDE_ARROW_GAP: f32 = 4.0;
+/// How near a moved floating panel's edge comes to another edge before
+/// it snaps there.
+pub const FLOAT_SNAP: f32 = 8.0;
 /// A floating panel's hover-only buttons (Return to ribbon, the
 /// orientation toggle, the pin in the corner tab): the icon, its hit area,
 /// the gap between two, their inset from the strip's left end, and the

@@ -635,11 +635,37 @@ impl Ribbon {
                     });
                 false
             }
-            FloatMsg::Move { at, .. } => {
+            FloatMsg::Move { at, free } => {
                 let Some(drag) = &self.float_ui.drag else {
                     return false;
                 };
                 let corner = at - drag.grab;
+                // Alt moves it freely; otherwise its edges snap to the other
+                // floating panels, the window and the bottom of the ribbon.
+                let corner = if free {
+                    corner
+                } else {
+                    let size = Self::floating_size(&drag.key).unwrap_or_default();
+                    let others: Vec<Rectangle> = self
+                        .layout
+                        .floating
+                        .iter()
+                        .filter(|panel| panel.key != drag.key)
+                        .filter_map(|panel| {
+                            crate::ui::wrap_bar::recent_bounds(&floating_id(&panel.key))
+                        })
+                        .collect();
+                    let window = Rectangle::new(Point::ORIGIN, Size::new(self.win_w, self.win_h));
+                    let ribbon_bottom = crate::ui::wrap_bar::recent_bounds(super::RIBBON_ID)
+                        .map(|ribbon| ribbon.y + ribbon.height);
+                    snap(
+                        Rectangle::new(corner, Size::new(size.0, size.1)),
+                        &others,
+                        window,
+                        ribbon_bottom,
+                        metrics::FLOAT_SNAP,
+                    )
+                };
                 if let Some(panel) = self.layout.floating.iter_mut().find(|p| p.key == drag.key) {
                     panel.x = corner.x;
                     panel.y = corner.y;
@@ -737,6 +763,58 @@ pub(super) struct FloatUi {
     pub strip_hover: Option<String>,
     /// The panel whose corner tab the pointer is on.
     pub tab_hover: Option<String>,
+}
+
+/// Where a floating panel moved to `moving` lands: each axis snaps on its
+/// own to the nearest edge within `threshold` px. A panel snaps side by
+/// side to another (their borders overlapping 1 px) or level with it
+/// (top/top, bottom/bottom, left/left, right/right) when the two are near
+/// across that axis; and to the edges of the `window` and the bottom of
+/// the ribbon. `others` are the other panels' full extents, extra tools
+/// included, as `moving`'s is.
+pub(super) fn snap(
+    moving: Rectangle,
+    others: &[Rectangle],
+    window: Rectangle,
+    ribbon_bottom: Option<f32>,
+    threshold: f32,
+) -> Point {
+    let hair = crate::ui::icons::hairline();
+    let (w, h) = (moving.width, moving.height);
+    // Whether `a..a_len` and `b..b_len` come within `threshold`.
+    let near = |a: f32, a_len: f32, b: f32, b_len: f32| {
+        a <= b + b_len + threshold && b <= a + a_len + threshold
+    };
+    let mut xs: Vec<f32> = vec![window.x, window.x + window.width - w];
+    let mut ys: Vec<f32> = vec![window.y, window.y + window.height - h];
+    ys.extend(ribbon_bottom);
+    for other in others {
+        if near(moving.y, h, other.y, other.height) {
+            xs.extend([
+                other.x - w + hair,
+                other.x + other.width - hair,
+                other.x,
+                other.x + other.width - w,
+            ]);
+        }
+        if near(moving.x, w, other.x, other.width) {
+            ys.extend([
+                other.y - h + hair,
+                other.y + other.height - hair,
+                other.y,
+                other.y + other.height - h,
+            ]);
+        }
+    }
+    let nearest = |at: f32, candidates: &[f32]| {
+        candidates
+            .iter()
+            .copied()
+            .filter(|c| (c - at).abs() <= threshold)
+            .min_by(|a, b| (a - at).abs().total_cmp(&(b - at).abs()))
+            .unwrap_or(at)
+    };
+    Point::new(nearest(moving.x, &xs), nearest(moving.y, &ys))
 }
 
 /// The room to put before the centred title of a panel `width` wide (its
@@ -1705,6 +1783,71 @@ mod tests {
             ribbon.groups_for(draw).next().map(|g| g.title),
             Some("Draw")
         );
+    }
+
+    fn rect(x: f32, y: f32, w: f32, h: f32) -> iced::Rectangle {
+        iced::Rectangle::new(iced::Point::new(x, y), iced::Size::new(w, h))
+    }
+
+    #[test]
+    fn two_panels_snap_side_by_side_and_level() {
+        use super::snap;
+        let window = rect(0.0, 0.0, 1400.0, 900.0);
+        let modify = rect(500.0, 300.0, 120.0, 100.0);
+        // 5 px left of Modify and 3 px lower: it closes the gap, borders
+        // overlapping, and lines up with Modify's top.
+        let draw = rect(500.0 - 200.0 - 5.0, 303.0, 200.0, 100.0);
+        let at = snap(draw, &[modify], window, None, 8.0);
+        assert_eq!((at.x, at.y), (500.0 - 200.0 + 1.0, 300.0));
+        // Under Modify, left edges level.
+        let below = rect(506.0, 405.0, 200.0, 100.0);
+        let at = snap(below, &[modify], window, None, 8.0);
+        assert_eq!((at.x, at.y), (500.0, 399.0));
+        // Too far: no snap.
+        let far = rect(200.0, 600.0, 200.0, 100.0);
+        let at = snap(far, &[modify], window, None, 8.0);
+        assert_eq!((at.x, at.y), (200.0, 600.0));
+    }
+
+    #[test]
+    fn a_panel_snaps_to_another_with_its_pinned_extra_tools() {
+        use super::snap;
+        let window = rect(0.0, 0.0, 1400.0, 900.0);
+        // Modify with its pinned tools below is 180 high, not 100: Draw
+        // dropped beside its tools' lower part snaps to their bottom.
+        let modify_with_tools = rect(500.0, 300.0, 120.0, 180.0);
+        let draw = rect(295.0, 385.0, 200.0, 100.0);
+        let at = snap(draw, &[modify_with_tools], window, None, 8.0);
+        assert_eq!((at.x, at.y), (500.0 - 200.0 + 1.0, 380.0));
+        // And a panel under it snaps under the tools, not under the panel.
+        let under = rect(503.0, 486.0, 150.0, 80.0);
+        let at = snap(under, &[modify_with_tools], window, None, 8.0);
+        assert_eq!((at.x, at.y), (500.0, 479.0));
+    }
+
+    #[test]
+    fn a_panel_snaps_to_the_window_and_the_ribbon() {
+        use super::snap;
+        let window = rect(0.0, 0.0, 1400.0, 900.0);
+        let at = snap(
+            rect(6.0, 893.0 - 100.0, 200.0, 100.0),
+            &[],
+            window,
+            None,
+            8.0,
+        );
+        assert_eq!((at.x, at.y), (0.0, 800.0));
+        let at = snap(rect(1195.0, 400.0, 200.0, 100.0), &[], window, None, 8.0);
+        assert_eq!(at.x, 1200.0);
+        // Under the ribbon, whose bottom is at 154.
+        let at = snap(
+            rect(300.0, 160.0, 200.0, 100.0),
+            &[],
+            window,
+            Some(154.0),
+            8.0,
+        );
+        assert_eq!(at.y, 154.0);
     }
 
     #[test]
