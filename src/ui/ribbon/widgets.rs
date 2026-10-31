@@ -776,13 +776,30 @@ pub(super) fn render_row_item<'a>(
     state: ToggleState,
 ) -> Element<'a, Message> {
     match item {
-        RibbonItem::LabeledTool(t) => labeled_tool(t, active_tool, state, Length::Shrink),
+        RibbonItem::LabeledTool(t) => super::ribbon_menu::tool_target(
+            super::ribbon_menu::tool_qat(t),
+            labeled_tool(t, active_tool, state, Length::Shrink),
+        ),
         _ => render_small(item, active_tool, open_dd, last_cmd, state),
     }
 }
 
-/// Render a 1-row small button (Tool or Dropdown).
+/// Render a 1-row small button (Tool or Dropdown). Right-clicked, it offers
+/// to go on the Quick Access Toolbar.
 pub(super) fn render_small<'a>(
+    item: &RibbonItem,
+    active_tool: &Option<String>,
+    open_dd: &Option<String>,
+    last_cmd: &HashMap<&'static str, &'static str>,
+    state: ToggleState,
+) -> Element<'a, Message> {
+    super::ribbon_menu::tool_target(
+        super::ribbon_menu::item_qat(item),
+        small_button(item, active_tool, open_dd, last_cmd, state),
+    )
+}
+
+fn small_button<'a>(
     item: &RibbonItem,
     active_tool: &Option<String>,
     open_dd: &Option<String>,
@@ -1195,7 +1212,10 @@ fn tool_row<'a>(tools: &[ToolDef], active_tool: &Option<String>) -> Element<'a, 
             .gap(4.0)
             .delay(Duration::from_millis(400))
             .style(tip_style);
-            super::keytips::anchor(t.id, btn)
+            super::ribbon_menu::tool_target(
+                super::ribbon_menu::tool_qat(t),
+                super::keytips::anchor(t.id, btn),
+            )
         })
         .collect();
     row(btns).spacing(2).align_y(iced::Center).into()
@@ -1221,6 +1241,19 @@ pub(super) fn render_large<'a>(item: &RibbonItem, ctx: &RenderCtx<'_>) -> Elemen
 /// [`render_large`], with `below` (small labeled tools) as the bottom row of
 /// the Dimensions style/layer lists.
 pub(super) fn render_large_with<'a>(
+    item: &RibbonItem,
+    ctx: &RenderCtx<'_>,
+    below: Vec<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    // A single button offers to go on the Quick Access Toolbar; a group's
+    // own buttons do so each.
+    super::ribbon_menu::tool_target(
+        super::ribbon_menu::item_qat(item),
+        large_item(item, ctx, below),
+    )
+}
+
+fn large_item<'a>(
     item: &RibbonItem,
     ctx: &RenderCtx<'_>,
     below: Vec<Element<'a, Message>>,

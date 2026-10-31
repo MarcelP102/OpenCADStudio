@@ -226,6 +226,12 @@ ribbon-menu =
     .qat-match-properties = Match Properties
     .qat-plot-preview = Plot Preview
     .qat-properties = Properties
+    .add-to-qat = Add to Quick Access Toolbar
+    .remove-from-qat = Remove from Quick Access Toolbar
+    .add-separator = Add Separator
+    .remove-separator = Remove Separator
+    .qat-show-below = Show Quick Access Toolbar Below the Ribbon
+    .qat-show-above = Show Quick Access Toolbar Above the Ribbon
 
 options =
     .language-section = Jazyk

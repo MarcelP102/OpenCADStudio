@@ -60,7 +60,7 @@ pub use layout::{default_qat, MinimizePref, QatBuiltin, QatItem, RibbonLayout, R
 pub use minimize::{MinimizeMsg, Opener};
 pub(crate) use qat::QAT_SWITCH_ID;
 pub use qat::{QatMsg, QatOutcome, QAT_PICKER_INPUT};
-pub use ribbon_menu::{RibbonMenuMsg, Submenu};
+pub use ribbon_menu::{MenuTarget, RibbonMenuMsg, Submenu};
 pub use search::{results_scroll_id, SearchMsg, SearchOutcome, SEARCH_INPUT_ID};
 
 pub(crate) fn tooltip_content(text: String) -> Element<'static, Message> {
@@ -1209,6 +1209,8 @@ impl Ribbon {
             })
             .width(Length::Fill);
 
+        // Right-clicked, the tab row also offers where the toolbar shows.
+        let tab_bar = ribbon_menu::RightPress::for_target(ribbon_menu::MenuTarget::TabRow, tab_bar);
         let tab_bar = PosReport::new(minimize::TAB_BAR_ID, tab_bar);
         let top: Element<'a, Message> = match menu_row {
             Some(menu_row) => row![

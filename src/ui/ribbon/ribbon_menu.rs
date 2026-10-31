@@ -16,6 +16,7 @@ use iced::{
     Size, Theme, Vector,
 };
 
+use super::layout::QatItem;
 use super::widgets::{make_tip, popup_panel_style, tip_style};
 use super::{extras, Ribbon};
 use crate::app::Message;
@@ -41,10 +42,24 @@ pub enum Submenu {
     Panels,
 }
 
+/// What was right-clicked, which decides what the menu offers.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MenuTarget {
+    /// The ribbon's tool area, or anything else of it.
+    Ribbon,
+    /// The tab row or the Quick Access Toolbar's empty space.
+    TabRow,
+    /// A ribbon tool that runs a command (or opens a dropdown): it can go
+    /// on the Quick Access Toolbar.
+    Tool(QatItem),
+    /// The Quick Access item at this index.
+    Qat(usize),
+}
+
 #[derive(Clone, Debug)]
 pub enum RibbonMenuMsg {
-    /// Open the menu at this window point.
-    Open(Point),
+    /// Open the menu for what was right-clicked at this window point.
+    Open(Point, MenuTarget),
     Close,
     /// The pointer is over the row that opens this list, or over a row that
     /// opens none.
@@ -59,12 +74,22 @@ pub enum RibbonMenuMsg {
     ShowMenuBar(bool),
     /// Show the ribbon (`true`) or close it (handled by the app).
     ShowRibbon(bool),
+    /// Add a tool to the Quick Access Toolbar, or take it off.
+    QatToggle(QatItem),
+    /// Take the Quick Access item at this index off.
+    QatRemove(usize),
+    /// Add a separator after the Quick Access item at this index, or take
+    /// away the one there.
+    QatSeparatorAfter(usize),
+    /// Show the Quick Access Toolbar below the ribbon (`true`) or above.
+    QatBelow(bool),
 }
 
 #[derive(Clone, Debug)]
 pub(super) struct MenuState {
     at: Point,
     open: Option<Submenu>,
+    target: MenuTarget,
 }
 
 /// One row of the menu or of a list.
@@ -91,10 +116,45 @@ impl Ribbon {
     /// changed and should be saved.
     pub fn on_menu(&mut self, msg: RibbonMenuMsg) -> bool {
         match msg {
-            RibbonMenuMsg::Open(at) => {
+            RibbonMenuMsg::Open(at, target) => {
                 self.close_dropdown();
-                self.menu = Some(MenuState { at, open: None });
+                self.menu = Some(MenuState {
+                    at,
+                    open: None,
+                    target,
+                });
                 false
+            }
+            RibbonMenuMsg::QatToggle(item) => {
+                self.menu = None;
+                self.layout.qat_toggle(item);
+                true
+            }
+            RibbonMenuMsg::QatRemove(index) => {
+                self.menu = None;
+                if let Some(item) = self.layout.qat.get(index).cloned() {
+                    if item == QatItem::Separator {
+                        self.layout.qat.remove(index);
+                    } else {
+                        self.layout.qat_remove(&item);
+                    }
+                }
+                true
+            }
+            RibbonMenuMsg::QatSeparatorAfter(index) => {
+                self.menu = None;
+                let next = index + 1;
+                if self.layout.qat.get(next) == Some(&QatItem::Separator) {
+                    self.layout.qat.remove(next);
+                } else if index < self.layout.qat.len() {
+                    self.layout.qat.insert(next, QatItem::Separator);
+                }
+                true
+            }
+            RibbonMenuMsg::QatBelow(below) => {
+                self.menu = None;
+                self.layout.qat_below = below;
+                true
             }
             RibbonMenuMsg::Close => {
                 self.menu = None;
@@ -200,8 +260,42 @@ impl Ribbon {
     ) -> Option<Element<'_, Message>> {
         let menu = self.menu.as_ref()?;
         let is_default = self.is_default_layout();
+        let plain = |label: String, action: RibbonMenuMsg| {
+            Some((
+                Row {
+                    label,
+                    checked: false,
+                    enabled: true,
+                    reason: None,
+                    action,
+                },
+                None,
+            ))
+        };
+        let menu_bar_row = plain(
+            if show_menu_bar {
+                crate::tr!("ribbon-menu", "hide-menu-bar")
+            } else {
+                crate::tr!("ribbon-menu", "show-menu-bar")
+            },
+            RibbonMenuMsg::ShowMenuBar(!show_menu_bar),
+        );
+        let below = self.layout.qat_below;
+        let place_row = |label: String| {
+            Some((
+                Row {
+                    label,
+                    checked: false,
+                    enabled: !ribbon_closed,
+                    reason: ribbon_closed
+                        .then(|| crate::tr!("ribbon-menu", "qat-place-unavailable")),
+                    action: RibbonMenuMsg::QatBelow(!below),
+                },
+                None,
+            ))
+        };
         // The rows; `None` is a separator.
-        let rows: Vec<Option<(Row, Option<Submenu>)>> = vec![
+        let ribbon_rows: Vec<Option<(Row, Option<Submenu>)>> = vec![
             Some((
                 Row {
                     label: crate::tr!("ribbon-menu", "show-tabs"),
@@ -273,6 +367,54 @@ impl Ribbon {
                 None,
             )),
         ];
+
+        let rows: Vec<Option<(Row, Option<Submenu>)>> = match &menu.target {
+            MenuTarget::Ribbon => ribbon_rows,
+            MenuTarget::TabRow => {
+                let mut rows = ribbon_rows;
+                rows.push(None);
+                rows.push(place_row(if below {
+                    crate::tr!("ribbon-menu", "qat-show-above")
+                } else {
+                    crate::tr!("ribbon-menu", "qat-show-below")
+                }));
+                rows
+            }
+            MenuTarget::Tool(item) => {
+                let label = if self.layout.qat_has(item) {
+                    crate::tr!("ribbon-menu", "remove-from-qat")
+                } else {
+                    crate::tr!("ribbon-menu", "add-to-qat")
+                };
+                let mut rows = vec![plain(label, RibbonMenuMsg::QatToggle(item.clone())), None];
+                rows.extend(ribbon_rows);
+                rows
+            }
+            MenuTarget::Qat(index) => {
+                let separator_after = self.layout.qat.get(index + 1) == Some(&QatItem::Separator);
+                vec![
+                    plain(
+                        crate::tr!("ribbon-menu", "remove-from-qat"),
+                        RibbonMenuMsg::QatRemove(*index),
+                    ),
+                    plain(
+                        if separator_after {
+                            crate::tr!("ribbon-menu", "remove-separator")
+                        } else {
+                            crate::tr!("ribbon-menu", "add-separator")
+                        },
+                        RibbonMenuMsg::QatSeparatorAfter(*index),
+                    ),
+                    None,
+                    place_row(if below {
+                        crate::tr!("ribbon-menu", "show-above")
+                    } else {
+                        crate::tr!("ribbon-menu", "show-below")
+                    }),
+                    menu_bar_row,
+                ]
+            }
+        };
 
         let height = list_height(rows.iter().map(Option::is_some));
         let menu_w = fit_width(rows.iter().flatten().map(|(row, _)| row.label.as_str()));
@@ -495,17 +637,57 @@ fn row_style(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
-/// Opens the ribbon menu where `child` is right-clicked. It reports the
-/// press only, so moving the pointer over the ribbon sends nothing.
+/// Opens the ribbon menu where `child` is right-clicked, for `target`. It
+/// reports the press only, so moving the pointer over the ribbon sends
+/// nothing. The innermost one under the pointer answers.
 pub(super) struct RightPress<'a> {
     child: Element<'a, Message>,
+    target: MenuTarget,
 }
 
 impl<'a> RightPress<'a> {
     pub(super) fn new(child: impl Into<Element<'a, Message>>) -> Self {
+        Self::for_target(MenuTarget::Ribbon, child)
+    }
+
+    pub(super) fn for_target(target: MenuTarget, child: impl Into<Element<'a, Message>>) -> Self {
         Self {
             child: child.into(),
+            target,
         }
+    }
+}
+
+/// The Quick Access item of a ribbon tool: the command it runs.
+pub(super) fn tool_qat(tool: &crate::modules::ToolDef) -> Option<QatItem> {
+    match &tool.event {
+        crate::modules::ModuleEvent::Command(cmd) => Some(QatItem::Command(cmd.clone())),
+        _ => None,
+    }
+}
+
+/// The Quick Access item of a ribbon item that is one button: its tool's
+/// command, or a dropdown, which the toolbar shows as a split item.
+pub(super) fn item_qat(item: &crate::modules::RibbonItem) -> Option<QatItem> {
+    use crate::modules::RibbonItem;
+    match item {
+        RibbonItem::Tool(t) | RibbonItem::LabeledTool(t) | RibbonItem::LargeTool(t) => tool_qat(t),
+        RibbonItem::Dropdown { id, .. }
+        | RibbonItem::LabeledDropdown { id, .. }
+        | RibbonItem::LargeDropdown { id, .. } => Some(QatItem::Command(id.to_string())),
+        _ => None,
+    }
+}
+
+/// `child`, a ribbon tool that runs `item`: right-clicked, the menu offers
+/// to add it to the Quick Access Toolbar. Without an item it is left as is.
+pub(super) fn tool_target<'a>(
+    item: Option<QatItem>,
+    child: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    match item {
+        Some(item) => RightPress::for_target(MenuTarget::Tool(item), child).into(),
+        None => child.into(),
     }
 }
 
@@ -555,7 +737,10 @@ impl<'a> Widget<Message, Theme, Renderer> for RightPress<'a> {
         if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) = event {
             if let Some(at) = cursor.position_over(layout.bounds()) {
                 if !shell.is_event_captured() {
-                    shell.publish(Message::RibbonMenu(RibbonMenuMsg::Open(at)));
+                    shell.publish(Message::RibbonMenu(RibbonMenuMsg::Open(
+                        at,
+                        self.target.clone(),
+                    )));
                     shell.capture_event();
                 }
             }
@@ -696,7 +881,10 @@ mod tests {
     #[test]
     fn panel_titles_toggle_and_the_menu_closes_on_a_pick() {
         let mut ribbon = Ribbon::default();
-        ribbon.on_menu(RibbonMenuMsg::Open(Point::new(10.0, 10.0)));
+        ribbon.on_menu(RibbonMenuMsg::Open(
+            Point::new(10.0, 10.0),
+            MenuTarget::Ribbon,
+        ));
         assert!(ribbon.menu_open());
         ribbon.on_menu(RibbonMenuMsg::Hover(Some(Submenu::Tabs)));
         assert_eq!(ribbon.menu.as_ref().unwrap().open, Some(Submenu::Tabs));
@@ -716,5 +904,39 @@ mod tests {
             place(Point::new(700.0, 550.0), (200.0, 100.0), (800.0, 600.0)),
             (600.0, 500.0)
         );
+    }
+
+    #[test]
+    fn a_right_clicked_tool_goes_on_the_toolbar_and_comes_off() {
+        let mut ribbon = Ribbon::default();
+        let hatch = QatItem::Command("HATCH".into());
+        ribbon.on_menu(RibbonMenuMsg::Open(
+            Point::new(10.0, 10.0),
+            MenuTarget::Tool(hatch.clone()),
+        ));
+        assert!(ribbon.on_menu(RibbonMenuMsg::QatToggle(hatch.clone())));
+        assert!(!ribbon.menu_open());
+        assert!(ribbon.layout.qat_has(&hatch));
+        assert!(ribbon.on_menu(RibbonMenuMsg::QatToggle(hatch.clone())));
+        assert!(!ribbon.layout.qat_has(&hatch));
+    }
+
+    #[test]
+    fn a_separator_goes_after_an_item_and_comes_off_again() {
+        let mut ribbon = Ribbon::default();
+        // After Save (the third item).
+        assert!(ribbon.on_menu(RibbonMenuMsg::QatSeparatorAfter(2)));
+        assert_eq!(ribbon.layout.qat[3], QatItem::Separator);
+        let len = ribbon.layout.qat.len();
+        ribbon.on_menu(RibbonMenuMsg::QatSeparatorAfter(2));
+        assert_eq!(ribbon.layout.qat.len(), len - 1);
+        assert_ne!(ribbon.layout.qat[3], QatItem::Separator);
+
+        // Removing an item by its place.
+        let first = ribbon.layout.qat[0].clone();
+        ribbon.on_menu(RibbonMenuMsg::QatRemove(0));
+        assert!(!ribbon.layout.qat_has(&first));
+        ribbon.on_menu(RibbonMenuMsg::QatBelow(true));
+        assert!(ribbon.layout.qat_below);
     }
 }

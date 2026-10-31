@@ -8,7 +8,7 @@ use iced::widget::{button, container, row, text, tooltip, Space};
 use iced::{Background, Element, Fill, Length, Theme};
 
 use super::layout::{QatBuiltin, QatItem};
-use super::ribbon_menu::{check_row, fit_width, panel_of_width};
+use super::ribbon_menu::{check_row, fit_width, panel_of_width, MenuTarget, RightPress};
 use super::widgets::{
     layer_combo_face, make_tip, qat_split_part_style, quick_access_btn, render_history_control,
     split_outline, tip_style, top_hist_btn_style, SMALL_ICON, TOP_HIST_GAP,
@@ -131,50 +131,51 @@ impl Ribbon {
         redo_count: usize,
     ) -> Vec<Element<'_, Message>> {
         let enabled = !is_start;
-        self.layout
-            .qat
-            .iter()
-            .map(|item| match item {
-                QatItem::Command(cmd) => match self.ribbon_dropdown(cmd) {
-                    Some((id, label, items, default)) => {
-                        self.qat_split(id, label, items, default, enabled)
-                    }
-                    None => quick_access_btn(self.command_face(cmd), cmd.clone(), enabled),
-                },
-                QatItem::Builtin(QatBuiltin::Undo) => render_history_control(
-                    "Undo",
-                    UNDO_HISTORY_ID,
-                    if is_start { 0 } else { undo_count },
-                    &self.open_dropdown,
-                ),
-                QatItem::Builtin(QatBuiltin::Redo) => render_history_control(
-                    "Redo",
-                    REDO_HISTORY_ID,
-                    if is_start { 0 } else { redo_count },
-                    &self.open_dropdown,
-                ),
-                QatItem::Builtin(QatBuiltin::LayerCombo) => container(layer_combo_face(
-                    QAT_LAYER_COMBO_ID,
-                    &self.layer_infos,
-                    &self.active_layer,
-                    self.open_dropdown.as_deref() == Some(QAT_LAYER_COMBO_ID),
-                    metrics::QAT_COMBO_W,
-                    false,
-                ))
-                .padding([0.0, metrics::QAT_COMBO_MARGIN])
-                .into(),
-                QatItem::Builtin(QatBuiltin::SwitchWindows) => self.qat_menu_button(
-                    QAT_SWITCH_ID,
-                    SWITCH_WINDOWS_ICON,
-                    crate::tr!("ribbon-menu", "switch-windows"),
-                ),
-                QatItem::Builtin(QatBuiltin::UserInterface) => self.qat_menu_button(
-                    QAT_UI_ID,
-                    USER_INTERFACE_ICON,
-                    crate::tr!("ribbon-menu", "user-interface"),
-                ),
-                QatItem::Separator => separator(),
-            })
+        let items = self.layout.qat.iter().map(|item| match item {
+            QatItem::Command(cmd) => match self.ribbon_dropdown(cmd) {
+                Some((id, label, items, default)) => {
+                    self.qat_split(id, label, items, default, enabled)
+                }
+                None => quick_access_btn(self.command_face(cmd), cmd.clone(), enabled),
+            },
+            QatItem::Builtin(QatBuiltin::Undo) => render_history_control(
+                "Undo",
+                UNDO_HISTORY_ID,
+                if is_start { 0 } else { undo_count },
+                &self.open_dropdown,
+            ),
+            QatItem::Builtin(QatBuiltin::Redo) => render_history_control(
+                "Redo",
+                REDO_HISTORY_ID,
+                if is_start { 0 } else { redo_count },
+                &self.open_dropdown,
+            ),
+            QatItem::Builtin(QatBuiltin::LayerCombo) => container(layer_combo_face(
+                QAT_LAYER_COMBO_ID,
+                &self.layer_infos,
+                &self.active_layer,
+                self.open_dropdown.as_deref() == Some(QAT_LAYER_COMBO_ID),
+                metrics::QAT_COMBO_W,
+                false,
+            ))
+            .padding([0.0, metrics::QAT_COMBO_MARGIN])
+            .into(),
+            QatItem::Builtin(QatBuiltin::SwitchWindows) => self.qat_menu_button(
+                QAT_SWITCH_ID,
+                SWITCH_WINDOWS_ICON,
+                crate::tr!("ribbon-menu", "switch-windows"),
+            ),
+            QatItem::Builtin(QatBuiltin::UserInterface) => self.qat_menu_button(
+                QAT_UI_ID,
+                USER_INTERFACE_ICON,
+                crate::tr!("ribbon-menu", "user-interface"),
+            ),
+            QatItem::Separator => separator(),
+        });
+        // Right-clicked, an item offers to leave the toolbar.
+        items
+            .enumerate()
+            .map(|(index, item)| RightPress::for_target(MenuTarget::Qat(index), item).into())
             .chain(std::iter::once(self.customize_button()))
             .collect()
     }

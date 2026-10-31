@@ -693,7 +693,20 @@ fn tool_rows<'a>(
     column(rows).spacing(GAP).into()
 }
 
+/// A slide-out tool; right-clicked, it offers to go on the Quick Access
+/// Toolbar.
 fn tool_button(tool: &MoreTool, active: bool, panel_id: &'static str) -> Element<'static, Message> {
+    super::ribbon_menu::tool_target(
+        Some(super::layout::QatItem::Command(tool.command().to_string())),
+        slide_out_button(tool, active, panel_id),
+    )
+}
+
+fn slide_out_button(
+    tool: &MoreTool,
+    active: bool,
+    panel_id: &'static str,
+) -> Element<'static, Message> {
     let command = tool.command();
     let face = button(make_icon(tool.tool.icon, CELL_ICON))
         .on_press(Message::DropdownSelectItem {
