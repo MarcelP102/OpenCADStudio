@@ -215,6 +215,15 @@ fn panel_measure_key(
 /// bounds under: floating panels snap to its bottom.
 const RIBBON_ID: &str = "ribbon_whole";
 
+/// The id the tool area of the tab on show reports its bounds under.
+const TOOL_AREA_ID: &str = "ribbon_tool_area";
+
+/// The id the panel `title` of module `module_id` reports its place in the
+/// ribbon row under.
+fn row_panel_id(module_id: &str, title: &str) -> String {
+    format!("rowpanel:{module_id}/{title}")
+}
+
 /// The id a floating panel reports its bounds under.
 fn floating_id(key: &str) -> String {
     format!("float:{key}")
@@ -973,11 +982,17 @@ impl Ribbon {
         // The contextual tabs' panels and the test-block Close panel stay in
         // the ribbon.
         let floatable = !is_contextual(module_id) && !(module_id == "draw" && g.title == "Close");
-        Panel::deferred(g.title, move |level| match level {
-            collapse::Level::Full => group(false),
-            collapse::Level::Compact => group(true),
-            collapse::Level::Collapsed => button(false),
-            collapse::Level::Tight => button(true),
+        // Each form reports where it is, for docking a floating panel
+        // between two.
+        let row_id = row_panel_id(module_id, g.title);
+        Panel::deferred(g.title, move |level| {
+            let element = match level {
+                collapse::Level::Full => group(false),
+                collapse::Level::Compact => group(true),
+                collapse::Level::Collapsed => button(false),
+                collapse::Level::Tight => button(true),
+            };
+            PosReport::owned(row_id.clone(), element).into()
         })
         .floatable(floatable)
     }
@@ -1434,7 +1449,7 @@ impl Ribbon {
             } else {
                 metrics::THIN_STRIP_H
             };
-            CollapsePanels::new(panels, self.panel_h())
+            let collapse = CollapsePanels::new(panels, self.panel_h())
                 .draggable(strip, move |titles| Message::RibbonReorderPanels {
                     module,
                     titles,
@@ -1448,8 +1463,9 @@ impl Ribbon {
                 .measure_key(measure_key)
                 .report_height(self.tool_bar_h.clone())
                 .report_tight(self.collapse_tight.clone())
-                .mode(mode)
-                .into()
+                .mode(mode);
+            // A floating panel dropped on it docks here.
+            PosReport::new(TOOL_AREA_ID, collapse).into()
         } else {
             text("").into()
         };

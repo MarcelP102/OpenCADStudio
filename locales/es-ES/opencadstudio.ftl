@@ -235,6 +235,7 @@ ribbon-menu =
     .return-to-ribbon = Return to Ribbon
     .float-title-side = Panel title at the side, extra tools open to the right
     .float-title-bottom = Panel title at the bottom, extra tools open downward
+    .floating-suffix = {" "}(floating)
 
 options =
     .language-section = Idioma

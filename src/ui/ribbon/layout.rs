@@ -231,13 +231,15 @@ impl RibbonLayout {
         groups
     }
 
-    /// Back to the default panel order, every tab and panel shown and panel
-    /// titles on. The minimize state and pinned slide-outs stay.
+    /// Back to the default panel order, every tab and panel shown in the
+    /// ribbon (floating ones too) and panel titles on. The minimize state,
+    /// pinned slide-outs and the Quick Access Toolbar stay.
     pub(super) fn reset(&mut self) {
         self.hidden_tabs.clear();
         self.hidden_panels.clear();
         self.panel_order.clear();
         self.show_panel_titles = true;
+        self.floating.clear();
     }
 
     /// Whether the Quick Access Toolbar holds `item`.
@@ -337,6 +339,7 @@ impl RibbonLayout {
     /// Entries naming a tab or panel that no longer exists do not count.
     pub(super) fn is_default(&self, modules: &[Box<dyn CadModule>]) -> bool {
         self.show_panel_titles
+            && self.floating.is_empty()
             && modules.iter().all(|module| {
                 let id = module.id();
                 let groups: Vec<&RibbonGroup> = module.ribbon_groups().iter().collect();

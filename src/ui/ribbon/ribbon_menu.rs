@@ -182,6 +182,8 @@ impl Ribbon {
             }
             RibbonMenuMsg::TogglePanel(key) => {
                 self.menu = None;
+                // A floating panel unticked docks and hides.
+                self.dock_floating(&key);
                 if !self.layout.hidden_panels.remove(&key) {
                     self.layout.hidden_panels.insert(key);
                 }
@@ -238,8 +240,17 @@ impl Ribbon {
             .into_iter()
             .map(|group| {
                 let checked = !self.layout.panel_hidden(id, group.title);
+                let floating = self.layout.floating_panel(id, group.title).is_some();
                 Row {
-                    label: crate::t!(group.title).into_owned(),
+                    label: if floating {
+                        format!(
+                            "{}{}",
+                            crate::t!(group.title),
+                            crate::tr!("ribbon-menu", "floating-suffix")
+                        )
+                    } else {
+                        crate::t!(group.title).into_owned()
+                    },
                     checked,
                     // The last panel shown stays.
                     enabled: !(checked && shown == 1),
@@ -938,5 +949,36 @@ mod tests {
         assert!(!ribbon.layout.qat_has(&first));
         ribbon.on_menu(RibbonMenuMsg::QatBelow(true));
         assert!(ribbon.layout.qat_below);
+    }
+
+    #[test]
+    fn a_floating_panel_is_listed_as_floating_and_unticking_docks_and_hides_it() {
+        let mut ribbon = Ribbon::default();
+        let draw = index(&ribbon, "draw");
+        ribbon.select(draw);
+        assert!(ribbon.float_panel("draw", "Modify", 400.0, 300.0));
+        assert!(!ribbon.is_default_layout());
+        let modify = ribbon
+            .panel_rows()
+            .into_iter()
+            .find(|row| row.label.starts_with("Modify"))
+            .unwrap();
+        assert!(modify.checked);
+        assert!(modify.label.ends_with("(floating)"), "{}", modify.label);
+        assert!(!modify.label.contains('"'));
+
+        assert!(ribbon.on_menu(modify.action));
+        assert!(ribbon.layout.floating.is_empty());
+        assert!(ribbon.layout.panel_hidden("draw", "Modify"));
+    }
+
+    #[test]
+    fn reset_brings_the_floating_panels_back() {
+        let mut ribbon = Ribbon::default();
+        ribbon.float_panel("draw", "Draw", 400.0, 300.0);
+        ribbon.float_panel("insert", "Block Definition", 500.0, 300.0);
+        assert!(ribbon.on_menu(RibbonMenuMsg::Reset));
+        assert!(ribbon.layout.floating.is_empty());
+        assert!(ribbon.is_default_layout());
     }
 }

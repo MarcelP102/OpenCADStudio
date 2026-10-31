@@ -230,10 +230,21 @@ impl Ribbon {
                     )
                 }
             };
-        let framed = container(content).style(|theme: &Theme| container::Style {
+        // Over the tool area, where a release docks it, it is outlined in
+        // `accent`.
+        let docking = self
+            .float_ui
+            .drag
+            .as_ref()
+            .is_some_and(|drag| drag.key == key && drag.over_ribbon);
+        let framed = container(content).style(move |theme: &Theme| container::Style {
             background: Some(Background::Color(chrome::panel(theme))),
             border: Border {
-                color: chrome::border(theme),
+                color: if docking {
+                    chrome::accent(theme)
+                } else {
+                    chrome::border(theme)
+                },
                 width: crate::ui::icons::hairline(),
                 radius: 0.0.into(),
             },
@@ -632,13 +643,20 @@ impl Ribbon {
                     .map(|panel| FloatDrag {
                         key,
                         grab: at - Point::new(panel.x, panel.y),
+                        over_ribbon: false,
+                        at,
                     });
                 false
             }
             FloatMsg::Move { at, free } => {
-                let Some(drag) = &self.float_ui.drag else {
+                let over_ribbon = crate::ui::wrap_bar::recent_bounds(super::TOOL_AREA_ID)
+                    .is_some_and(|area| area.contains(at));
+                let Some(drag) = self.float_ui.drag.as_mut() else {
                     return false;
                 };
+                drag.over_ribbon = over_ribbon;
+                drag.at = at;
+                let drag = drag.clone();
                 let corner = at - drag.grab;
                 // Alt moves it freely; otherwise its edges snap to the other
                 // floating panels, the window and the bottom of the ribbon.
@@ -672,7 +690,14 @@ impl Ribbon {
                 }
                 false
             }
-            FloatMsg::Release { moved } => self.float_ui.drag.take().is_some() && moved,
+            FloatMsg::Release { moved } => match self.float_ui.drag.take() {
+                // Dropped on the tool area: back into the ribbon.
+                Some(drag) if moved && drag.over_ribbon => {
+                    self.dock_floating_at(&drag.key, drag.at.x)
+                }
+                Some(_) => moved,
+                None => false,
+            },
         }
     }
 
@@ -691,6 +716,44 @@ impl Ribbon {
             }
         }
         self.layout.floating.len() != before
+    }
+
+    /// Dock floating panel `key` dropped on the tool area at `x`: on the tab
+    /// on show it goes in where it was dropped (the place a reorder would
+    /// give it); a panel of another tab goes back to its old place there.
+    fn dock_floating_at(&mut self, key: &str, x: f32) -> bool {
+        let Some(panel) = self.layout.floating.iter().find(|panel| panel.key == key) else {
+            return false;
+        };
+        let module_id = panel.module_id.clone();
+        let index = self
+            .modules
+            .iter()
+            .position(|module| module.id() == module_id);
+        let title = key
+            .split_once('/')
+            .map_or(key, |(_, title)| title)
+            .to_string();
+        let row: Vec<String> = match index {
+            Some(index) if index == self.active => self
+                .groups_for(index)
+                .map(|group| group.title.to_string())
+                .collect(),
+            _ => return self.dock_floating(key),
+        };
+        // Before every panel whose middle is right of the drop.
+        let slot = row
+            .iter()
+            .filter(|other| {
+                crate::ui::wrap_bar::recent_bounds(&super::row_panel_id(&module_id, other))
+                    .is_some_and(|b| b.center_x() < x)
+            })
+            .count();
+        self.dock_floating(key);
+        let mut titles = row;
+        titles.insert(slot.min(titles.len()), title);
+        self.reorder_panels(&module_id, &titles);
+        true
     }
 
     /// Pin or unpin the extra tools of floating panel `key`; whether that
@@ -920,6 +983,10 @@ pub(super) struct FloatDrag {
     pub key: String,
     /// The press point within the panel.
     pub grab: Vector,
+    /// The pointer is over the ribbon's tool area: a release docks it.
+    pub over_ribbon: bool,
+    /// Where the pointer last was.
+    pub at: Point,
 }
 
 /// Where on a panel its title strip is: along the bottom or the right, this
