@@ -35,6 +35,42 @@ pub enum MinimizePref {
     PanelButtons,
 }
 
+/// One item of the Quick Access Toolbar.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum QatItem {
+    /// Any command line, e.g. "QSAVE", "HATCH", "ZOOM E", or the id of a
+    /// ribbon dropdown (a split item whose face runs the last one chosen).
+    Command(String),
+    /// A built-in control with its own UI.
+    Builtin(QatBuiltin),
+    Separator,
+}
+
+/// The Quick Access Toolbar's controls with a UI of their own.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum QatBuiltin {
+    Undo,
+    Redo,
+    LayerCombo,
+    SwitchWindows,
+    UserInterface,
+}
+
+/// The toolbar a user with no saved one sees: the file commands, then Undo
+/// and Redo.
+pub fn default_qat() -> Vec<QatItem> {
+    let command = |cmd: &str| QatItem::Command(cmd.to_string());
+    vec![
+        command("QNEW"),
+        command("OPEN"),
+        command("SAVE"),
+        command("SAVEAS"),
+        command("PRINT"),
+        QatItem::Builtin(QatBuiltin::Undo),
+        QatItem::Builtin(QatBuiltin::Redo),
+    ]
+}
+
 /// The ribbon's persisted layout. Panels are named by their panel key
 /// (`extras::panel_key`), tabs by their module id.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -54,6 +90,12 @@ pub struct RibbonLayout {
     /// The command search box is kept open; collapsed it shows as its
     /// magnifier button.
     pub search_expanded: bool,
+    /// The Quick Access Toolbar, left to right.
+    pub qat: Vec<QatItem>,
+    /// Show the Quick Access Toolbar in its own row below the ribbon.
+    pub qat_below: bool,
+    /// Per split item, the command its face runs (the last one chosen).
+    pub qat_faces: BTreeMap<String, String>,
 }
 
 impl Default for RibbonLayout {
@@ -67,6 +109,9 @@ impl Default for RibbonLayout {
             minimize_pref: MinimizePref::default(),
             pinned_slideouts: BTreeSet::new(),
             search_expanded: true,
+            qat: default_qat(),
+            qat_below: false,
+            qat_faces: BTreeMap::new(),
         }
     }
 }

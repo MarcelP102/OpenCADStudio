@@ -14,6 +14,8 @@ pub const TAB_TEXT_RAISE: f32 = 2.0;
 /// A Quick Access button, square, and the gap between buttons.
 pub const QAT_BUTTON: f32 = 22.0;
 pub const QAT_GAP: f32 = 2.0;
+/// Room on each side of the name of a Quick Access command with no icon.
+pub const QAT_TEXT_PAD: f32 = 5.0;
 /// Width of the arrow part of a Quick Access split button.
 pub const QAT_SPLIT_ARROW_W: f32 = 11.0;
 /// Gap between two tabs: none, so a hovered tab meets the active one.

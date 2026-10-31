@@ -39,6 +39,7 @@ mod layout;
 mod locate;
 mod minimize;
 mod panel_frame;
+mod qat;
 mod ribbon_menu;
 mod search;
 mod stretch_column;
@@ -55,7 +56,7 @@ pub use keytips::{
     note_command_finished as keytip_note_command_finished,
     note_focus_changed as keytip_note_focus_changed, pointer_pressed as keytip_pointer_pressed,
 };
-pub use layout::{MinimizePref, RibbonLayout, RibbonMinimize};
+pub use layout::{default_qat, MinimizePref, QatBuiltin, QatItem, RibbonLayout, RibbonMinimize};
 pub use minimize::{MinimizeMsg, Opener};
 pub use ribbon_menu::{RibbonMenuMsg, Submenu};
 pub use search::{results_scroll_id, SearchMsg, SearchOutcome, SEARCH_INPUT_ID};
@@ -300,16 +301,6 @@ const CONTEXTUAL_LINE: f32 = 2.0;
 fn is_contextual(id: &str) -> bool {
     id == "block_editor"
 }
-
-/// The quick-access file buttons before Undo and Redo: icon, label and
-/// command.
-static QUICK_ACCESS: [(&[u8], &str, &str); 5] = [
-    (crate::ui::icons::DOC_NEW, "New", "QNEW"),
-    (crate::ui::icons::FOLDER_OPEN, "Open", "OPEN"),
-    (crate::ui::icons::SAVE, "Save", "SAVE"),
-    (crate::ui::icons::FILE_EXPORT, "Save As", "SAVEAS"),
-    (crate::ui::icons::PRINT, "Print", "PRINT"),
-];
 
 // ── Ribbon state ───────────────────────────────────────────────────────────
 
@@ -1053,30 +1044,8 @@ impl Ribbon {
         show_block_palette: bool,
         visibility: Option<crate::ui::window::block_visibility::RibbonContext>,
     ) -> Element<'a, Message> {
-        // ── Quick-access file commands + undo/redo, one merged flow ────────
-        let lead = iced::widget::Row::with_children(
-            QUICK_ACCESS
-                .iter()
-                .map(|&(icon, label, cmd)| quick_access_btn(icon, label, cmd, !is_start))
-                .chain([
-                    render_history_control(
-                        "Undo",
-                        UNDO_HISTORY_ID,
-                        if is_start { 0 } else { undo_count },
-                        &self.open_dropdown,
-                    ),
-                    render_history_control(
-                        "Redo",
-                        REDO_HISTORY_ID,
-                        if is_start { 0 } else { redo_count },
-                        &self.open_dropdown,
-                    ),
-                ]),
-        )
-        .spacing(TOP_HIST_GAP)
-        .align_y(iced::Center)
-        .wrap()
-        .vertical_spacing(0.0);
+        // ── Quick Access Toolbar, one flow ───────────────────────────────
+        let lead = self.qat_row(is_start, undo_count, redo_count);
 
         // The quick-access flow and the tabs flow each flex-wrap; WrapBar stacks
         // them so a wrapped tab never shares a row with a quick-access button.
@@ -1212,7 +1181,7 @@ impl Ribbon {
         }
         tab_row = tab_row.push(
             container(
-                WrapBar::new(lead.into(), tabs.into())
+                WrapBar::new(lead, tabs.into())
                     .spacing(6.0)
                     .min_row_h(TAB_ROW_H)
                     .report_height(self.tab_bar_h.clone()),

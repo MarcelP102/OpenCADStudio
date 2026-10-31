@@ -826,6 +826,23 @@ pub struct SearchEntry {
     pub icon: Option<&'static [u8]>,
 }
 
+/// The label and icon of the first menu item that runs the command line
+/// `line` (ignoring case), whether OCS has the command or not.
+pub fn entry_for_line(line: &str) -> Option<(String, Option<&'static [u8]>)> {
+    fn walk(entries: &'static [Entry], line: &str) -> Option<(String, Option<&'static [u8]>)> {
+        entries.iter().find_map(|entry| match *entry {
+            Cmd(label, cmd, _) if cmd.eq_ignore_ascii_case(line) => {
+                Some((crate::t!(label).into_owned(), command_icon(cmd)))
+            }
+            Sub(_, entries) => walk(entries, line),
+            _ => None,
+        })
+    }
+    MENUS
+        .iter()
+        .find_map(|(_, entries)| walk(entries, line.trim()))
+}
+
 /// Every menu item that runs a command, in menu order.
 pub fn search_entries() -> Vec<SearchEntry> {
     fn walk(entries: &'static [Entry], path: &str, out: &mut Vec<SearchEntry>) {

@@ -1720,38 +1720,40 @@ pub fn module_event_to_message(event: ModuleEvent) -> Message {
 
 // ── History control ────────────────────────────────────────────────────────
 
-/// Quick-access chrome button (New / Open / Save / Save As / Print) in the top
-/// strip: an SVG icon that dispatches a command string, with a hover tooltip.
-/// A Quick Access button; greyed out and inert unless `enabled` (the Start
-/// tab has no drawing for it).
+/// A Quick Access command button: the command's icon (its name when it has
+/// none), running it as a ribbon button does. Greyed out and inert unless
+/// `enabled` (the Start tab has no drawing for it).
 pub(super) fn quick_access_btn<'a>(
-    icon_bytes: &'static [u8],
-    label: &'static str,
-    cmd: &'static str,
+    face: super::qat::Face,
+    cmd: String,
     enabled: bool,
 ) -> Element<'a, Message> {
-    // The bundled UI SVGs are black-stroked; tint them to a light chrome grey so
-    // they read on the dark top strip (raw black is invisible there).
-    let icon = if enabled {
-        icons::chrome(icon_bytes, SMALL_ICON)
-    } else {
-        icons::chrome_disabled(icon_bytes, SMALL_ICON)
-    };
+    let icon = super::qat::face_icon(&face, SMALL_ICON, enabled);
+    let text_face = matches!(face.icon, super::qat::FaceIcon::Text);
     let btn = button(
         container(icon)
-            .width(Fill)
+            .width(if text_face { Length::Shrink } else { Fill })
             .height(Fill)
             .align_x(iced::Center)
             .align_y(iced::Center),
     )
-    .on_press_maybe(enabled.then(|| Message::Command(cmd.to_string())))
+    .on_press_maybe(enabled.then(|| Message::MenuCommand(cmd.clone())))
     .style(move |theme: &Theme, status| top_hist_btn_style(theme, enabled, false, status))
-    .width(Length::Fixed(TOP_HIST_W))
+    .width(if text_face {
+        Length::Shrink
+    } else {
+        Length::Fixed(TOP_HIST_W)
+    })
     .height(TOP_BUTTON_H)
-    .padding([2, 0]);
+    .padding(if text_face {
+        Padding::from([0.0, metrics::QAT_TEXT_PAD])
+    } else {
+        Padding::from([2.0, 0.0])
+    });
+    let anchor = super::keytips::quick_access_anchor(&cmd);
     super::keytips::anchor_with(
-        || super::keytips::quick_access_anchor(cmd),
-        tooltip(btn, make_tip(t!(label).into_owned()), TipPos::Bottom)
+        move || anchor,
+        tooltip(btn, make_tip(face.label), TipPos::Bottom)
             .gap(6.0)
             .delay(Duration::from_millis(400))
             .style(tip_style),

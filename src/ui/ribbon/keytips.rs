@@ -782,17 +782,44 @@ impl Ribbon {
                 action: Action::Tab(index),
             })
             .collect();
-        tips.extend(QUICK_ACCESS.iter().map(|&(id, code)| Tip {
-            anchor: quick_access_anchor(id),
-            target: id,
-            code: Some(code.to_string()),
-            action: Action::Run(match id {
-                super::widgets::UNDO_HISTORY_ID => Message::Undo,
-                super::widgets::REDO_HISTORY_ID => Message::Redo,
-                command => Message::Command(command.to_string()),
-            }),
-        }));
+        tips.extend(self.qat_tips());
         tips
+    }
+
+    /// The Quick Access items, with the codes the reference gives them.
+    fn qat_tips(&self) -> Vec<Tip> {
+        use super::layout::{QatBuiltin, QatItem};
+        self.layout
+            .qat
+            .iter()
+            .filter_map(|item| {
+                let (id, action) = match item {
+                    QatItem::Command(cmd) => {
+                        (cmd.as_str(), Action::Run(Message::MenuCommand(cmd.clone())))
+                    }
+                    QatItem::Builtin(QatBuiltin::Undo) => {
+                        (super::widgets::UNDO_HISTORY_ID, Action::Run(Message::Undo))
+                    }
+                    QatItem::Builtin(QatBuiltin::Redo) => {
+                        (super::widgets::REDO_HISTORY_ID, Action::Run(Message::Redo))
+                    }
+                    _ => return None,
+                };
+                let code = QUICK_ACCESS
+                    .iter()
+                    .find(|(known, _)| known.eq_ignore_ascii_case(id))?
+                    .1;
+                Some(Tip {
+                    anchor: quick_access_anchor(id),
+                    target: QUICK_ACCESS
+                        .iter()
+                        .find(|(known, _)| known.eq_ignore_ascii_case(id))?
+                        .0,
+                    code: Some(code.to_string()),
+                    action,
+                })
+            })
+            .collect()
     }
 
     /// Every button, dropdown, slide-out and collapsed panel of tab `index`.

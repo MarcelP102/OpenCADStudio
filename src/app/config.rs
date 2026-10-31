@@ -770,6 +770,40 @@ mod tests {
     }
 
     #[test]
+    fn quick_access_toolbar_defaults_and_round_trips() {
+        use crate::ui::ribbon::{QatBuiltin, QatItem};
+
+        // A config saved before the toolbar was customizable shows today's
+        // toolbar.
+        let old: AppConfig =
+            serde_json::from_str(r#"{"ribbon":{"search_expanded":false}}"#).expect("old config");
+        assert_eq!(old.ribbon.layout.qat, crate::ui::ribbon::default_qat());
+        assert!(!old.ribbon.layout.qat_below);
+        assert!(old.ribbon.layout.qat_faces.is_empty());
+
+        let mut original = AppConfig::default();
+        let layout = &mut original.ribbon.layout;
+        layout.qat = vec![
+            QatItem::Command("QSAVE".into()),
+            QatItem::Separator,
+            QatItem::Builtin(QatBuiltin::LayerCombo),
+            QatItem::Command("ZOOM E".into()),
+        ];
+        layout.qat_below = true;
+        layout
+            .qat_faces
+            .insert("MEASURE_MENU".into(), "AREA".into());
+        let serialized = serde_json::to_string(&original).expect("serialize config");
+        let value: serde_json::Value = serde_json::from_str(&serialized).expect("json");
+        assert_eq!(value["ribbon"]["qat"][0]["Command"], "QSAVE");
+        assert_eq!(value["ribbon"]["qat"][1], "Separator");
+        assert_eq!(value["ribbon"]["qat"][2]["Builtin"], "LayerCombo");
+        assert_eq!(value["ribbon"]["qat_below"], true);
+        let restored: AppConfig = serde_json::from_str(&serialized).expect("deserialize config");
+        assert!(restored.ribbon == original.ribbon);
+    }
+
+    #[test]
     fn test_parse_theme_name() {
         assert_eq!(parse_theme_name("light"), Some(iced::Theme::Light));
         assert_eq!(parse_theme_name("DARK"), Some(iced::Theme::Dark));

@@ -17,8 +17,10 @@ use iced::{
     Size, Theme, Vector,
 };
 
+use super::layout::{QatBuiltin, QatItem};
+use super::qat::FaceIcon;
 use super::widgets::{make_icon, make_tip, tip_style};
-use super::{app_menu, draw_panel, extras, Ribbon, QUICK_ACCESS};
+use super::{app_menu, draw_panel, extras, Ribbon};
 use crate::app::Message;
 use crate::modules::{IconKind, ModuleEvent, RibbonItem, ToolDef};
 use crate::ui::icons;
@@ -188,27 +190,42 @@ impl Ribbon {
     fn search_index(&self) -> Vec<Hit> {
         let mut hits = Vec::new();
         let quick_access = crate::tr!("ribbon-menu", "quick-access-toolbar");
-        for &(icon, label, command) in &QUICK_ACCESS {
+        for item in &self.layout.qat {
+            let (label, command, icon, run) = match item {
+                QatItem::Command(command) => {
+                    let face = self.command_face(command);
+                    let icon = match face.icon {
+                        FaceIcon::Chrome(icon) => Some(IconKind::Svg(icon)),
+                        FaceIcon::Tool(icon) => Some(icon),
+                        FaceIcon::Text => None,
+                    };
+                    (
+                        face.label,
+                        command.clone(),
+                        icon,
+                        Message::MenuCommand(command.clone()),
+                    )
+                }
+                QatItem::Builtin(QatBuiltin::Undo) => (
+                    crate::t!("Undo").into_owned(),
+                    "UNDO".to_string(),
+                    crate::modules::registry::command_icon("UNDO").map(IconKind::Svg),
+                    Message::Undo,
+                ),
+                QatItem::Builtin(QatBuiltin::Redo) => (
+                    crate::t!("Redo").into_owned(),
+                    "REDO".to_string(),
+                    crate::modules::registry::command_icon("REDO").map(IconKind::Svg),
+                    Message::Redo,
+                ),
+                QatItem::Builtin(_) | QatItem::Separator => continue,
+            };
             hits.push(Hit {
                 group: Group::QuickAccess,
-                label: crate::t!(label).into_owned(),
+                label,
                 path: quick_access.clone(),
-                command: Some(command.to_string()),
-                icon: Some(IconKind::Svg(icon)),
-                run: Message::Command(command.to_string()),
-                place: None,
-            });
-        }
-        for (label, command, run) in [
-            ("Undo", "UNDO", Message::Undo),
-            ("Redo", "REDO", Message::Redo),
-        ] {
-            hits.push(Hit {
-                group: Group::QuickAccess,
-                label: crate::t!(label).into_owned(),
-                path: quick_access.clone(),
-                command: Some(command.to_string()),
-                icon: crate::modules::registry::command_icon(command).map(IconKind::Svg),
+                command: Some(command),
+                icon,
                 run,
                 place: None,
             });
