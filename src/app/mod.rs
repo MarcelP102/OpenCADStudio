@@ -3517,6 +3517,8 @@ pub enum Message {
     /// space separates the answers to the command's prompts, as in a menu
     /// macro, and no Enter follows the last one.
     MenuCommand(String),
+    /// The Quick Access Toolbar's lists and menus.
+    RibbonQat(crate::ui::ribbon::QatMsg),
     /// The minimize button and the minimized ribbon's popups.
     RibbonMinimize(crate::ui::ribbon::MinimizeMsg),
     /// The pointer and pins of the ribbon's slide-outs.

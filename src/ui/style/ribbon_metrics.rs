@@ -18,6 +18,17 @@ pub const QAT_GAP: f32 = 2.0;
 pub const QAT_TEXT_PAD: f32 = 5.0;
 /// Width of the arrow part of a Quick Access split button.
 pub const QAT_SPLIT_ARROW_W: f32 = 11.0;
+/// The Quick Access layer combo: as high as a Quick Access button, this
+/// wide, with this margin on each side.
+pub const QAT_COMBO_W: f32 = 210.0;
+pub const QAT_COMBO_MARGIN: f32 = 3.0;
+/// A Quick Access separator: a line this high, with this margin on each
+/// side.
+pub const QAT_SEPARATOR_H: f32 = 16.0;
+pub const QAT_SEPARATOR_MARGIN: f32 = 4.0;
+/// The Quick Access menu buttons (Switch Windows, User Interface): icon
+/// and arrow.
+pub const QAT_MENU_BUTTON_W: f32 = QAT_BUTTON + QAT_SPLIT_ARROW_W;
 /// Gap between two tabs: none, so a hovered tab meets the active one.
 pub const TAB_GAP: f32 = 0.0;
 /// The minimize split button after the last tab: this far from the tab,

@@ -196,6 +196,15 @@ ribbon-menu =
     .menu-bar = Barra de menus
     .ribbon-tab = Guia da faixa de opções
     .no-matches = Nenhum comando correspondente
+    .switch-windows = Switch Windows
+    .user-interface = User Interface
+    .no-open-drawings = No open drawings
+    .viewcube = ViewCube
+    .ucs-icon = UCS Icon
+    .file-tabs = File Tabs
+    .layout-tabs = Layout Tabs
+    .command-line = Command Line
+    .status-bar = Status Bar
 
 options =
     .language-section = Idioma

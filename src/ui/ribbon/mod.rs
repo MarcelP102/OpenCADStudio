@@ -58,6 +58,8 @@ pub use keytips::{
 };
 pub use layout::{default_qat, MinimizePref, QatBuiltin, QatItem, RibbonLayout, RibbonMinimize};
 pub use minimize::{MinimizeMsg, Opener};
+pub(crate) use qat::QAT_SWITCH_ID;
+pub use qat::{QatMsg, QatOutcome};
 pub use ribbon_menu::{RibbonMenuMsg, Submenu};
 pub use search::{results_scroll_id, SearchMsg, SearchOutcome, SEARCH_INPUT_ID};
 
@@ -1437,10 +1439,14 @@ impl Ribbon {
         is_start: bool,
         recent_colors: &[AcadColor],
         recent_files: &[std::path::PathBuf],
+        drawings: &[(usize, String, bool)],
     ) -> Option<Element<'_, Message>> {
         let open_id = self.open_dropdown.as_deref()?;
         if open_id == APP_MENU_ID {
             return Some(self.app_menu(recent_files, win));
+        }
+        if let Some(menu) = self.qat_overlay(open_id, win, is_start, drawings) {
+            return Some(menu);
         }
         // The minimize button belongs to the tab row, which the Start tab
         // keeps; the tools' dropdowns need a drawing.
@@ -1491,7 +1497,7 @@ impl Ribbon {
         }
 
         if open_id == LAYER_COMBO_ID {
-            return self.layer_combo_overlay(win);
+            return self.layer_combo_overlay(LAYER_COMBO_ID, win);
         }
 
         if open_id == widgets::DIM_LAYER_COMBO {
@@ -1566,76 +1572,16 @@ impl Ribbon {
         let items = items_list?;
         let last_cmd = self.last_cmd.get(dd_id).copied().unwrap_or(dd_default);
 
-        // Each item: its large icon and its name, the current one lit.
-        let rows: Vec<Element<Message>> = items
-            .iter()
-            .map(|(cmd, label, item_icon)| {
-                let is_current = *cmd == last_cmd;
-                let disabled = widgets::is_disabled_item(cmd);
-                let icon_el: Element<Message> = container(make_icon(*item_icon, LARGE_ICON))
-                    .width(Length::Fixed(LARGE_ICON))
-                    .into();
-                let label_el = text(t!(*label))
-                    .size(DD_LABEL)
-                    .wrapping(iced::advanced::text::Wrapping::None)
-                    .style(move |theme: &Theme| iced::widget::text::Style {
-                        color: disabled.then_some(chrome::muted(theme)),
-                    });
-                let label_el = keytips::label_anchor(
-                    || keytips::label_id(&keytips::item_anchor(dd_id, cmd)),
-                    label_el,
-                );
-                let item = button(
-                    row![icon_el, label_el]
-                        .spacing(DD_GAP)
-                        .align_y(iced::Center),
-                )
-                .on_press_maybe((!disabled).then_some(Message::DropdownSelectItem {
-                    dropdown_id: dd_id,
-                    cmd: *cmd,
-                }))
-                .style(move |theme: &Theme, status| {
-                    if is_current {
-                        popup_row_style(theme, button::Status::Hovered)
-                    } else {
-                        popup_row_style(theme, status)
-                    }
-                })
-                .width(Fill)
-                .padding(DD_PAD);
-                keytips::anchor_with(|| keytips::item_anchor(dd_id, cmd), item)
-            })
-            .collect();
-
-        let header = dropdown_header(dd_id).map(|header| t!(header).into_owned());
-        let mut rows = rows;
-        if let Some(header) = &header {
-            rows.insert(
-                0,
-                container(text(header.clone()).size(10).style(muted_text_style))
-                    .padding([4, 10])
-                    .into(),
-            );
-        }
-        // As wide as the longest name, as the right-click menus are; a
-        // header wraps rather than widening the list.
-        let longest = items
-            .iter()
-            .map(|(_, label, _)| {
-                crate::ui::style::text_metrics::width(&t!(*label), DD_LABEL, false)
-            })
-            .fold(0.0, f32::max);
-        let panel_w = DD_PAD.left + LARGE_ICON + DD_GAP + longest + DD_PAD.right + 2.0;
-        let panel_w = if header.is_some() {
-            panel_w.max(DD_HEADER_MIN_W)
-        } else {
-            panel_w
-        };
-
-        let panel = container(column(rows))
-            .style(popup_panel_style)
-            .width(Length::Fixed(panel_w));
-
+        let (panel, panel_w) = dropdown_list(
+            dd_id,
+            &items,
+            last_cmd,
+            dropdown_header(dd_id).map(|header| t!(header).into_owned()),
+            |cmd| Message::DropdownSelectItem {
+                dropdown_id: dd_id,
+                cmd,
+            },
+        );
         let (align_right, h_pad, top) = self.dd_anchor(open_id, panel_w, win.0);
         Some(dropdown_backdrop(position_ribbon_dropdown(
             panel.into(),
@@ -1729,7 +1675,9 @@ impl Ribbon {
         dropdown_backdrop(position_ribbon_dropdown(panel.into(), align_right, h_pad, top))
     }
 
-    fn layer_combo_overlay(&self, win: (f32, f32)) -> Option<Element<'_, Message>> {
+    /// The layer list under the layer combo `id` (the ribbon's or the Quick
+    /// Access Toolbar's).
+    fn layer_combo_overlay(&self, id: &str, win: (f32, f32)) -> Option<Element<'_, Message>> {
         // A toggle icon (visible / freeze / lock) is its own button so a click
         // on it flips that state instead of bubbling up to the row's
         // make-active handler (#133).
@@ -1864,7 +1812,7 @@ impl Ribbon {
         .style(popup_panel_style)
         .width(Length::Fixed(300.0));
 
-        let (align_right, h_pad, top) = self.dd_anchor(LAYER_COMBO_ID, 300.0, win.0);
+        let (align_right, h_pad, top) = self.dd_anchor(id, 300.0, win.0);
         let positioned = position_ribbon_dropdown(panel.into(), align_right, h_pad, top);
 
         Some(dropdown_backdrop(positioned))
@@ -2096,6 +2044,82 @@ enum Strip {
     Peek,
     /// No strip: a peek's panel while its extra tools show under it.
     Bare,
+}
+
+/// The list of the ribbon dropdown `dd_id`: each of `items` with its large
+/// icon and name, `current` lit, under an optional `header`. Returns the
+/// list and its width, as wide as the longest name.
+fn dropdown_list<'a>(
+    dd_id: &'static str,
+    items: &[(&'static str, &'static str, IconKind)],
+    current: &str,
+    header: Option<String>,
+    pick: impl Fn(&'static str) -> Message,
+) -> (Element<'a, Message>, f32) {
+    let last_cmd = current;
+    // Each item: its large icon and its name, the current one lit.
+    let mut rows: Vec<Element<Message>> = items
+        .iter()
+        .map(|(cmd, label, item_icon)| {
+            let is_current = *cmd == last_cmd;
+            let disabled = widgets::is_disabled_item(cmd);
+            let icon_el: Element<Message> = container(make_icon(*item_icon, LARGE_ICON))
+                .width(Length::Fixed(LARGE_ICON))
+                .into();
+            let label_el = text(t!(*label))
+                .size(DD_LABEL)
+                .wrapping(iced::advanced::text::Wrapping::None)
+                .style(move |theme: &Theme| iced::widget::text::Style {
+                    color: disabled.then_some(chrome::muted(theme)),
+                });
+            let label_el = keytips::label_anchor(
+                || keytips::label_id(&keytips::item_anchor(dd_id, cmd)),
+                label_el,
+            );
+            let item = button(
+                row![icon_el, label_el]
+                    .spacing(DD_GAP)
+                    .align_y(iced::Center),
+            )
+            .on_press_maybe((!disabled).then(|| pick(cmd)))
+            .style(move |theme: &Theme, status| {
+                if is_current {
+                    popup_row_style(theme, button::Status::Hovered)
+                } else {
+                    popup_row_style(theme, status)
+                }
+            })
+            .width(Fill)
+            .padding(DD_PAD);
+            keytips::anchor_with(|| keytips::item_anchor(dd_id, cmd), item)
+        })
+        .collect();
+
+    if let Some(header) = &header {
+        rows.insert(
+            0,
+            container(text(header.clone()).size(10).style(muted_text_style))
+                .padding([4, 10])
+                .into(),
+        );
+    }
+    // As wide as the longest name, as the right-click menus are; a
+    // header wraps rather than widening the list.
+    let longest = items
+        .iter()
+        .map(|(_, label, _)| crate::ui::style::text_metrics::width(&t!(*label), DD_LABEL, false))
+        .fold(0.0, f32::max);
+    let panel_w = DD_PAD.left + LARGE_ICON + DD_GAP + longest + DD_PAD.right + 2.0;
+    let panel_w = if header.is_some() {
+        panel_w.max(DD_HEADER_MIN_W)
+    } else {
+        panel_w
+    };
+
+    let panel = container(column(rows))
+        .style(popup_panel_style)
+        .width(Length::Fixed(panel_w));
+    (panel.into(), panel_w)
 }
 
 /// Render a single ribbon panel (tools + group label), fixed `TOOL_BAR_H` tall.

@@ -190,6 +190,15 @@ ribbon-menu =
     .menu-bar = Menüsor
     .ribbon-tab = Szalaglap
     .no-matches = Nincs egyező parancs
+    .switch-windows = Switch Windows
+    .user-interface = User Interface
+    .no-open-drawings = No open drawings
+    .viewcube = ViewCube
+    .ucs-icon = UCS Icon
+    .file-tabs = File Tabs
+    .layout-tabs = Layout Tabs
+    .command-line = Command Line
+    .status-bar = Status Bar
 
 options =
     .language-section = Nyelv

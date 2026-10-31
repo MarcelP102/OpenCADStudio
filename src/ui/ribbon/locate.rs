@@ -149,6 +149,58 @@ impl Ribbon {
         })
     }
 
+    /// The ribbon dropdown `id` (ignoring case), on any tab: its id, label,
+    /// items and default item.
+    #[allow(clippy::type_complexity)]
+    pub(super) fn ribbon_dropdown(
+        &self,
+        id: &str,
+    ) -> Option<(
+        &'static str,
+        &'static str,
+        &[(&'static str, &'static str, IconKind)],
+        &'static str,
+    )> {
+        let id = id.trim();
+        self.modules.iter().find_map(|module| {
+            module
+                .ribbon_groups()
+                .iter()
+                .flat_map(|group| &group.tools)
+                .find_map(|item| match item {
+                    RibbonItem::Dropdown {
+                        id: dd,
+                        items,
+                        default,
+                        ..
+                    } if dd.eq_ignore_ascii_case(id) => {
+                        let label = items
+                            .iter()
+                            .find(|(cmd, _, _)| cmd == default)
+                            .map_or(*dd, |(_, label, _)| *label);
+                        Some((*dd, label, items.as_slice(), *default))
+                    }
+                    RibbonItem::LabeledDropdown {
+                        id: dd,
+                        label,
+                        items,
+                        default,
+                        ..
+                    }
+                    | RibbonItem::LargeDropdown {
+                        id: dd,
+                        label,
+                        items,
+                        default,
+                        ..
+                    } if dd.eq_ignore_ascii_case(id) => {
+                        Some((*dd, *label, items.as_slice(), *default))
+                    }
+                    _ => None,
+                })
+        })
+    }
+
     /// Every button of every tab, with the index of the tab it is on. The
     /// tab on show comes first, so a command offered on two tabs lights the
     /// button the user can already see.

@@ -2939,6 +2939,7 @@ bg={bg_ms:.1}ms n={view_count}"
                     self.tabs[self.active_tab].is_start,
                     &self.tabs[self.active_tab].recent_colors,
                     &self.recent_files,
+                    &self.open_drawing_names(),
                 )
                 .unwrap_or_else(|| iced::widget::Space::new().width(0).height(0).into())
         };
@@ -3132,6 +3133,21 @@ bg={bg_ms:.1}ms n={view_count}"
 }
 
 impl OpenCADStudio {
+    /// The open drawings for the Quick Access Switch Windows menu, as
+    /// (tab index, name, is the current one); empty while that menu is
+    /// closed.
+    fn open_drawing_names(&self) -> Vec<(usize, String, bool)> {
+        if self.ribbon.open_dropdown.as_deref() != Some(crate::ui::ribbon::QAT_SWITCH_ID) {
+            return Vec::new();
+        }
+        self.tabs
+            .iter()
+            .enumerate()
+            .filter(|(_, tab)| !tab.is_start)
+            .map(|(index, tab)| (index, tab.tab_display_name(), index == self.active_tab))
+            .collect()
+    }
+
     pub fn subscription(&self) -> Subscription<Message> {
         use iced::event;
         // Only request per-frame ticks while something on screen is animating

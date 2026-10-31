@@ -196,6 +196,15 @@ ribbon-menu =
     .menu-bar = 菜单栏
     .ribbon-tab = 功能区选项卡
     .no-matches = 没有匹配的命令
+    .switch-windows = Switch Windows
+    .user-interface = User Interface
+    .no-open-drawings = No open drawings
+    .viewcube = ViewCube
+    .ucs-icon = UCS Icon
+    .file-tabs = File Tabs
+    .layout-tabs = Layout Tabs
+    .command-line = Command Line
+    .status-bar = Status Bar
 
 options =
     .language-section = 语言

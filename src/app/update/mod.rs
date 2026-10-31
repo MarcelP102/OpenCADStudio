@@ -2771,6 +2771,13 @@ impl OpenCADStudio {
                 }
                 Task::none()
             }
+            Message::RibbonQat(msg) => {
+                let out = self.ribbon.on_qat(msg);
+                if out.save {
+                    self.save_config();
+                }
+                out.run.map_or_else(Task::none, |run| self.update(run))
+            }
             Message::RibbonSlideOut(msg) => {
                 if self.ribbon.on_slide_out(msg, iced::time::Instant::now()) {
                     self.save_config();

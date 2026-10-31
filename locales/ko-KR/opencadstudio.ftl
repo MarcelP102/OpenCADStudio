@@ -196,6 +196,15 @@ ribbon-menu =
     .menu-bar = 메뉴 막대
     .ribbon-tab = 리본 탭
     .no-matches = 일치하는 명령이 없습니다
+    .switch-windows = Switch Windows
+    .user-interface = User Interface
+    .no-open-drawings = No open drawings
+    .viewcube = ViewCube
+    .ucs-icon = UCS Icon
+    .file-tabs = File Tabs
+    .layout-tabs = Layout Tabs
+    .command-line = Command Line
+    .status-bar = Status Bar
 
 options =
     .language-section = 언어

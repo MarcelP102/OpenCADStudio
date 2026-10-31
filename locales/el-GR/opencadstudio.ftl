@@ -196,6 +196,15 @@ ribbon-menu =
     .menu-bar = Γραμμή μενού
     .ribbon-tab = Καρτέλα κορδέλας
     .no-matches = Δεν βρέθηκαν εντολές
+    .switch-windows = Switch Windows
+    .user-interface = User Interface
+    .no-open-drawings = No open drawings
+    .viewcube = ViewCube
+    .ucs-icon = UCS Icon
+    .file-tabs = File Tabs
+    .layout-tabs = Layout Tabs
+    .command-line = Command Line
+    .status-bar = Status Bar
 
 options =
     .language-section = Γλώσσα
