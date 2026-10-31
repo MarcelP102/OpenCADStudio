@@ -2995,6 +2995,16 @@ bg={bg_ms:.1}ms n={view_count}"
         }
         .unwrap_or_else(|| iced::widget::Space::new().width(0).height(0).into());
 
+        // Floating ribbon panels lie over the drawing and the palettes, under
+        // the ribbon's popups and menus.
+        let floating_layer: Element<'_, Message> =
+            if self.clean_screen || self.ribbon_closed || self.tabs[self.active_tab].is_start {
+                None
+            } else {
+                self.ribbon.floating_layer(self.show_block_palette)
+            }
+            .unwrap_or_else(|| iced::widget::Space::new().width(0).height(0).into());
+
         // Pinned slide-outs hang under their panels, over the drawing.
         let pinned_layer: Element<'_, Message> = if self.clean_screen || self.ribbon_closed {
             None
@@ -3025,6 +3035,7 @@ bg={bg_ms:.1}ms n={view_count}"
 
         let composed = stack![
             main_ui,
+            floating_layer,
             pinned_layer,
             ribbon_popup_layer,
             keytip_bar,

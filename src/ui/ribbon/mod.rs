@@ -34,6 +34,7 @@ pub(crate) use widgets::{REDO_HISTORY_ID, UNDO_HISTORY_ID};
 use widgets::{StyleContext, *};
 mod app_menu;
 mod collapse;
+mod floating;
 mod keytips;
 mod layout;
 mod locate;
@@ -1588,7 +1589,12 @@ impl Ribbon {
             return Some(ov);
         }
 
-        let groups = self.groups_for(self.active);
+        // The tab's panels, and the floating ones, whose dropdowns open from
+        // any tab.
+        let floating = self.floating_groups();
+        let groups = self
+            .groups_for(self.active)
+            .chain(floating.iter().map(|(_, group, _)| *group));
         let mut items_list: Option<Vec<(&'static str, &'static str, IconKind)>> = None;
         let mut dd_default = "";
         let mut dd_id: &'static str = "";
@@ -1870,7 +1876,12 @@ impl Ribbon {
     /// Draw-tab dropdowns — so the list grows to fit its entries instead of
     /// being clipped to the ribbon-row height. (#153)
     fn style_combo_overlay(&self, open_id: &str, win: (f32, f32)) -> Option<Element<'_, Message>> {
-        let groups = self.groups_for(self.active);
+        // The tab's panels, and the floating ones, whose dropdowns open from
+        // any tab.
+        let floating = self.floating_groups();
+        let groups = self
+            .groups_for(self.active)
+            .chain(floating.iter().map(|(_, group, _)| *group));
 
         // Locate the open style combo; capture its style key + manager command.
         let mut found: Option<(crate::modules::StyleKey, Option<&'static str>)> = None;
