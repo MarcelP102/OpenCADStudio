@@ -80,6 +80,9 @@ pub const SLIDE_OUT_TOP_THIN: f32 = THIN_STRIP_H + 1.0;
 /// How far above or below the tool area the pointer goes before a
 /// dragged panel leaves the ribbon to float.
 pub const FLOAT_DRAG_MARGIN: f32 = 24.0;
+/// How far the pointer moves from a press on a floating panel's title
+/// strip before the press moves the panel instead of clicking.
+pub const FLOAT_MOVE_THRESHOLD: f32 = 3.0;
 /// Width of a floating panel's title strip at its side, and of the footer
 /// at the end of its extra tools band.
 pub const FLOAT_SIDE_STRIP_W: f32 = 20.0;

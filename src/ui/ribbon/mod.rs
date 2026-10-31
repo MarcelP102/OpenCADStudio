@@ -51,6 +51,7 @@ pub use app_menu::{works_without_drawing, APP_MENU_ID};
 pub use collapse::CollapseMode;
 use collapse::{CollapsePanels, Panel};
 pub use draw_panel::SlideOutMsg;
+pub use floating::FloatMsg;
 pub use keytips::{
     KeyTipInput, KeyTipStep, active as keytips_active, clear_alt_alone as keytip_clear_alt_alone,
     key_pressed as keytip_key_pressed, key_released as keytip_key_released,
@@ -423,6 +424,8 @@ pub struct Ribbon {
     keytips: Option<keytips::State>,
     /// What More Commands searches for.
     qat_query: String,
+    /// A floating panel being moved by its title strip.
+    float_drag: Option<floating::FloatDrag>,
 }
 
 /// Per-layer display data shown in the ribbon layer dropdown.
@@ -566,6 +569,7 @@ impl Ribbon {
             mleader_layer: String::new(),
             keytips: None,
             qat_query: String::new(),
+            float_drag: None,
         }
     }
 

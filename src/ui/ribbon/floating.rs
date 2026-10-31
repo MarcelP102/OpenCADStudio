@@ -55,6 +55,10 @@ impl Ribbon {
         let ts = self.toggle_state(show_block_palette);
         let mut order: Vec<usize> = (0..found.len()).collect();
         order.sort_by_key(|&i| found[i].2.z);
+        let keys = found
+            .iter()
+            .map(|(_, _, panel)| panel.key.clone())
+            .collect();
         let panels = found
             .iter()
             .map(|&(index, group, panel)| {
@@ -65,7 +69,14 @@ impl Ribbon {
                 )
             })
             .collect();
-        Some(FloatLayer { panels, order }.into())
+        Some(
+            FloatLayer {
+                panels,
+                order,
+                keys,
+            }
+            .into(),
+        )
     }
 
     /// One floating panel: its tools at full size over its title strip, on
@@ -108,7 +119,305 @@ impl Ribbon {
             },
             ..Default::default()
         });
-        PosReport::owned(floating_id(&key), framed).into()
+        let grip = Grip {
+            child: framed.into(),
+            key: key.clone(),
+            edge: Edge::Bottom(metrics::TITLE_STRIP_H),
+            on_click: None,
+            threshold: metrics::FLOAT_MOVE_THRESHOLD,
+        };
+        PosReport::owned(floating_id(&key), grip).into()
+    }
+
+    /// Apply a floating panel message. Returns whether the layout changed
+    /// and should be saved.
+    pub fn on_float(&mut self, msg: FloatMsg) -> bool {
+        match msg {
+            FloatMsg::Raise(key) => {
+                let top = self.top_float_z();
+                match self.layout.floating.iter_mut().find(|p| p.key == key) {
+                    Some(panel) if panel.z < top || top == 0 => {
+                        panel.z = top + 1;
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            FloatMsg::Press { key, at } => {
+                self.float_drag = self
+                    .layout
+                    .floating
+                    .iter()
+                    .find(|panel| panel.key == key)
+                    .map(|panel| FloatDrag {
+                        key,
+                        grab: at - Point::new(panel.x, panel.y),
+                    });
+                false
+            }
+            FloatMsg::Move { at, .. } => {
+                let Some(drag) = &self.float_drag else {
+                    return false;
+                };
+                let corner = at - drag.grab;
+                if let Some(panel) = self.layout.floating.iter_mut().find(|p| p.key == drag.key) {
+                    panel.x = corner.x;
+                    panel.y = corner.y;
+                }
+                false
+            }
+            FloatMsg::Release { moved } => self.float_drag.take().is_some() && moved,
+        }
+    }
+}
+
+/// A floating panel message.
+#[derive(Clone, Debug)]
+pub enum FloatMsg {
+    /// A press on the panel with this key: it comes to the front.
+    Raise(String),
+    /// A press on its title strip, at this window point.
+    Press { key: String, at: Point },
+    /// The pointer moved far enough from the press: the panel follows it.
+    /// `free` (Alt held) moves it without snapping.
+    Move { at: Point, free: bool },
+    /// The press let go; `moved` once it had moved the panel.
+    Release { moved: bool },
+}
+
+/// A floating panel being moved by its title strip.
+#[derive(Clone, Debug)]
+pub(super) struct FloatDrag {
+    pub key: String,
+    /// The press point within the panel.
+    pub grab: Vector,
+}
+
+/// Where on a panel its title strip is: along the bottom or the right, this
+/// many px.
+#[derive(Clone, Copy, Debug)]
+enum Edge {
+    Bottom(f32),
+    #[allow(dead_code)]
+    Right(f32),
+}
+
+impl Edge {
+    fn strip(self, bounds: Rectangle) -> Rectangle {
+        match self {
+            Edge::Bottom(h) => Rectangle {
+                y: bounds.y + bounds.height - h,
+                height: h,
+                ..bounds
+            },
+            Edge::Right(w) => Rectangle {
+                x: bounds.x + bounds.width - w,
+                width: w,
+                ..bounds
+            },
+        }
+    }
+}
+
+/// A floating panel's title strip, `edge` of `child`: a press there that no
+/// button inside took moves the panel once the pointer has gone
+/// `threshold` px, and without that movement is a click (`on_click`).
+/// The pointer stays the plain arrow.
+struct Grip<'a> {
+    child: Element<'a, Message>,
+    key: String,
+    edge: Edge,
+    on_click: Option<Message>,
+    threshold: f32,
+}
+
+#[derive(Default)]
+struct GripState {
+    press: Option<Point>,
+    moving: bool,
+    alt: bool,
+}
+
+impl<'a> Widget<Message, Theme, Renderer> for Grip<'a> {
+    fn tag(&self) -> widget::tree::Tag {
+        widget::tree::Tag::of::<GripState>()
+    }
+
+    fn state(&self) -> widget::tree::State {
+        widget::tree::State::new(GripState::default())
+    }
+
+    fn diff(&mut self, tree: &mut widget::Tree) {
+        tree.diff_children(std::slice::from_mut(&mut self.child));
+    }
+
+    fn size(&self) -> Size<Length> {
+        self.child.as_widget().size()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut widget::Tree,
+        renderer: &Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.child
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut widget::Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &Renderer,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        let moving = tree.state.downcast_ref::<GripState>().moving;
+        // While the panel moves, what is on it takes no pointer input.
+        let child_cursor = if moving {
+            mouse::Cursor::Unavailable
+        } else {
+            cursor
+        };
+        self.child.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            child_cursor,
+            renderer,
+            shell,
+            viewport,
+        );
+        let state = tree.state.downcast_mut::<GripState>();
+        match event {
+            Event::Keyboard(iced::keyboard::Event::ModifiersChanged(modifiers)) => {
+                state.alt = modifiers.alt();
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                if shell.is_event_captured() {
+                    return;
+                }
+                let Some(at) = cursor.position_over(self.edge.strip(layout.bounds())) else {
+                    return;
+                };
+                state.press = Some(at);
+                state.moving = false;
+                shell.publish(Message::RibbonFloat(FloatMsg::Press {
+                    key: self.key.clone(),
+                    at,
+                }));
+                shell.capture_event();
+            }
+            Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                let Some(press) = state.press else {
+                    return;
+                };
+                if !state.moving && position.distance(press) >= self.threshold {
+                    state.moving = true;
+                }
+                if state.moving {
+                    shell.publish(Message::RibbonFloat(FloatMsg::Move {
+                        at: *position,
+                        free: state.alt,
+                    }));
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                if state.press.take().is_none() {
+                    return;
+                }
+                let moved = std::mem::take(&mut state.moving);
+                shell.publish(Message::RibbonFloat(FloatMsg::Release { moved }));
+                if !moved
+                    && cursor
+                        .position_over(self.edge.strip(layout.bounds()))
+                        .is_some()
+                {
+                    if let Some(message) = self.on_click.clone() {
+                        shell.publish(message);
+                    }
+                }
+                shell.capture_event();
+            }
+            _ => {}
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &widget::Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &Renderer,
+    ) -> mouse::Interaction {
+        self.child.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut widget::Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn widget::Operation,
+    ) {
+        self.child
+            .as_widget_mut()
+            .operate(&mut tree.children[0], layout, renderer, operation);
+    }
+
+    fn draw(
+        &self,
+        tree: &widget::Tree,
+        renderer: &mut Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        self.child.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut widget::Tree,
+        layout: Layout<'b>,
+        renderer: &Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        self.child.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
+    }
+}
+
+impl<'a> From<Grip<'a>> for Element<'a, Message> {
+    fn from(grip: Grip<'a>) -> Self {
+        Element::new(grip)
     }
 }
 
@@ -117,6 +426,8 @@ impl Ribbon {
 pub(super) struct FloatLayer<'a> {
     panels: Vec<(Point, Element<'a, Message>)>,
     order: Vec<usize>,
+    /// The panels' keys, in `panels`' order.
+    keys: Vec<String>,
 }
 
 impl FloatLayer<'_> {
@@ -179,6 +490,12 @@ impl<'a> Widget<Message, Theme, Renderer> for FloatLayer<'a> {
         viewport: &Rectangle,
     ) {
         let hit = self.hit(layout, cursor);
+        // Any press on a panel brings it to the front.
+        if let (Some(i), Event::Mouse(mouse::Event::ButtonPressed(_))) = (hit, event) {
+            if self.order.last() != Some(&i) {
+                shell.publish(Message::RibbonFloat(FloatMsg::Raise(self.keys[i].clone())));
+            }
+        }
         let layouts: Vec<Layout<'_>> = layout.children().collect();
         // Front to back; a panel under another sees no pointer there.
         for &i in self.order.iter().rev() {
@@ -356,6 +673,44 @@ mod tests {
             .collect();
         assert_eq!(found, [("Modify", 2), ("Draw", 1)]);
         assert!(ribbon.floating_layer(false).is_some());
+    }
+
+    #[test]
+    fn a_press_raises_a_panel_and_its_strip_moves_it() {
+        use super::FloatMsg;
+        use iced::Point;
+        let mut ribbon = Ribbon::default();
+        let mut draw = floating("draw/Draw", 1);
+        draw.x = 100.0;
+        draw.y = 200.0;
+        ribbon.set_layout(RibbonLayout {
+            floating: vec![draw, floating("draw/Modify", 2)],
+            ..RibbonLayout::default()
+        });
+        // Raising the one on top changes nothing; the other goes above it.
+        assert!(!ribbon.on_float(FloatMsg::Raise("draw/Modify".into())));
+        assert!(ribbon.on_float(FloatMsg::Raise("draw/Draw".into())));
+        assert_eq!(ribbon.layout.floating[0].z, 3);
+
+        // The press point keeps its place on the panel while it moves.
+        ribbon.on_float(FloatMsg::Press {
+            key: "draw/Draw".into(),
+            at: Point::new(150.0, 290.0),
+        });
+        assert!(!ribbon.on_float(FloatMsg::Move {
+            at: Point::new(250.0, 390.0),
+            free: true,
+        }));
+        let panel = &ribbon.layout.floating[0];
+        assert_eq!((panel.x, panel.y), (200.0, 300.0));
+        // Saved on release once it moved; a click is not a move.
+        assert!(ribbon.on_float(FloatMsg::Release { moved: true }));
+        ribbon.on_float(FloatMsg::Press {
+            key: "draw/Draw".into(),
+            at: Point::new(250.0, 390.0),
+        });
+        assert!(!ribbon.on_float(FloatMsg::Release { moved: false }));
+        assert!(ribbon.float_drag.is_none());
     }
 
     #[test]

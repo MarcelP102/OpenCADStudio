@@ -3541,6 +3541,8 @@ pub enum Message {
         x: f32,
         y: f32,
     },
+    /// A floating ribbon panel: pressed, moved, released.
+    RibbonFloat(crate::ui::ribbon::FloatMsg),
     /// Ribbon key tips: Alt, typed codes and Esc.
     KeyTip(crate::ui::ribbon::KeyTipInput),
     /// A ribbon tool button was clicked — highlights the tool and dispatches its event.

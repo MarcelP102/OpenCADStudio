@@ -2837,6 +2837,12 @@ impl OpenCADStudio {
                 }
                 Task::none()
             }
+            Message::RibbonFloat(msg) => {
+                if self.ribbon.on_float(msg) {
+                    self.save_config();
+                }
+                Task::none()
+            }
             Message::RibbonReorderPanels { module, titles } => {
                 self.ribbon.reorder_panels(module, &titles);
                 self.save_config();
