@@ -202,6 +202,19 @@ impl RibbonLayout {
         }
     }
 
+    /// Keep the first of any repeated Quick Access item (a hand-edited
+    /// config may repeat one), so no two items share a key tip anchor.
+    pub(super) fn dedupe_qat(&mut self) {
+        let mut kept: Vec<QatItem> = Vec::with_capacity(self.qat.len());
+        for item in self.qat.drain(..) {
+            if item == QatItem::Separator || !kept.iter().any(|held| held.same(&item)) {
+                kept.push(item);
+            }
+        }
+        self.qat = kept;
+        self.tidy_qat_separators();
+    }
+
     /// Drop separators at the ends of the toolbar and doubled ones.
     fn tidy_qat_separators(&mut self) {
         let mut tidy: Vec<QatItem> = Vec::with_capacity(self.qat.len());

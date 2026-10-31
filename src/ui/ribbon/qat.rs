@@ -150,16 +150,18 @@ impl Ribbon {
                 if is_start { 0 } else { redo_count },
                 &self.open_dropdown,
             ),
-            QatItem::Builtin(QatBuiltin::LayerCombo) => container(layer_combo_face(
-                QAT_LAYER_COMBO_ID,
-                &self.layer_infos,
-                &self.active_layer,
-                self.open_dropdown.as_deref() == Some(QAT_LAYER_COMBO_ID),
-                metrics::QAT_COMBO_W,
-                false,
-            ))
-            .padding([0.0, metrics::QAT_COMBO_MARGIN])
-            .into(),
+            QatItem::Builtin(QatBuiltin::LayerCombo) => super::keytips::anchor_with(
+                || super::keytips::quick_access_anchor(QAT_LAYER_COMBO_ID),
+                container(layer_combo_face(
+                    QAT_LAYER_COMBO_ID,
+                    &self.layer_infos,
+                    &self.active_layer,
+                    self.open_dropdown.as_deref() == Some(QAT_LAYER_COMBO_ID),
+                    metrics::QAT_COMBO_W,
+                    false,
+                ))
+                .padding([0.0, metrics::QAT_COMBO_MARGIN]),
+            ),
             QatItem::Builtin(QatBuiltin::SwitchWindows) => self.qat_menu_button(
                 QAT_SWITCH_ID,
                 SWITCH_WINDOWS_ICON,

@@ -583,6 +583,7 @@ impl Ribbon {
     /// consolidated app config (`save_config`).
     pub fn set_layout(&mut self, layout: RibbonLayout) {
         self.layout = layout;
+        self.layout.dedupe_qat();
         self.show_a_visible_tab();
     }
 
