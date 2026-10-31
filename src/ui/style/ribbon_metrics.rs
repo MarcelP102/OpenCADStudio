@@ -101,6 +101,15 @@ pub const FLOAT_BAND_LIST_W: f32 = 180.0;
 pub const FLOAT_SIDE_TEXT_PAD: f32 = 5.0;
 pub const FLOAT_SIDE_ARROW: f32 = 6.0;
 pub const FLOAT_SIDE_ARROW_GAP: f32 = 4.0;
+/// A floating panel's hover-only buttons (Return to ribbon, the
+/// orientation toggle, the pin in the corner tab): the icon, its hit area,
+/// the gap between two, their inset from the strip's left end, and the
+/// room inside the corner tab.
+pub const FLOAT_HOVER_ICON: f32 = 14.0;
+pub const FLOAT_HOVER_HIT: f32 = 16.0;
+pub const FLOAT_HOVER_GAP: f32 = 2.0;
+pub const FLOAT_HOVER_INSET: f32 = 3.0;
+pub const FLOAT_TAB_PAD: f32 = 2.0;
 /// Width of a floating panel's title strip at its side, and of the footer
 /// at the end of its extra tools band.
 pub const FLOAT_SIDE_STRIP_W: f32 = 20.0;

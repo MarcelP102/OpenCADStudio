@@ -10,9 +10,10 @@ use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{self, Widget};
 use iced::advanced::{mouse, overlay, renderer, Renderer as _, Shell};
 use iced::time::Instant;
-use iced::widget::container;
+use iced::widget::{button, container};
 use iced::{
-    Background, Border, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector,
+    Background, Border, Element, Event, Length, Padding, Point, Rectangle, Renderer, Size, Theme,
+    Vector,
 };
 
 use super::draw_panel::{self, SlideLook};
@@ -69,10 +70,11 @@ impl Ribbon {
             .iter()
             .map(|&(index, group, panel)| {
                 let module_id = self.modules[index].id();
-                (
-                    Point::new(panel.x, panel.y),
-                    self.floating_panel(module_id, group, panel, ts),
-                )
+                Floater {
+                    at: Point::new(panel.x, panel.y),
+                    panel: self.floating_panel(module_id, group, panel, ts),
+                    tab: self.float_tab(panel),
+                }
             })
             .collect();
         Some(
@@ -182,14 +184,46 @@ impl Ribbon {
                 _ => {
                     let title =
                         draw_panel::group_title(group.title, &key, SlideLook::Closed, false);
+                    let hovered = self.float_ui.strip_hover.as_deref() == Some(key.as_str());
+                    // The centred title moves right just enough to clear
+                    // the buttons the hovered strip shows at its left.
+                    let title_row: Element<'a, Message> = match title_shift(
+                        hovered,
+                        group.title,
+                        extras.is_some(),
+                        crate::ui::wrap_bar::recent_bounds(&body_id(&key)).map(|b| b.width),
+                    ) {
+                        Some(shift) => {
+                            iced::widget::row![iced::widget::Space::new().width(shift), title.row]
+                                .into()
+                        }
+                        None => title.row,
+                    };
                     let framed = panel_frame::PanelFrame::new(
                         body.into(),
                         metrics::TITLE_STRIP_H,
                         title.launcher,
                     )
-                    .title(Some(title.row));
+                    .title(Some(title_row));
+                    // Hovering the strip shows Return to ribbon and the
+                    // orientation toggle at its left end.
+                    let framed: Element<'a, Message> = if hovered {
+                        let buttons = container(self.place_buttons(floating))
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .align_left(Length::Fill)
+                            .align_bottom(Length::Fill)
+                            .padding(Padding {
+                                left: metrics::FLOAT_HOVER_INSET,
+                                bottom: (metrics::TITLE_STRIP_H - metrics::FLOAT_HOVER_HIT) / 2.0,
+                                ..Padding::ZERO
+                            });
+                        iced::widget::stack![framed, buttons].into()
+                    } else {
+                        framed.into()
+                    };
                     (
-                        framed.into(),
+                        framed,
                         Edge::Bottom(metrics::TITLE_STRIP_H),
                         // Only a panel with extra tools opens them.
                         extras.map(|_| Message::RibbonFloat(FloatMsg::ToggleExtras(key.clone()))),
@@ -295,6 +329,104 @@ impl Ribbon {
                 })),
                 ..Default::default()
             })
+            .into()
+    }
+
+    /// Return to ribbon and the orientation toggle of floating `panel`.
+    fn place_buttons<'a>(&self, panel: &FloatingPanel) -> Element<'a, Message> {
+        let key = panel.key.clone();
+        let (toggle, tip) = if panel.extras_right {
+            (
+                TO_BOTTOM_ICON,
+                crate::tr!("ribbon-menu", "float-title-bottom"),
+            )
+        } else {
+            (TO_SIDE_ICON, crate::tr!("ribbon-menu", "float-title-side"))
+        };
+        iced::widget::row![
+            hover_button(
+                RETURN_ICON,
+                crate::tr!("ribbon-menu", "return-to-ribbon"),
+                FloatMsg::Return(key.clone()),
+            ),
+            hover_button(toggle, tip, FloatMsg::ToggleOrientation(key)),
+        ]
+        .spacing(metrics::FLOAT_HOVER_GAP)
+        .into()
+    }
+
+    /// The tab above the top-right corner of a floating `panel` whose title
+    /// is at its side, shown while the pointer is on the side strip or the
+    /// tab: Return to ribbon and the orientation toggle while the extra
+    /// tools are closed, the pin while they are open. Empty otherwise.
+    fn float_tab<'a>(&self, panel: &FloatingPanel) -> Element<'a, Message> {
+        let key = panel.key.as_str();
+        let hovered = self.float_ui.strip_hover.as_deref() == Some(key)
+            || self.float_ui.tab_hover.as_deref() == Some(key);
+        if !panel.extras_right || !hovered {
+            return iced::widget::Space::new().into();
+        }
+        let look = self.float_look(key);
+        let content: Element<'a, Message> = match look {
+            SlideLook::Closed => self.place_buttons(panel),
+            SlideLook::Open | SlideLook::Pinned => {
+                let pinned = look == SlideLook::Pinned;
+                let pin = button(crate::ui::icons::chrome(
+                    if pinned {
+                        crate::ui::icons::PIN
+                    } else {
+                        crate::ui::icons::PIN_ACTIVE
+                    },
+                    metrics::PIN_ICON,
+                ))
+                .on_press(Message::RibbonFloat(FloatMsg::TogglePin(key.to_string())))
+                .style(hover_button_style)
+                .width(metrics::FLOAT_HOVER_HIT)
+                .height(metrics::FLOAT_HOVER_HIT)
+                .padding((metrics::FLOAT_HOVER_HIT - metrics::PIN_ICON) / 2.0);
+                pin.into()
+            }
+        };
+        // Sized exactly: the layer lays panels out unbounded, where a
+        // filling length has no end.
+        let buttons = if look == SlideLook::Closed { 2.0 } else { 1.0 };
+        let inner_w = buttons * metrics::FLOAT_HOVER_HIT
+            + (buttons - 1.0) * metrics::FLOAT_HOVER_GAP
+            + 2.0 * metrics::FLOAT_TAB_PAD;
+        let inner_h = metrics::FLOAT_HOVER_HIT + 2.0 * metrics::FLOAT_TAB_PAD;
+        let hair = crate::ui::icons::hairline();
+        let line = |width: f32, height: f32| -> Element<'a, Message> {
+            container(iced::widget::Space::new().width(width).height(height))
+                .style(|theme: &Theme| container::Style {
+                    background: Some(Background::Color(chrome::border(theme))),
+                    ..Default::default()
+                })
+                .into()
+        };
+        // `title_bar`, outlined in `border` on three sides: it opens onto
+        // the panel's edge.
+        let body = container(content)
+            .padding(metrics::FLOAT_TAB_PAD)
+            .width(inner_w)
+            .height(inner_h)
+            .style(|theme: &Theme| container::Style {
+                background: Some(Background::Color(chrome::title_bar(theme))),
+                ..Default::default()
+            });
+        let tab = iced::widget::row![
+            line(hair, inner_h + hair),
+            iced::widget::column![line(inner_w, hair), body],
+            line(hair, inner_h + hair),
+        ];
+        iced::widget::mouse_area(tab)
+            .on_enter(Message::RibbonFloat(FloatMsg::TabHover {
+                key: key.to_string(),
+                over: true,
+            }))
+            .on_exit(Message::RibbonFloat(FloatMsg::TabHover {
+                key: key.to_string(),
+                over: false,
+            }))
             .into()
     }
 
@@ -456,7 +588,18 @@ impl Ribbon {
                 self.float_ui.closing = None;
                 false
             }
+            FloatMsg::StripHover { key, over } => {
+                hover_flag(&mut self.float_ui.strip_hover, key, over);
+                false
+            }
+            FloatMsg::TabHover { key, over } => {
+                hover_flag(&mut self.float_ui.tab_hover, key, over);
+                false
+            }
+            FloatMsg::Return(key) => self.dock_floating(&key),
             FloatMsg::ToggleOrientation(key) => {
+                self.float_ui.strip_hover = None;
+                self.float_ui.tab_hover = None;
                 match self
                     .layout
                     .floating
@@ -507,6 +650,23 @@ impl Ribbon {
         }
     }
 
+    /// Put floating panel `key` back in its tab's ribbon row, at its old
+    /// place there; whether it was floating.
+    pub(super) fn dock_floating(&mut self, key: &str) -> bool {
+        let before = self.layout.floating.len();
+        self.layout.floating.retain(|panel| panel.key != key);
+        if self.float_ui.open.as_deref() == Some(key) {
+            self.float_ui.open = None;
+            self.float_ui.closing = None;
+        }
+        for hover in [&mut self.float_ui.strip_hover, &mut self.float_ui.tab_hover] {
+            if hover.as_deref() == Some(key) {
+                *hover = None;
+            }
+        }
+        self.layout.floating.len() != before
+    }
+
     /// Pin or unpin the extra tools of floating panel `key`; whether that
     /// changed anything.
     fn set_float_pinned(&mut self, key: &str, pinned: bool) -> bool {
@@ -551,8 +711,13 @@ pub enum FloatMsg {
     Outside,
     /// Put the title at the side and open the extra tools to the right, or
     /// back.
-    #[allow(dead_code)] // The hover buttons send it (B7).
     ToggleOrientation(String),
+    /// Return to ribbon: the panel goes back to its tab, in its old place.
+    Return(String),
+    /// The pointer entered or left the panel's title strip (or footer).
+    StripHover { key: String, over: bool },
+    /// The pointer entered or left the tab above the panel's corner.
+    TabHover { key: String, over: bool },
 }
 
 /// What the floating panels' pointer and extra tools are doing; not saved.
@@ -568,6 +733,98 @@ pub(super) struct FloatUi {
     pub footer: Option<String>,
     /// When the open extra tools close, the pointer having left them.
     pub closing: Option<Instant>,
+    /// The panel whose title strip (or footer) the pointer is on.
+    pub strip_hover: Option<String>,
+    /// The panel whose corner tab the pointer is on.
+    pub tab_hover: Option<String>,
+}
+
+/// The room to put before the centred title of a panel `width` wide (its
+/// strip `hovered`) so it clears the hover buttons at the strip's left
+/// end; `None` when it already does.
+fn title_shift(hovered: bool, title: &str, chevron: bool, width: Option<f32>) -> Option<f32> {
+    if !hovered {
+        return None;
+    }
+    let width = width?;
+    let buttons_end = metrics::FLOAT_HOVER_INSET
+        + 2.0 * metrics::FLOAT_HOVER_HIT
+        + metrics::FLOAT_HOVER_GAP
+        + metrics::FLOAT_HOVER_GAP;
+    let text = crate::ui::style::text_metrics::width(&crate::t!(title), 11.5, false)
+        + if chevron {
+            metrics::DROPDOWN_ARROW_W + 4.0
+        } else {
+            0.0
+        };
+    let start = (width - text) / 2.0;
+    // Centred with a spacer before it, the title starts half the spacer
+    // further right.
+    (start < buttons_end).then_some(2.0 * (buttons_end - start))
+}
+
+/// Set `flag` to `key` while the pointer is `over` it; leaving clears it
+/// only if it still names `key`.
+fn hover_flag(flag: &mut Option<String>, key: String, over: bool) {
+    if over {
+        *flag = Some(key);
+    } else if flag.as_deref() == Some(key.as_str()) {
+        *flag = None;
+    }
+}
+
+/// Return to ribbon: a ribbon bar with an arrow up into it.
+const RETURN_ICON: &str = "M4 4h16v5H4z M12 21v-8 M8.5 16.5L12 13l3.5 3.5";
+/// The orientation toggle, drawn as the state it switches to: title at
+/// the side with tools to the right, or title at the bottom with tools
+/// below.
+const TO_SIDE_ICON: &str = "M4 5h9v14H4z M16 12h5 M18.5 9.5L21 12l-2.5 2.5";
+const TO_BOTTOM_ICON: &str = "M5 4h14v9H5z M12 16v5 M9.5 18.5L12 21l2.5-2.5";
+
+/// A hover-only button: a 14 px icon in a 16 px square, `muted`, `strong`
+/// on `hover` under the pointer.
+fn hover_button<'a>(icon: &'static str, tip: String, msg: FloatMsg) -> Element<'a, Message> {
+    let btn = button(
+        container(crate::ui::icons::line_icon(icon, metrics::FLOAT_HOVER_ICON))
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
+    .on_press(Message::RibbonFloat(msg))
+    .style(hover_button_style)
+    .width(metrics::FLOAT_HOVER_HIT)
+    .height(metrics::FLOAT_HOVER_HIT)
+    .padding(0);
+    iced::widget::tooltip(
+        btn,
+        super::widgets::make_tip(tip),
+        iced::widget::tooltip::Position::Top,
+    )
+    .delay(std::time::Duration::from_millis(400))
+    .style(super::widgets::tip_style)
+    .into()
+}
+
+fn hover_button_style(
+    theme: &Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
+    let hovered = matches!(
+        status,
+        iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+    );
+    iced::widget::button::Style {
+        background: hovered.then(|| Background::Color(chrome::hover(theme))),
+        text_color: if hovered {
+            chrome::strong(theme)
+        } else {
+            chrome::muted(theme)
+        },
+        border: Border {
+            radius: 2.0.into(),
+            ..Border::default()
+        },
+        ..Default::default()
+    }
 }
 
 /// How long unpinned extra tools stay after the pointer leaves the panel.
@@ -629,6 +886,8 @@ struct GripState {
     press: Option<Point>,
     moving: bool,
     alt: bool,
+    /// The pointer is on the strip.
+    over: bool,
 }
 
 impl<'a> Widget<Message, Theme, Renderer> for Grip<'a> {
@@ -686,6 +945,18 @@ impl<'a> Widget<Message, Theme, Renderer> for Grip<'a> {
             viewport,
         );
         let state = tree.state.downcast_mut::<GripState>();
+        if let Event::Mouse(mouse::Event::CursorMoved { .. } | mouse::Event::CursorLeft) = event {
+            let over = cursor
+                .position_over(self.edge.strip(layout.bounds()))
+                .is_some();
+            if over != state.over {
+                state.over = over;
+                shell.publish(Message::RibbonFloat(FloatMsg::StripHover {
+                    key: self.key.clone(),
+                    over,
+                }));
+            }
+        }
         match event {
             Event::Keyboard(iced::keyboard::Event::ModifiersChanged(modifiers)) => {
                 state.alt = modifiers.alt();
@@ -962,10 +1233,19 @@ impl iced::widget::canvas::Program<Message> for VerticalTitle {
     }
 }
 
+/// One floating panel on the layer: its top-left corner, the panel, and
+/// the tab that stands above its top-right corner (empty while hidden).
+pub(super) struct Floater<'a> {
+    pub at: Point,
+    pub panel: Element<'a, Message>,
+    pub tab: Element<'a, Message>,
+}
+
 /// The floating panels, each at its top-left corner. `order` lists them
-/// back to front; the widget tree keeps them in `panels`' order.
+/// back to front; the widget tree keeps them in `panels`' order, each as
+/// its panel and its tab.
 pub(super) struct FloatLayer<'a> {
-    panels: Vec<(Point, Element<'a, Message>)>,
+    panels: Vec<Floater<'a>>,
     order: Vec<usize>,
     /// The panels' keys, in `panels`' order.
     keys: Vec<String>,
@@ -974,27 +1254,42 @@ pub(super) struct FloatLayer<'a> {
     open: Option<usize>,
 }
 
-impl FloatLayer<'_> {
-    /// The front-most panel under the cursor.
+impl<'a> FloatLayer<'a> {
+    /// The front-most panel whose panel or tab is under the cursor.
     fn hit(&self, layout: Layout<'_>, cursor: mouse::Cursor) -> Option<usize> {
         let at = cursor.position()?;
         let bounds: Vec<Rectangle> = layout.children().map(|child| child.bounds()).collect();
-        self.order
-            .iter()
-            .rev()
-            .copied()
-            .find(|&i| bounds.get(i).is_some_and(|b| b.contains(at)))
+        self.order.iter().rev().copied().find(|&i| {
+            [2 * i, 2 * i + 1]
+                .iter()
+                .any(|&j| bounds.get(j).is_some_and(|b| b.contains(at)))
+        })
+    }
+
+    fn parts_mut(&mut self) -> Vec<&mut Element<'a, Message>> {
+        self.panels
+            .iter_mut()
+            .flat_map(|floater| [&mut floater.panel, &mut floater.tab])
+            .collect()
+    }
+
+    fn part(&self, j: usize) -> &Element<'a, Message> {
+        let floater = &self.panels[j / 2];
+        if j.is_multiple_of(2) {
+            &floater.panel
+        } else {
+            &floater.tab
+        }
     }
 }
 
 impl<'a> Widget<Message, Theme, Renderer> for FloatLayer<'a> {
     fn diff(&mut self, tree: &mut widget::Tree) {
-        let mut panels: Vec<&mut Element<'a, Message>> =
-            self.panels.iter_mut().map(|(_, panel)| panel).collect();
+        let mut parts = self.parts_mut();
         tree.diff_children_custom(
-            &mut panels,
-            |tree, panel| tree.diff(panel.as_widget_mut()),
-            |panel| widget::Tree::new(panel.as_widget()),
+            &mut parts,
+            |tree, part| tree.diff(part.as_widget_mut()),
+            |part| widget::Tree::new(part.as_widget()),
         );
     }
 
@@ -1009,17 +1304,25 @@ impl<'a> Widget<Message, Theme, Renderer> for FloatLayer<'a> {
         limits: &layout::Limits,
     ) -> layout::Node {
         let natural = layout::Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
-        let nodes = self
-            .panels
-            .iter_mut()
-            .zip(&mut tree.children)
-            .map(|((at, panel), tree)| {
-                panel
-                    .as_widget_mut()
-                    .layout(tree, renderer, &natural)
-                    .move_to(*at)
-            })
-            .collect();
+        let mut nodes = Vec::with_capacity(2 * self.panels.len());
+        for (floater, trees) in self.panels.iter_mut().zip(tree.children.chunks_mut(2)) {
+            let panel = floater
+                .panel
+                .as_widget_mut()
+                .layout(&mut trees[0], renderer, &natural)
+                .move_to(floater.at);
+            let tab = floater
+                .tab
+                .as_widget_mut()
+                .layout(&mut trees[1], renderer, &natural);
+            // The tab stands on the panel's top edge at its right end.
+            let tab_at = Point::new(
+                floater.at.x + panel.size().width - tab.size().width,
+                floater.at.y - tab.size().height,
+            );
+            nodes.push(panel);
+            nodes.push(tab.move_to(tab_at));
+        }
         layout::Node::with_children(limits.max(), nodes)
     }
 
@@ -1045,23 +1348,33 @@ impl<'a> Widget<Message, Theme, Renderer> for FloatLayer<'a> {
             }
         }
         let layouts: Vec<Layout<'_>> = layout.children().collect();
+        let order = self.order.clone();
         // Front to back; a panel under another sees no pointer there.
-        for &i in self.order.iter().rev() {
+        for i in order.into_iter().rev() {
             let panel_cursor = match hit {
                 Some(top) if top != i => mouse::Cursor::Unavailable,
                 _ => cursor,
             };
-            self.panels[i].1.as_widget_mut().update(
-                &mut tree.children[i],
-                event,
-                layouts[i],
-                panel_cursor,
-                renderer,
-                shell,
-                viewport,
-            );
-            if shell.is_event_captured() {
-                return;
+            // The tab first: it lies over the panel under it.
+            for j in [2 * i + 1, 2 * i] {
+                let floater = &mut self.panels[i];
+                let part = if j.is_multiple_of(2) {
+                    &mut floater.panel
+                } else {
+                    &mut floater.tab
+                };
+                part.as_widget_mut().update(
+                    &mut tree.children[j],
+                    event,
+                    layouts[j],
+                    panel_cursor,
+                    renderer,
+                    shell,
+                    viewport,
+                );
+                if shell.is_event_captured() {
+                    return;
+                }
             }
         }
         // A panel is opaque: what is under it gets no presses or wheel.
@@ -1091,17 +1404,20 @@ impl<'a> Widget<Message, Theme, Renderer> for FloatLayer<'a> {
             // Off the panels the drawing under the layer has the pointer.
             return mouse::Interaction::None;
         };
-        let child = layout.children().nth(i).expect("panel layout");
-        match self.panels[i].1.as_widget().mouse_interaction(
-            &tree.children[i],
-            child,
-            cursor,
-            viewport,
-            renderer,
-        ) {
-            mouse::Interaction::None => mouse::Interaction::Idle,
-            interaction => interaction,
-        }
+        let layouts: Vec<Layout<'_>> = layout.children().collect();
+        let interaction = [2 * i + 1, 2 * i]
+            .into_iter()
+            .map(|j| {
+                self.part(j).as_widget().mouse_interaction(
+                    &tree.children[j],
+                    layouts[j],
+                    cursor,
+                    viewport,
+                    renderer,
+                )
+            })
+            .find(|interaction| *interaction != mouse::Interaction::None);
+        interaction.unwrap_or(mouse::Interaction::Idle)
     }
 
     fn operate(
@@ -1111,14 +1427,13 @@ impl<'a> Widget<Message, Theme, Renderer> for FloatLayer<'a> {
         renderer: &Renderer,
         operation: &mut dyn widget::Operation,
     ) {
-        for (((_, panel), tree), layout) in self
-            .panels
-            .iter_mut()
+        for ((part, tree), layout) in self
+            .parts_mut()
+            .into_iter()
             .zip(&mut tree.children)
             .zip(layout.children())
         {
-            panel
-                .as_widget_mut()
+            part.as_widget_mut()
                 .operate(tree, layout, renderer, operation);
         }
     }
@@ -1142,16 +1457,19 @@ impl<'a> Widget<Message, Theme, Renderer> for FloatLayer<'a> {
             };
             // Each panel on its own layer, so a panel on top covers the
             // text of the ones under it.
-            renderer.with_layer(layouts[i].bounds(), |renderer| {
-                self.panels[i].1.as_widget().draw(
-                    &tree.children[i],
-                    renderer,
-                    theme,
-                    style,
-                    layouts[i],
-                    panel_cursor,
-                    viewport,
-                );
+            let bounds = layouts[2 * i].bounds().union(&layouts[2 * i + 1].bounds());
+            renderer.with_layer(bounds, |renderer| {
+                for j in [2 * i, 2 * i + 1] {
+                    self.part(j).as_widget().draw(
+                        &tree.children[j],
+                        renderer,
+                        theme,
+                        style,
+                        layouts[j],
+                        panel_cursor,
+                        viewport,
+                    );
+                }
             });
         }
     }
@@ -1168,11 +1486,11 @@ impl<'a> Widget<Message, Theme, Renderer> for FloatLayer<'a> {
         let overlays: Vec<_> = self
             .panels
             .iter_mut()
+            .flat_map(|floater| [&mut floater.panel, &mut floater.tab])
             .zip(&mut tree.children)
             .zip(layout.children())
-            .filter_map(|(((_, panel), tree), layout)| {
-                panel
-                    .as_widget_mut()
+            .filter_map(|((part, tree), layout)| {
+                part.as_widget_mut()
                     .overlay(tree, layout, renderer, viewport, translation)
             })
             .collect();
@@ -1339,6 +1657,54 @@ mod tests {
             assert!(ribbon.floating_layer(false).is_some());
             ribbon.on_float(FloatMsg::ToggleOrientation("draw/Draw".into()), now);
         }
+    }
+
+    #[test]
+    fn the_hover_buttons_follow_the_strip_and_the_tab() {
+        use super::{hover_flag, title_shift, FloatMsg};
+        let mut flag = None;
+        hover_flag(&mut flag, "a".into(), true);
+        // Leaving another panel keeps this one's.
+        hover_flag(&mut flag, "b".into(), false);
+        assert_eq!(flag.as_deref(), Some("a"));
+        hover_flag(&mut flag, "a".into(), false);
+        assert!(flag.is_none());
+
+        // A narrow panel's title moves clear of the buttons; a wide one's
+        // stays centred, and nothing moves off hover.
+        assert!(title_shift(true, "Modify", true, Some(110.0)).is_some());
+        assert!(title_shift(true, "Draw", true, Some(400.0)).is_none());
+        assert!(title_shift(false, "Modify", true, Some(110.0)).is_none());
+
+        let mut ribbon = Ribbon::default();
+        let mut side = floating("draw/Draw", 1);
+        side.extras_right = true;
+        ribbon.set_layout(RibbonLayout {
+            floating: vec![side, floating("draw/Modify", 2)],
+            ..RibbonLayout::default()
+        });
+        let now = iced::time::Instant::now();
+        ribbon.on_float(
+            FloatMsg::StripHover {
+                key: "draw/Draw".into(),
+                over: true,
+            },
+            now,
+        );
+        assert!(ribbon.floating_layer(false).is_some());
+        // Return to ribbon puts the panel back and forgets its hover.
+        assert!(ribbon.on_float(FloatMsg::Return("draw/Draw".into()), now));
+        assert!(ribbon.float_ui.strip_hover.is_none());
+        assert_eq!(ribbon.layout.floating.len(), 1);
+        let draw = ribbon
+            .modules
+            .iter()
+            .position(|module| module.id() == "draw")
+            .unwrap();
+        assert_eq!(
+            ribbon.groups_for(draw).next().map(|g| g.title),
+            Some("Draw")
+        );
     }
 
     #[test]

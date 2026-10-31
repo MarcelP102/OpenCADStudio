@@ -232,6 +232,9 @@ ribbon-menu =
     .remove-separator = Remove Separator
     .qat-show-below = Show Quick Access Toolbar Below the Ribbon
     .qat-show-above = Show Quick Access Toolbar Above the Ribbon
+    .return-to-ribbon = Return to Ribbon
+    .float-title-side = Panel title at the side, extra tools open to the right
+    .float-title-bottom = Panel title at the bottom, extra tools open downward
 
 options =
     .language-section = Γλώσσα
