@@ -2831,6 +2831,12 @@ impl OpenCADStudio {
                 };
                 Task::batch([sweep, run])
             }
+            Message::RibbonFloatPanel { module, title, x, y } => {
+                if self.ribbon.float_panel(module, &title, x, y) {
+                    self.save_config();
+                }
+                Task::none()
+            }
             Message::RibbonReorderPanels { module, titles } => {
                 self.ribbon.reorder_panels(module, &titles);
                 self.save_config();

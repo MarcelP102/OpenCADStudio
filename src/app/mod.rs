@@ -3533,6 +3533,14 @@ pub enum Message {
         module: &'static str,
         titles: Vec<String>,
     },
+    /// A ribbon panel dropped off the ribbon: it floats with its top-left
+    /// corner at (`x`, `y`).
+    RibbonFloatPanel {
+        module: &'static str,
+        title: String,
+        x: f32,
+        y: f32,
+    },
     /// Ribbon key tips: Alt, typed codes and Esc.
     KeyTip(crate::ui::ribbon::KeyTipInput),
     /// A ribbon tool button was clicked — highlights the tool and dispatches its event.

@@ -962,12 +962,53 @@ impl Ribbon {
                 holds,
             )
         };
+        // The contextual tabs' panels and the test-block Close panel stay in
+        // the ribbon.
+        let floatable = !is_contextual(module_id) && !(module_id == "draw" && g.title == "Close");
         Panel::deferred(g.title, move |level| match level {
             collapse::Level::Full => group(false),
             collapse::Level::Compact => group(true),
             collapse::Level::Collapsed => button(false),
             collapse::Level::Tight => button(true),
         })
+        .floatable(floatable)
+    }
+
+    /// Float the panel `title` of module `module` with its top-left corner
+    /// at (`x`, `y`), on top of the other floating panels. Returns whether
+    /// the layout changed.
+    pub fn float_panel(&mut self, module: &str, title: &str, x: f32, y: f32) -> bool {
+        let Some(index) = self.modules.iter().position(|m| m.id() == module) else {
+            return false;
+        };
+        let known = self
+            .ordered_groups(index)
+            .iter()
+            .any(|group| group.title == title);
+        if !known || is_contextual(module) || self.layout.floating_panel(module, title).is_some() {
+            return false;
+        }
+        let z = self.top_float_z() + 1;
+        self.layout.floating.push(FloatingPanel {
+            key: extras::panel_key(module, title),
+            module_id: module.to_string(),
+            x,
+            y,
+            z,
+            ..FloatingPanel::default()
+        });
+        self.close_popup();
+        true
+    }
+
+    /// The highest stacking order among the floating panels, 0 for none.
+    fn top_float_z(&self) -> u32 {
+        self.layout
+            .floating
+            .iter()
+            .map(|panel| panel.z)
+            .max()
+            .unwrap_or(0)
     }
 
     pub fn toggle_dropdown(&mut self, id: &str) {
@@ -1389,6 +1430,12 @@ impl Ribbon {
                 .draggable(strip, move |titles| Message::RibbonReorderPanels {
                     module,
                     titles,
+                })
+                .on_float(move |title, at| Message::RibbonFloatPanel {
+                    module,
+                    title,
+                    x: at.x,
+                    y: at.y,
                 })
                 .measure_key(measure_key)
                 .report_height(self.tool_bar_h.clone())
@@ -2545,6 +2592,33 @@ mod tests {
         let shown: Vec<_> = ribbon.shown_groups(draw).map(|g| g.title).collect();
         assert_eq!(shown, before);
         assert!(ribbon.tool_for_command("TRIM").is_some());
+    }
+
+    #[test]
+    fn a_dropped_panel_floats_on_top_once_and_contextual_ones_stay() {
+        let mut ribbon = Ribbon::default();
+        assert!(ribbon.float_panel("draw", "Draw", 300.0, 200.0));
+        assert!(ribbon.float_panel("draw", "Modify", 500.0, 200.0));
+        let z: Vec<u32> = ribbon.layout.floating.iter().map(|p| p.z).collect();
+        assert_eq!(z, [1, 2]);
+        let draw = &ribbon.layout.floating[0];
+        assert_eq!(
+            (draw.key.as_str(), draw.x, draw.y),
+            ("draw/Draw", 300.0, 200.0)
+        );
+        // Not twice, not a panel that does not exist, not a contextual tab's.
+        assert!(!ribbon.float_panel("draw", "Draw", 0.0, 0.0));
+        assert!(!ribbon.float_panel("draw", "Gone", 0.0, 0.0));
+        let block_editor = ribbon
+            .modules
+            .iter()
+            .find(|module| module.id() == "block_editor")
+            .and_then(|module| module.ribbon_groups().first())
+            .map(|group| group.title);
+        if let Some(title) = block_editor {
+            assert!(!ribbon.float_panel("block_editor", title, 0.0, 0.0));
+        }
+        assert_eq!(ribbon.layout.floating.len(), 2);
     }
 
     #[test]
