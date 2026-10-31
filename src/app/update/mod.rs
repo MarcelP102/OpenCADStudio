@@ -2838,7 +2838,7 @@ impl OpenCADStudio {
                 Task::none()
             }
             Message::RibbonFloat(msg) => {
-                if self.ribbon.on_float(msg) {
+                if self.ribbon.on_float(msg, iced::time::Instant::now()) {
                     self.save_config();
                 }
                 Task::none()

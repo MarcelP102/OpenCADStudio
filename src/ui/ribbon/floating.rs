@@ -9,6 +9,7 @@
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{self, Widget};
 use iced::advanced::{mouse, overlay, renderer, Renderer as _, Shell};
+use iced::time::Instant;
 use iced::widget::container;
 use iced::{
     Background, Border, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector,
@@ -55,10 +56,15 @@ impl Ribbon {
         let ts = self.toggle_state(show_block_palette);
         let mut order: Vec<usize> = (0..found.len()).collect();
         order.sort_by_key(|&i| found[i].2.z);
-        let keys = found
+        let keys: Vec<String> = found
             .iter()
             .map(|(_, _, panel)| panel.key.clone())
             .collect();
+        let open = self
+            .float_ui
+            .open
+            .as_ref()
+            .and_then(|open| keys.iter().position(|key| key == open));
         let panels = found
             .iter()
             .map(|&(index, group, panel)| {
@@ -74,6 +80,7 @@ impl Ribbon {
                 panels,
                 order,
                 keys,
+                open,
             }
             .into(),
         )
@@ -89,6 +96,7 @@ impl Ribbon {
     ) -> Element<'a, Message> {
         let key = extras::panel_key(module_id, group.title);
         let style_ctx = self.style_context();
+        let look = self.float_look(&key);
         let body = render_group(
             false,
             group,
@@ -107,10 +115,59 @@ impl Ribbon {
             self.active_lineweight,
             &style_ctx,
         );
-        let title = draw_panel::group_title(group.title, &key, SlideLook::Closed, false);
-        let framed = panel_frame::PanelFrame::new(body, metrics::TITLE_STRIP_H, title.launcher)
-            .title(Some(title.row));
-        let framed = container(framed).style(|theme: &Theme| container::Style {
+        // Open and unpinned, the body is lit like its extra tools.
+        let body = container(body).style(move |theme: &Theme| container::Style {
+            background: (look == SlideLook::Open)
+                .then(|| Background::Color(chrome::open_panel(theme))),
+            ..Default::default()
+        });
+        let body = PosReport::owned(body_id(&key), body);
+        let extras = draw_panel::panel_for_group(&key);
+        let (content, edge, on_click): (Element<'a, Message>, Edge, Option<Message>) =
+            match (extras, look) {
+                (Some(panel), SlideLook::Open | SlideLook::Pinned) => {
+                    // The extra tools continue the panel downward, over its
+                    // title strip; their footer is the title now.
+                    let width = crate::ui::wrap_bar::recent_bounds(&body_id(&key))
+                        .map_or(metrics::FLOAT_EXTRAS_MIN_W, |b| b.width);
+                    let pinned = look == SlideLook::Pinned;
+                    // As wide as the panel: the layer lays its panels out
+                    // unbounded, where a filling width has no end.
+                    let tools = container(draw_panel::extra_tools(self, panel, width))
+                        .width(width)
+                        .style(move |theme: &Theme| container::Style {
+                            background: Some(Background::Color(if pinned {
+                                chrome::panel(theme)
+                            } else {
+                                chrome::open_panel(theme)
+                            })),
+                            ..Default::default()
+                        });
+                    let footer = self.float_footer(&key, panel, pinned, width);
+                    (
+                        iced::widget::column![body, tools, footer].into(),
+                        Edge::Bottom(draw_panel::FOOTER_H),
+                        Some(Message::RibbonFloat(FloatMsg::Collapse(key.clone()))),
+                    )
+                }
+                _ => {
+                    let title =
+                        draw_panel::group_title(group.title, &key, SlideLook::Closed, false);
+                    let framed = panel_frame::PanelFrame::new(
+                        body.into(),
+                        metrics::TITLE_STRIP_H,
+                        title.launcher,
+                    )
+                    .title(Some(title.row));
+                    (
+                        framed.into(),
+                        Edge::Bottom(metrics::TITLE_STRIP_H),
+                        // Only a panel with extra tools opens them.
+                        extras.map(|_| Message::RibbonFloat(FloatMsg::ToggleExtras(key.clone()))),
+                    )
+                }
+            };
+        let framed = container(content).style(|theme: &Theme| container::Style {
             background: Some(Background::Color(chrome::panel(theme))),
             border: Border {
                 color: chrome::border(theme),
@@ -119,20 +176,184 @@ impl Ribbon {
             },
             ..Default::default()
         });
+        // The pointer on the panel or its extra tools keeps them open.
+        let watched = iced::widget::mouse_area(framed)
+            .on_enter(Message::RibbonFloat(FloatMsg::Hover {
+                key: key.clone(),
+                over: true,
+            }))
+            .on_exit(Message::RibbonFloat(FloatMsg::Hover {
+                key: key.clone(),
+                over: false,
+            }));
         let grip = Grip {
-            child: framed.into(),
+            child: watched.into(),
             key: key.clone(),
-            edge: Edge::Bottom(metrics::TITLE_STRIP_H),
-            on_click: None,
+            edge,
+            on_click,
             threshold: metrics::FLOAT_MOVE_THRESHOLD,
         };
         PosReport::owned(floating_id(&key), grip).into()
     }
 
+    /// How the extra tools of floating panel `key` show.
+    pub(super) fn float_look(&self, key: &str) -> SlideLook {
+        if draw_panel::panel_for_group(key).is_none() {
+            SlideLook::Closed
+        } else if self
+            .layout
+            .floating
+            .iter()
+            .any(|panel| panel.key == key && panel.pinned)
+        {
+            SlideLook::Pinned
+        } else if self.float_ui.open.as_deref() == Some(key) {
+            SlideLook::Open
+        } else {
+            SlideLook::Closed
+        }
+    }
+
+    /// The footer of a floating panel's extra tools: the pin (while the
+    /// pointer is on the footer), the title with ▴, and the dialog launcher.
+    /// A click on the title closes and unpins them; a drag on it moves the
+    /// panel (the panel's grip does both).
+    fn float_footer<'a>(
+        &self,
+        key: &str,
+        panel: &'static extras::PanelExtras,
+        pinned: bool,
+        width: f32,
+    ) -> Element<'a, Message> {
+        let side = metrics::FLOAT_SIDE_STRIP_W;
+        let hovered = self.float_ui.footer.as_deref() == Some(key);
+        let pin: Element<'a, Message> = if hovered {
+            iced::widget::button(crate::ui::icons::chrome(
+                if pinned {
+                    crate::ui::icons::PIN
+                } else {
+                    crate::ui::icons::PIN_ACTIVE
+                },
+                metrics::PIN_ICON,
+            ))
+            .on_press(Message::RibbonFloat(FloatMsg::TogglePin(key.to_string())))
+            .style(|theme: &Theme, status| super::widgets::tool_btn_style(theme, false, status))
+            .width(side)
+            .padding([1, 4])
+            .into()
+        } else {
+            iced::widget::Space::new().width(side).into()
+        };
+        let title = iced::widget::row![
+            iced::widget::text(crate::t!(panel.title()))
+                .size(metrics::FLOAT_TITLE_SIZE)
+                .style(move |theme: &Theme| iced::widget::text::Style {
+                    color: Some(if pinned {
+                        chrome::title_text(theme)
+                    } else {
+                        chrome::strong(theme)
+                    }),
+                }),
+            crate::ui::icons::dropup_arrow()
+        ]
+        .spacing(4)
+        .align_y(iced::Center);
+        let launcher = draw_panel::launcher(panel)
+            .unwrap_or_else(|| iced::widget::Space::new().width(side).into());
+        let bar = container(
+            iced::widget::row![
+                pin,
+                iced::widget::Space::new().width(Length::Fill),
+                title,
+                iced::widget::Space::new().width(Length::Fill),
+                launcher
+            ]
+            .align_y(iced::Center)
+            .padding([0, 3]),
+        )
+        .center_y(draw_panel::FOOTER_H)
+        .width(width)
+        .style(move |theme: &Theme| container::Style {
+            background: Some(Background::Color(if pinned {
+                chrome::title_bar(theme)
+            } else {
+                chrome::hover(theme)
+            })),
+            text_color: Some(if pinned {
+                chrome::title_text(theme)
+            } else {
+                chrome::strong(theme)
+            }),
+            ..Default::default()
+        });
+        iced::widget::mouse_area(bar)
+            .on_enter(Message::RibbonFloat(FloatMsg::Footer(Some(
+                key.to_string(),
+            ))))
+            .on_exit(Message::RibbonFloat(FloatMsg::Footer(None)))
+            .into()
+    }
+
+    /// Close the unpinned extra tools the pointer left a while ago.
+    pub(super) fn float_tick(&mut self, now: Instant) {
+        if self.float_ui.closing.is_some_and(|at| now >= at) {
+            self.float_ui.closing = None;
+            self.float_ui.open = None;
+        }
+    }
+
+    /// Whether unpinned extra tools are due to close.
+    pub(super) fn float_closing(&self) -> bool {
+        self.float_ui.closing.is_some()
+    }
+
     /// Apply a floating panel message. Returns whether the layout changed
     /// and should be saved.
-    pub fn on_float(&mut self, msg: FloatMsg) -> bool {
+    pub fn on_float(&mut self, msg: FloatMsg, now: Instant) -> bool {
         match msg {
+            FloatMsg::ToggleExtras(key) => {
+                if self.float_ui.open.as_deref() == Some(key.as_str()) {
+                    self.float_ui.open = None;
+                } else if draw_panel::panel_for_group(&key).is_some() {
+                    self.float_ui.open = Some(key);
+                    self.float_ui.over = true;
+                }
+                self.float_ui.closing = None;
+                false
+            }
+            FloatMsg::Collapse(key) => {
+                if self.float_ui.open.as_deref() == Some(key.as_str()) {
+                    self.float_ui.open = None;
+                }
+                self.float_ui.footer = None;
+                self.float_ui.closing = None;
+                self.set_float_pinned(&key, false)
+            }
+            FloatMsg::TogglePin(key) => {
+                let pinned = self.float_look(&key) == SlideLook::Pinned;
+                // A pinned panel's tools show on their own; unpinned, they
+                // stay open under the pointer.
+                self.float_ui.open = pinned.then(|| key.clone());
+                self.float_ui.closing = None;
+                self.set_float_pinned(&key, !pinned)
+            }
+            FloatMsg::Hover { key, over } => {
+                if self.float_ui.open.as_deref() == Some(key.as_str()) {
+                    self.float_ui.over = over;
+                    self.float_ui.closing =
+                        (!over).then(|| now + std::time::Duration::from_millis(EXTRAS_CLOSE_MS));
+                }
+                false
+            }
+            FloatMsg::Footer(key) => {
+                self.float_ui.footer = key;
+                false
+            }
+            FloatMsg::Outside => {
+                self.float_ui.open = None;
+                self.float_ui.closing = None;
+                false
+            }
             FloatMsg::Raise(key) => {
                 let top = self.top_float_z();
                 match self.layout.floating.iter_mut().find(|p| p.key == key) {
@@ -144,7 +365,7 @@ impl Ribbon {
                 }
             }
             FloatMsg::Press { key, at } => {
-                self.float_drag = self
+                self.float_ui.drag = self
                     .layout
                     .floating
                     .iter()
@@ -156,7 +377,7 @@ impl Ribbon {
                 false
             }
             FloatMsg::Move { at, .. } => {
-                let Some(drag) = &self.float_drag else {
+                let Some(drag) = &self.float_ui.drag else {
                     return false;
                 };
                 let corner = at - drag.grab;
@@ -166,7 +387,24 @@ impl Ribbon {
                 }
                 false
             }
-            FloatMsg::Release { moved } => self.float_drag.take().is_some() && moved,
+            FloatMsg::Release { moved } => self.float_ui.drag.take().is_some() && moved,
+        }
+    }
+
+    /// Pin or unpin the extra tools of floating panel `key`; whether that
+    /// changed anything.
+    fn set_float_pinned(&mut self, key: &str, pinned: bool) -> bool {
+        match self
+            .layout
+            .floating
+            .iter_mut()
+            .find(|panel| panel.key == key)
+        {
+            Some(panel) if panel.pinned != pinned => {
+                panel.pinned = pinned;
+                true
+            }
+            _ => false,
         }
     }
 }
@@ -183,6 +421,42 @@ pub enum FloatMsg {
     Move { at: Point, free: bool },
     /// The press let go; `moved` once it had moved the panel.
     Release { moved: bool },
+    /// A click on the title strip: open or close the extra tools.
+    ToggleExtras(String),
+    /// A click on the extra tools' footer title: close and unpin them.
+    Collapse(String),
+    /// The footer's pin.
+    TogglePin(String),
+    /// The pointer entered or left the panel (with its extra tools).
+    Hover { key: String, over: bool },
+    /// The pointer is on the footer of this panel's extra tools.
+    Footer(Option<String>),
+    /// A press off the panel whose extra tools are open and unpinned.
+    Outside,
+}
+
+/// What the floating panels' pointer and extra tools are doing; not saved.
+#[derive(Default)]
+pub(super) struct FloatUi {
+    /// A panel being moved by its title strip.
+    pub drag: Option<FloatDrag>,
+    /// The panel whose extra tools are open and not pinned.
+    pub open: Option<String>,
+    /// The pointer is on that panel.
+    pub over: bool,
+    /// The panel whose footer the pointer is on: its pin shows.
+    pub footer: Option<String>,
+    /// When the open extra tools close, the pointer having left them.
+    pub closing: Option<Instant>,
+}
+
+/// How long unpinned extra tools stay after the pointer leaves the panel.
+const EXTRAS_CLOSE_MS: u64 = 450;
+
+/// The id a floating panel's tools report their bounds under: the extra
+/// tools are as wide.
+fn body_id(key: &str) -> String {
+    format!("floatbody:{key}")
 }
 
 /// A floating panel being moved by its title strip.
@@ -428,6 +702,9 @@ pub(super) struct FloatLayer<'a> {
     order: Vec<usize>,
     /// The panels' keys, in `panels`' order.
     keys: Vec<String>,
+    /// The panel whose extra tools are open and not pinned: a press off it
+    /// closes them.
+    open: Option<usize>,
 }
 
 impl FloatLayer<'_> {
@@ -490,10 +767,14 @@ impl<'a> Widget<Message, Theme, Renderer> for FloatLayer<'a> {
         viewport: &Rectangle,
     ) {
         let hit = self.hit(layout, cursor);
-        // Any press on a panel brings it to the front.
-        if let (Some(i), Event::Mouse(mouse::Event::ButtonPressed(_))) = (hit, event) {
-            if self.order.last() != Some(&i) {
+        if let Event::Mouse(mouse::Event::ButtonPressed(_)) = event {
+            // Any press on a panel brings it to the front.
+            if let Some(i) = hit.filter(|i| self.order.last() != Some(i)) {
                 shell.publish(Message::RibbonFloat(FloatMsg::Raise(self.keys[i].clone())));
+            }
+            // A press anywhere else closes unpinned extra tools.
+            if self.open.is_some() && hit != self.open {
+                shell.publish(Message::RibbonFloat(FloatMsg::Outside));
             }
         }
         let layouts: Vec<Layout<'_>> = layout.children().collect();
@@ -675,6 +956,12 @@ mod tests {
         assert!(ribbon.floating_layer(false).is_some());
     }
 
+    impl Ribbon {
+        fn on_float_now(&mut self, msg: super::FloatMsg) -> bool {
+            self.on_float(msg, iced::time::Instant::now())
+        }
+    }
+
     #[test]
     fn a_press_raises_a_panel_and_its_strip_moves_it() {
         use super::FloatMsg;
@@ -688,29 +975,77 @@ mod tests {
             ..RibbonLayout::default()
         });
         // Raising the one on top changes nothing; the other goes above it.
-        assert!(!ribbon.on_float(FloatMsg::Raise("draw/Modify".into())));
-        assert!(ribbon.on_float(FloatMsg::Raise("draw/Draw".into())));
+        assert!(!ribbon.on_float_now(FloatMsg::Raise("draw/Modify".into())));
+        assert!(ribbon.on_float_now(FloatMsg::Raise("draw/Draw".into())));
         assert_eq!(ribbon.layout.floating[0].z, 3);
 
         // The press point keeps its place on the panel while it moves.
-        ribbon.on_float(FloatMsg::Press {
+        ribbon.on_float_now(FloatMsg::Press {
             key: "draw/Draw".into(),
             at: Point::new(150.0, 290.0),
         });
-        assert!(!ribbon.on_float(FloatMsg::Move {
+        assert!(!ribbon.on_float_now(FloatMsg::Move {
             at: Point::new(250.0, 390.0),
             free: true,
         }));
         let panel = &ribbon.layout.floating[0];
         assert_eq!((panel.x, panel.y), (200.0, 300.0));
         // Saved on release once it moved; a click is not a move.
-        assert!(ribbon.on_float(FloatMsg::Release { moved: true }));
-        ribbon.on_float(FloatMsg::Press {
+        assert!(ribbon.on_float_now(FloatMsg::Release { moved: true }));
+        ribbon.on_float_now(FloatMsg::Press {
             key: "draw/Draw".into(),
             at: Point::new(250.0, 390.0),
         });
-        assert!(!ribbon.on_float(FloatMsg::Release { moved: false }));
-        assert!(ribbon.float_drag.is_none());
+        assert!(!ribbon.on_float_now(FloatMsg::Release { moved: false }));
+        assert!(ribbon.float_ui.drag.is_none());
+    }
+
+    #[test]
+    fn extra_tools_open_close_after_the_pointer_leaves_and_stay_when_pinned() {
+        use super::super::draw_panel::SlideLook;
+        use super::FloatMsg;
+        use std::time::Duration;
+        let mut ribbon = Ribbon::default();
+        ribbon.set_layout(RibbonLayout {
+            floating: vec![floating("draw/Draw", 1), floating("draw/Groups", 2)],
+            ..RibbonLayout::default()
+        });
+        let t0 = iced::time::Instant::now();
+        // A panel without extra tools has none to open.
+        ribbon.on_float(FloatMsg::ToggleExtras("draw/Groups".into()), t0);
+        assert_eq!(ribbon.float_look("draw/Groups"), SlideLook::Closed);
+
+        ribbon.on_float(FloatMsg::ToggleExtras("draw/Draw".into()), t0);
+        assert_eq!(ribbon.float_look("draw/Draw"), SlideLook::Open);
+        // Leaving closes them 450 ms later, not sooner.
+        ribbon.on_float(
+            FloatMsg::Hover {
+                key: "draw/Draw".into(),
+                over: false,
+            },
+            t0,
+        );
+        assert!(ribbon.wants_tick());
+        ribbon.tick(t0 + Duration::from_millis(300));
+        assert_eq!(ribbon.float_look("draw/Draw"), SlideLook::Open);
+        ribbon.tick(t0 + Duration::from_millis(460));
+        assert_eq!(ribbon.float_look("draw/Draw"), SlideLook::Closed);
+
+        // A press elsewhere closes them too.
+        ribbon.on_float(FloatMsg::ToggleExtras("draw/Draw".into()), t0);
+        ribbon.on_float(FloatMsg::Outside, t0);
+        assert_eq!(ribbon.float_look("draw/Draw"), SlideLook::Closed);
+
+        // Pinned they stay, and the pin is saved; the footer title unpins.
+        ribbon.on_float(FloatMsg::ToggleExtras("draw/Draw".into()), t0);
+        assert!(ribbon.on_float(FloatMsg::TogglePin("draw/Draw".into()), t0));
+        assert_eq!(ribbon.float_look("draw/Draw"), SlideLook::Pinned);
+        ribbon.on_float(FloatMsg::Outside, t0);
+        ribbon.tick(t0 + Duration::from_secs(5));
+        assert_eq!(ribbon.float_look("draw/Draw"), SlideLook::Pinned);
+        assert!(ribbon.on_float(FloatMsg::Collapse("draw/Draw".into()), t0));
+        assert_eq!(ribbon.float_look("draw/Draw"), SlideLook::Closed);
+        assert!(!ribbon.layout.floating[0].pinned);
     }
 
     #[test]

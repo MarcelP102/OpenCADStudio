@@ -83,6 +83,11 @@ pub const FLOAT_DRAG_MARGIN: f32 = 24.0;
 /// How far the pointer moves from a press on a floating panel's title
 /// strip before the press moves the panel instead of clicking.
 pub const FLOAT_MOVE_THRESHOLD: f32 = 3.0;
+/// The least width of a floating panel's extra tools, before the panel
+/// has been drawn.
+pub const FLOAT_EXTRAS_MIN_W: f32 = 120.0;
+/// Size of a floating panel's title in its footer and side strip.
+pub const FLOAT_TITLE_SIZE: f32 = 11.5;
 /// Width of a floating panel's title strip at its side, and of the footer
 /// at the end of its extra tools band.
 pub const FLOAT_SIDE_STRIP_W: f32 = 20.0;

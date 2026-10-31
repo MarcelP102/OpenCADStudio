@@ -424,8 +424,8 @@ pub struct Ribbon {
     keytips: Option<keytips::State>,
     /// What More Commands searches for.
     qat_query: String,
-    /// A floating panel being moved by its title strip.
-    float_drag: Option<floating::FloatDrag>,
+    /// The floating panels' moves and extra tools.
+    float_ui: floating::FloatUi,
 }
 
 /// Per-layer display data shown in the ribbon layer dropdown.
@@ -569,7 +569,7 @@ impl Ribbon {
             mleader_layer: String::new(),
             keytips: None,
             qat_query: String::new(),
-            float_drag: None,
+            float_ui: floating::FloatUi::default(),
         }
     }
 
