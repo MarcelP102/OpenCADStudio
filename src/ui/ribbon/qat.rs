@@ -198,14 +198,7 @@ impl Ribbon {
         .width(Length::Fixed(metrics::QAT_CUSTOMIZE_W))
         .height(metrics::QAT_BUTTON)
         .padding(0);
-        let btn = tooltip(
-            btn,
-            make_tip(crate::tr!("ribbon-menu", "customize-qat")),
-            TipPos::Bottom,
-        )
-        .gap(6.0)
-        .delay(TIP_DELAY)
-        .style(tip_style);
+        let btn = tipped(btn, crate::tr!("ribbon-menu", "customize-qat"), open);
         PosReport::new(QAT_CUSTOMIZE_ID, btn).into()
     }
 
@@ -495,10 +488,7 @@ impl Ribbon {
         .width(Length::Fixed(metrics::QAT_MENU_BUTTON_W))
         .height(metrics::QAT_BUTTON)
         .padding([0.0, metrics::SMALL_PAD]);
-        let btn = tooltip(btn, make_tip(tip), TipPos::Bottom)
-            .gap(6.0)
-            .delay(TIP_DELAY)
-            .style(tip_style);
+        let btn = tipped(btn, tip, open);
         let anchor = super::keytips::quick_access_anchor(id);
         super::keytips::anchor_with(move || anchor, PosReport::new(id, btn))
     }
@@ -818,6 +808,23 @@ fn split_dropdown_id(id: &str) -> String {
 /// A command's tooltip: its label and the command it runs.
 pub(super) fn command_tip(label: &str, cmd: &str) -> String {
     format!("{label}\n{} {cmd}", crate::t!("Command:"))
+}
+
+/// `btn` with its tooltip, which it leaves out while its menu is `open`:
+/// the tip would cover the menu's title.
+fn tipped<'a>(
+    btn: impl Into<Element<'a, Message>>,
+    tip: String,
+    open: bool,
+) -> Element<'a, Message> {
+    if open {
+        return btn.into();
+    }
+    tooltip(btn, make_tip(tip), TipPos::Bottom)
+        .gap(6.0)
+        .delay(TIP_DELAY)
+        .style(tip_style)
+        .into()
 }
 
 /// A 1 px line between two items.
