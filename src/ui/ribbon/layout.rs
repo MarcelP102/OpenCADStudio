@@ -46,6 +46,17 @@ pub enum QatItem {
     Separator,
 }
 
+impl QatItem {
+    /// Whether `self` and `other` are the same item: commands ignore case
+    /// and surrounding spaces.
+    pub fn same(&self, other: &QatItem) -> bool {
+        match (self, other) {
+            (QatItem::Command(a), QatItem::Command(b)) => a.trim().eq_ignore_ascii_case(b.trim()),
+            _ => self == other,
+        }
+    }
+}
+
 /// The Quick Access Toolbar's controls with a UI of their own.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum QatBuiltin {
@@ -160,6 +171,53 @@ impl RibbonLayout {
         self.show_panel_titles = true;
     }
 
+    /// Whether the Quick Access Toolbar holds `item`.
+    pub(super) fn qat_has(&self, item: &QatItem) -> bool {
+        self.qat.iter().any(|held| held.same(item))
+    }
+
+    /// Add `item` at the end of the Quick Access Toolbar unless it is there
+    /// already; whether it was added. Separators are always added.
+    pub(super) fn qat_add(&mut self, item: QatItem) -> bool {
+        if item != QatItem::Separator && self.qat_has(&item) {
+            return false;
+        }
+        self.qat.push(item);
+        true
+    }
+
+    /// Take `item` off the Quick Access Toolbar, with a separator it leaves
+    /// at either end or doubled; whether it was there.
+    pub(super) fn qat_remove(&mut self, item: &QatItem) -> bool {
+        let before = self.qat.len();
+        self.qat.retain(|held| !held.same(item));
+        self.tidy_qat_separators();
+        self.qat.len() != before
+    }
+
+    /// Add `item` if the toolbar lacks it, else take it off.
+    pub(super) fn qat_toggle(&mut self, item: QatItem) {
+        if !self.qat_remove(&item) {
+            self.qat_add(item);
+        }
+    }
+
+    /// Drop separators at the ends of the toolbar and doubled ones.
+    fn tidy_qat_separators(&mut self) {
+        let mut tidy: Vec<QatItem> = Vec::with_capacity(self.qat.len());
+        for item in self.qat.drain(..) {
+            let is_separator = item == QatItem::Separator;
+            if is_separator && tidy.last().is_none_or(|last| *last == QatItem::Separator) {
+                continue;
+            }
+            tidy.push(item);
+        }
+        if tidy.last() == Some(&QatItem::Separator) {
+            tidy.pop();
+        }
+        self.qat = tidy;
+    }
+
     pub(super) fn panel_hidden(&self, module_id: &str, title: &str) -> bool {
         self.hidden_panels
             .iter()
@@ -223,6 +281,49 @@ mod tests {
             keys.iter().map(|key| key.to_string()).collect(),
         );
         layout
+    }
+
+    #[test]
+    fn the_quick_access_toolbar_adds_once_and_removes_ignoring_case() {
+        let mut layout = RibbonLayout::default();
+        let hatch = QatItem::Command("HATCH".into());
+        assert!(!layout.qat_has(&hatch));
+        assert!(layout.qat_add(hatch.clone()));
+        assert!(!layout.qat_add(QatItem::Command(" hatch ".into())));
+        assert_eq!(layout.qat.last(), Some(&hatch));
+
+        layout.qat_toggle(QatItem::Command("hatch".into()));
+        assert!(!layout.qat_has(&hatch));
+        layout.qat_toggle(QatItem::Builtin(QatBuiltin::LayerCombo));
+        assert_eq!(
+            layout.qat.last(),
+            Some(&QatItem::Builtin(QatBuiltin::LayerCombo))
+        );
+    }
+
+    #[test]
+    fn removing_an_item_drops_the_separators_it_strands() {
+        let mut layout = RibbonLayout::default();
+        let save = QatItem::Command("SAVE".into());
+        let print = QatItem::Command("PRINT".into());
+        layout.qat = vec![
+            save.clone(),
+            QatItem::Separator,
+            print.clone(),
+            QatItem::Separator,
+            QatItem::Builtin(QatBuiltin::Undo),
+        ];
+        layout.qat_remove(&print);
+        assert_eq!(
+            layout.qat,
+            [
+                save.clone(),
+                QatItem::Separator,
+                QatItem::Builtin(QatBuiltin::Undo)
+            ]
+        );
+        layout.qat_remove(&save);
+        assert_eq!(layout.qat, [QatItem::Builtin(QatBuiltin::Undo)]);
     }
 
     #[test]

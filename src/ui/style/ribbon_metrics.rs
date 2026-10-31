@@ -29,6 +29,10 @@ pub const QAT_SEPARATOR_MARGIN: f32 = 4.0;
 /// The Quick Access menu buttons (Switch Windows, User Interface): icon
 /// and arrow.
 pub const QAT_MENU_BUTTON_W: f32 = QAT_BUTTON + QAT_SPLIT_ARROW_W;
+/// The customize button at the end of the Quick Access Toolbar.
+pub const QAT_CUSTOMIZE_W: f32 = 20.0;
+/// The title of a Quick Access menu.
+pub const QAT_MENU_TITLE_SIZE: f32 = 11.5;
 /// Gap between two tabs: none, so a hovered tab meets the active one.
 pub const TAB_GAP: f32 = 0.0;
 /// The minimize split button after the last tab: this far from the tab,

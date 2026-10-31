@@ -2776,7 +2776,15 @@ impl OpenCADStudio {
                 if out.save {
                     self.save_config();
                 }
-                out.run.map_or_else(Task::none, |run| self.update(run))
+                let focus = if out.focus {
+                    iced::widget::operation::focus(iced::widget::Id::new(
+                        crate::ui::ribbon::QAT_PICKER_INPUT,
+                    ))
+                } else {
+                    Task::none()
+                };
+                let run = out.run.map_or_else(Task::none, |run| self.update(run));
+                Task::batch([focus, run])
             }
             Message::RibbonSlideOut(msg) => {
                 if self.ribbon.on_slide_out(msg, iced::time::Instant::now()) {

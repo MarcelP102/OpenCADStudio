@@ -96,8 +96,14 @@ impl Ribbon {
                 self.menu = Some(MenuState { at, open: None });
                 false
             }
-            RibbonMenuMsg::Close | RibbonMenuMsg::ShowMenuBar(_) | RibbonMenuMsg::ShowRibbon(_) => {
+            RibbonMenuMsg::Close => {
                 self.menu = None;
+                false
+            }
+            // Picked from this menu or the Quick Access customize menu.
+            RibbonMenuMsg::ShowMenuBar(_) | RibbonMenuMsg::ShowRibbon(_) => {
+                self.menu = None;
+                self.close_dropdown();
                 false
             }
             RibbonMenuMsg::Hover(open) => {

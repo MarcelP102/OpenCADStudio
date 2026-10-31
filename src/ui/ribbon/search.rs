@@ -172,6 +172,34 @@ pub(super) struct SearchState {
     lit: Option<String>,
 }
 
+/// How many results More Commands lists.
+const QAT_CANDIDATES: usize = 30;
+
+/// A command More Commands can add to the Quick Access Toolbar.
+pub(super) struct QatCandidate {
+    pub label: String,
+    /// Where the search found it.
+    pub path: String,
+    pub icon: Option<IconKind>,
+    pub item: QatItem,
+}
+
+/// The Quick Access item that runs what a search result's message runs.
+fn qat_item_of(run: &Message) -> Option<QatItem> {
+    let command = |line: &str| Some(QatItem::Command(line.trim().to_string()));
+    match run {
+        Message::Undo => Some(QatItem::Builtin(QatBuiltin::Undo)),
+        Message::Redo => Some(QatItem::Builtin(QatBuiltin::Redo)),
+        Message::MenuCommand(line) | Message::Command(line) => command(line),
+        Message::DropdownSelectItem { cmd, .. } => command(cmd),
+        Message::RibbonToolClick {
+            event: ModuleEvent::Command(line),
+            ..
+        } => command(line),
+        _ => None,
+    }
+}
+
 /// What the app does after a search message.
 #[derive(Default)]
 pub struct SearchOutcome {
@@ -373,6 +401,45 @@ impl Ribbon {
             }
         }
         hits
+    }
+
+    /// What More Commands offers for the lower-case `query`: each command
+    /// the search finds, once, as (label, where it is, icon, the Quick
+    /// Access item it would add), the best matches first.
+    pub(super) fn qat_candidates(&self, query: &str) -> Vec<QatCandidate> {
+        let query = query.trim().to_lowercase();
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let hits = self.search_index();
+        let mut ranked: Vec<(u8, usize)> = hits
+            .iter()
+            .enumerate()
+            .filter_map(|(i, hit)| hit.rank(&query).map(|rank| (rank, i)))
+            .collect();
+        ranked.sort_by_key(|&(rank, i)| (rank, hits[i].group != Group::Ribbon, i));
+        let mut seen: Vec<QatItem> = Vec::new();
+        let mut out = Vec::new();
+        for (_, i) in ranked {
+            let hit = &hits[i];
+            let Some(item) = qat_item_of(&hit.run) else {
+                continue;
+            };
+            if seen.iter().any(|known| known.same(&item)) {
+                continue;
+            }
+            seen.push(item.clone());
+            out.push(QatCandidate {
+                label: hit.label.clone(),
+                path: hit.path.clone(),
+                icon: hit.icon,
+                item,
+            });
+            if out.len() == QAT_CANDIDATES {
+                break;
+            }
+        }
+        out
     }
 
     /// Match the query against a fresh index.

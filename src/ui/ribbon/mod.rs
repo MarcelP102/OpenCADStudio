@@ -59,7 +59,7 @@ pub use keytips::{
 pub use layout::{default_qat, MinimizePref, QatBuiltin, QatItem, RibbonLayout, RibbonMinimize};
 pub use minimize::{MinimizeMsg, Opener};
 pub(crate) use qat::QAT_SWITCH_ID;
-pub use qat::{QatMsg, QatOutcome};
+pub use qat::{QatMsg, QatOutcome, QAT_PICKER_INPUT};
 pub use ribbon_menu::{RibbonMenuMsg, Submenu};
 pub use search::{results_scroll_id, SearchMsg, SearchOutcome, SEARCH_INPUT_ID};
 
@@ -413,6 +413,8 @@ pub struct Ribbon {
     pub center_layer: String,
     /// Open key tips (Alt).
     keytips: Option<keytips::State>,
+    /// What More Commands searches for.
+    qat_query: String,
 }
 
 /// Per-layer display data shown in the ribbon layer dropdown.
@@ -555,6 +557,7 @@ impl Ribbon {
             center_layer: String::new(),
             mleader_layer: String::new(),
             keytips: None,
+            qat_query: String::new(),
         }
     }
 

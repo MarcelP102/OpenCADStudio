@@ -25,6 +25,18 @@ pub(crate) const QAT_LAYER_COMBO_ID: &str = "QAT_LAYER_COMBO";
 /// The Switch Windows and User Interface menus.
 pub(crate) const QAT_SWITCH_ID: &str = "QAT_SWITCH_WINDOWS";
 pub(crate) const QAT_UI_ID: &str = "QAT_USER_INTERFACE";
+/// The customize button and its menu, and More Commands.
+pub(crate) const QAT_CUSTOMIZE_ID: &str = "QAT_CUSTOMIZE";
+pub(crate) const QAT_PICKER_ID: &str = "QAT_MORE_COMMANDS";
+/// More Commands' search field.
+pub const QAT_PICKER_INPUT: &str = "qat_more_commands_input";
+const PICKER_W: f32 = 340.0;
+const PICKER_LIST_H: f32 = 320.0;
+/// A result row: its name over where it was found.
+const PICKER_ROW_H: f32 = 34.0;
+const CHECK_SIZE: f32 = 10.0;
+/// A bar with a ▾ under it.
+const CUSTOMIZE_ICON: &str = "M6 7h12 M8.5 11.5L12 15l3.5-3.5";
 /// Starts the dropdown id of a split item's list.
 const SPLIT_PREFIX: &str = "qat:";
 const TIP_DELAY: Duration = Duration::from_millis(400);
@@ -36,7 +48,10 @@ const USER_INTERFACE_ICON: &str = "M3 4h18v16H3z M3 9h18 M8 9v11";
 /// Whether the Quick Access menu `id` works on the Start tab, which has no
 /// drawing.
 pub(crate) fn works_without_drawing(id: &str) -> bool {
-    matches!(id, QAT_SWITCH_ID | QAT_UI_ID)
+    matches!(
+        id,
+        QAT_SWITCH_ID | QAT_UI_ID | QAT_CUSTOMIZE_ID | QAT_PICKER_ID
+    )
 }
 
 /// What a command item shows.
@@ -160,7 +175,175 @@ impl Ribbon {
                 ),
                 QatItem::Separator => separator(),
             })
+            .chain(std::iter::once(self.customize_button()))
             .collect()
+    }
+
+    /// The button at the end of the toolbar that opens its customize menu.
+    fn customize_button(&self) -> Element<'_, Message> {
+        let open = matches!(
+            self.open_dropdown.as_deref(),
+            Some(QAT_CUSTOMIZE_ID | QAT_PICKER_ID)
+        );
+        let btn = button(
+            container(icons::line_icon(CUSTOMIZE_ICON, metrics::STRIP_ICON))
+                .center_x(Fill)
+                .center_y(Fill),
+        )
+        .on_press(Message::ToggleRibbonDropdown(QAT_CUSTOMIZE_ID.to_string()))
+        .style(move |theme: &Theme, status| top_hist_btn_style(theme, true, open, status))
+        .width(Length::Fixed(metrics::QAT_CUSTOMIZE_W))
+        .height(metrics::QAT_BUTTON)
+        .padding(0);
+        let btn = tooltip(
+            btn,
+            make_tip(crate::tr!("ribbon-menu", "customize-qat")),
+            TipPos::Bottom,
+        )
+        .gap(6.0)
+        .delay(TIP_DELAY)
+        .style(tip_style);
+        PosReport::new(QAT_CUSTOMIZE_ID, btn).into()
+    }
+
+    /// The customize menu or More Commands, while open: what the toolbar
+    /// holds, the menu bar and where the toolbar shows.
+    pub fn qat_customize_overlay(
+        &self,
+        win: (f32, f32),
+        show_menu_bar: bool,
+        ribbon_closed: bool,
+    ) -> Option<Element<'_, Message>> {
+        match self.open_dropdown.as_deref()? {
+            QAT_CUSTOMIZE_ID => Some(self.customize_menu(win, show_menu_bar, ribbon_closed)),
+            QAT_PICKER_ID => Some(self.more_commands(win)),
+            _ => None,
+        }
+    }
+
+    fn customize_menu(
+        &self,
+        win: (f32, f32),
+        show_menu_bar: bool,
+        ribbon_closed: bool,
+    ) -> Element<'_, Message> {
+        let title = crate::tr!("ribbon-menu", "customize-qat");
+        let more = crate::tr!("ribbon-menu", "more-commands");
+        let menu_bar = if show_menu_bar {
+            crate::tr!("ribbon-menu", "hide-menu-bar")
+        } else {
+            crate::tr!("ribbon-menu", "show-menu-bar")
+        };
+        let place = if self.layout.qat_below {
+            crate::tr!("ribbon-menu", "show-above")
+        } else {
+            crate::tr!("ribbon-menu", "show-below")
+        };
+        let standard = standard_items();
+        let width = fit_width(standard.iter().map(|(label, _)| label.as_str()).chain([
+            title.as_str(),
+            more.as_str(),
+            menu_bar.as_str(),
+            place.as_str(),
+        ]));
+        let mut items: Vec<Element<'_, Message>> = vec![menu_header(title)];
+        items.extend(standard.into_iter().map(|(label, item)| {
+            let checked = self.layout.qat_has(&item);
+            check_row(
+                label,
+                checked,
+                Some(Message::RibbonQat(QatMsg::Toggle(item))),
+            )
+            .into()
+        }));
+        items.push(menu_separator());
+        items.push(check_row(more, false, Some(Message::RibbonQat(QatMsg::OpenPicker))).into());
+        items.push(
+            check_row(
+                menu_bar,
+                false,
+                Some(Message::RibbonMenu(super::RibbonMenuMsg::ShowMenuBar(
+                    !show_menu_bar,
+                ))),
+            )
+            .into(),
+        );
+        items.push(place_row(place, self.layout.qat_below, ribbon_closed));
+        self.place_dropdown(QAT_CUSTOMIZE_ID, panel_of_width(items, width), width, win.0)
+    }
+
+    /// More Commands: the command search's box and results; a result is
+    /// added to the toolbar instead of run.
+    fn more_commands(&self, win: (f32, f32)) -> Element<'_, Message> {
+        let input = iced::widget::text_input(
+            &crate::tr!("ribbon-menu", "find-command-to-add"),
+            &self.qat_query,
+        )
+        .id(iced::widget::Id::new(QAT_PICKER_INPUT))
+        .on_input(|query| Message::RibbonQat(QatMsg::PickerInput(query)))
+        .on_submit(Message::RibbonQat(QatMsg::PickerSubmit))
+        .size(11.5)
+        .padding([4, 6]);
+        let candidates = self.qat_candidates(&self.qat_query);
+        let list_h = (candidates.len().max(1) as f32 * PICKER_ROW_H).min(PICKER_LIST_H);
+        let rows: Vec<Element<'_, Message>> =
+            if candidates.is_empty() && !self.qat_query.trim().is_empty() {
+                vec![container(
+                    text(crate::tr!("ribbon-menu", "no-matches"))
+                        .size(11)
+                        .style(|theme: &Theme| text::Style {
+                            color: Some(chrome::muted(theme)),
+                        }),
+                )
+                .padding([6, 10])
+                .into()]
+            } else {
+                candidates
+                    .into_iter()
+                    .map(|candidate| {
+                        let held = self.layout.qat_has(&candidate.item);
+                        let icon: Element<'_, Message> = match candidate.icon {
+                            Some(icon) => super::widgets::make_icon(icon, SMALL_ICON),
+                            None => Space::new().width(SMALL_ICON).height(SMALL_ICON).into(),
+                        };
+                        let label = iced::widget::column![
+                            text(candidate.label).size(12),
+                            text(candidate.path)
+                                .size(10)
+                                .style(|theme: &Theme| text::Style {
+                                    color: Some(chrome::muted(theme)),
+                                }),
+                        ];
+                        let mut content = row![icon, label].spacing(8).align_y(iced::Center);
+                        if held {
+                            content = content
+                                .push(Space::new().width(Fill))
+                                .push(icons::themed_disabled(icons::CHECK, CHECK_SIZE));
+                        }
+                        button(content)
+                            .on_press_maybe(
+                                (!held).then(|| Message::RibbonQat(QatMsg::Add(candidate.item))),
+                            )
+                            .style(super::widgets::popup_row_style)
+                            .width(Fill)
+                            .padding([3, 10])
+                            .into()
+                    })
+                    .collect()
+            };
+        let list =
+            iced::widget::scrollable(iced::widget::column(rows)).height(Length::Fixed(list_h));
+        let panel = container(
+            iced::widget::column![
+                menu_header(crate::tr!("ribbon-menu", "more-commands-title")),
+                container(input).padding([4, 6]),
+                list
+            ]
+            .spacing(2),
+        )
+        .style(super::widgets::popup_panel_style)
+        .width(Length::Fixed(PICKER_W));
+        self.place_dropdown(QAT_CUSTOMIZE_ID, panel.into(), PICKER_W, win.0)
     }
 
     /// The toolbar as one flow that wraps.
@@ -388,6 +571,53 @@ impl Ribbon {
                 QatOutcome {
                     save: true,
                     run: Some(Message::MenuCommand(cmd.to_string())),
+                    ..QatOutcome::default()
+                }
+            }
+            QatMsg::Toggle(item) => {
+                self.layout.qat_toggle(item);
+                QatOutcome {
+                    save: true,
+                    ..QatOutcome::default()
+                }
+            }
+            QatMsg::SetBelow(below) => {
+                self.close_dropdown();
+                self.layout.qat_below = below;
+                QatOutcome {
+                    save: true,
+                    ..QatOutcome::default()
+                }
+            }
+            QatMsg::OpenPicker => {
+                self.qat_query.clear();
+                self.open_dropdown = Some(QAT_PICKER_ID.to_string());
+                QatOutcome {
+                    focus: true,
+                    ..QatOutcome::default()
+                }
+            }
+            QatMsg::PickerInput(query) => {
+                self.qat_query = query;
+                QatOutcome::default()
+            }
+            QatMsg::PickerSubmit => {
+                let first = self
+                    .qat_candidates(&self.qat_query)
+                    .into_iter()
+                    .find(|candidate| !self.layout.qat_has(&candidate.item));
+                match first {
+                    Some(candidate) => self.on_qat(QatMsg::Add(candidate.item)),
+                    None => QatOutcome::default(),
+                }
+            }
+            QatMsg::Add(item) => {
+                let save = self.layout.qat_add(item);
+                self.close_dropdown();
+                self.qat_query.clear();
+                QatOutcome {
+                    save,
+                    ..QatOutcome::default()
                 }
             }
         }
@@ -400,6 +630,18 @@ pub enum QatMsg {
     /// From the list of the split item `item`: run `cmd`, which its face
     /// shows from now on.
     Pick { item: String, cmd: &'static str },
+    /// Add the item to the end of the toolbar, or take it off.
+    Toggle(QatItem),
+    /// Show the toolbar below the ribbon (`true`) or in the tab row.
+    SetBelow(bool),
+    /// Open More Commands.
+    OpenPicker,
+    /// More Commands' query.
+    PickerInput(String),
+    /// Enter in More Commands: add the first result not on the toolbar.
+    PickerSubmit,
+    /// Add the item at the end of the toolbar, unless it is there already.
+    Add(QatItem),
 }
 
 /// What the app does after a Quick Access message.
@@ -409,6 +651,125 @@ pub struct QatOutcome {
     pub save: bool,
     /// A message to run.
     pub run: Option<Message>,
+    /// Focus More Commands' search field.
+    pub focus: bool,
+}
+
+/// The commands the customize menu offers, with their labels.
+fn standard_items() -> Vec<(String, QatItem)> {
+    let command = |cmd: &str| QatItem::Command(cmd.to_string());
+    vec![
+        (crate::tr!("ribbon-menu", "qat-new"), command("QNEW")),
+        (crate::tr!("ribbon-menu", "qat-open"), command("OPEN")),
+        (crate::tr!("ribbon-menu", "qat-save"), command("SAVE")),
+        (crate::tr!("ribbon-menu", "qat-save-as"), command("SAVEAS")),
+        // The toolbar's Print button is what plots.
+        (crate::tr!("ribbon-menu", "qat-plot"), command("PRINT")),
+        (
+            crate::tr!("ribbon-menu", "qat-undo"),
+            QatItem::Builtin(QatBuiltin::Undo),
+        ),
+        (
+            crate::tr!("ribbon-menu", "qat-redo"),
+            QatItem::Builtin(QatBuiltin::Redo),
+        ),
+        (
+            crate::tr!("ribbon-menu", "qat-measure"),
+            command("MEASURE_MENU"),
+        ),
+        (
+            crate::tr!("ribbon-menu", "switch-windows"),
+            QatItem::Builtin(QatBuiltin::SwitchWindows),
+        ),
+        (
+            crate::tr!("ribbon-menu", "user-interface"),
+            QatItem::Builtin(QatBuiltin::UserInterface),
+        ),
+        (
+            crate::tr!("ribbon-menu", "qat-zoom-extents"),
+            command("ZOOM E"),
+        ),
+        (
+            crate::tr!("ribbon-menu", "qat-batch-plot"),
+            command("PUBLISH"),
+        ),
+        (
+            crate::tr!("ribbon-menu", "qat-layer-control"),
+            QatItem::Builtin(QatBuiltin::LayerCombo),
+        ),
+        (
+            crate::tr!("ribbon-menu", "qat-match-properties"),
+            command("MATCHPROP"),
+        ),
+        (
+            crate::tr!("ribbon-menu", "qat-plot-preview"),
+            command("PREVIEW"),
+        ),
+        (
+            crate::tr!("ribbon-menu", "qat-properties"),
+            command("PROPERTIES"),
+        ),
+    ]
+}
+
+/// A menu's title: semibold, with a line under it.
+fn menu_header<'a>(title: String) -> Element<'a, Message> {
+    let line =
+        container(Space::new().width(Fill).height(icons::hairline())).style(|theme: &Theme| {
+            container::Style {
+                background: Some(Background::Color(chrome::border(theme))),
+                ..Default::default()
+            }
+        });
+    iced::widget::column![
+        container(
+            text(title)
+                .size(metrics::QAT_MENU_TITLE_SIZE)
+                .font(iced::Font::DEFAULT.weight(iced::font::Weight::Semibold))
+                .style(|theme: &Theme| text::Style {
+                    color: Some(chrome::strong(theme)),
+                }),
+        )
+        .padding([4, 12]),
+        line,
+    ]
+    .width(Fill)
+    .into()
+}
+
+/// A 1 px line across a menu.
+fn menu_separator<'a>() -> Element<'a, Message> {
+    container(
+        container(Space::new().width(Fill).height(icons::hairline())).style(|theme: &Theme| {
+            container::Style {
+                background: Some(Background::Color(chrome::border(theme))),
+                ..Default::default()
+            }
+        }),
+    )
+    .padding([3, 6])
+    .into()
+}
+
+/// Show Below / Above the Ribbon: disabled while the ribbon is closed.
+fn place_row<'a>(label: String, below: bool, ribbon_closed: bool) -> Element<'a, Message> {
+    let row = check_row(
+        label,
+        false,
+        (!ribbon_closed).then_some(Message::RibbonQat(QatMsg::SetBelow(!below))),
+    );
+    if ribbon_closed {
+        tooltip(
+            row,
+            make_tip(crate::tr!("ribbon-menu", "qat-place-unavailable")),
+            TipPos::Right,
+        )
+        .delay(TIP_DELAY)
+        .style(tip_style)
+        .into()
+    } else {
+        row.into()
+    }
 }
 
 /// The dropdown id of the list of the split item `id`.
@@ -541,5 +902,51 @@ mod tests {
         assert!(!super::super::works_without_drawing(&split_dropdown_id(
             "MEASURE_MENU"
         )));
+    }
+
+    #[test]
+    fn the_customize_menu_ticks_and_toggles_its_commands() {
+        let mut ribbon = Ribbon::default();
+        let standard = standard_items();
+        // The default toolbar ticks New to Redo, Plot being its Print.
+        let ticked: Vec<bool> = standard
+            .iter()
+            .map(|(_, item)| ribbon.layout.qat_has(item))
+            .collect();
+        assert_eq!(&ticked[..7], [true; 7]);
+        assert!(ticked[7..].iter().all(|on| !on));
+
+        let layer = QatItem::Builtin(QatBuiltin::LayerCombo);
+        assert!(ribbon.on_qat(QatMsg::Toggle(layer.clone())).save);
+        assert_eq!(ribbon.layout.qat.last(), Some(&layer));
+        ribbon.on_qat(QatMsg::Toggle(layer.clone()));
+        assert!(!ribbon.layout.qat_has(&layer));
+    }
+
+    #[test]
+    fn more_commands_adds_a_found_command_once() {
+        let mut ribbon = Ribbon::default();
+        assert!(ribbon.on_qat(QatMsg::OpenPicker).focus);
+        assert_eq!(ribbon.open_dropdown.as_deref(), Some(QAT_PICKER_ID));
+        ribbon.on_qat(QatMsg::PickerInput("hatch".into()));
+        let candidates = ribbon.qat_candidates("hatch");
+        assert!(candidates
+            .iter()
+            .any(|c| c.item.same(&QatItem::Command("HATCH".into()))));
+
+        assert!(ribbon.on_qat(QatMsg::PickerSubmit).save);
+        assert!(ribbon.open_dropdown.is_none());
+        let added = ribbon.layout.qat.last().cloned().unwrap();
+        // Adding it again changes nothing.
+        let len = ribbon.layout.qat.len();
+        assert!(!ribbon.on_qat(QatMsg::Add(added)).save);
+        assert_eq!(ribbon.layout.qat.len(), len);
+    }
+
+    #[test]
+    fn the_toolbar_moves_below_the_ribbon() {
+        let mut ribbon = Ribbon::default();
+        assert!(ribbon.on_qat(QatMsg::SetBelow(true)).save);
+        assert!(ribbon.layout.qat_below);
     }
 }

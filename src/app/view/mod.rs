@@ -2941,6 +2941,13 @@ bg={bg_ms:.1}ms n={view_count}"
                     &self.recent_files,
                     &self.open_drawing_names(),
                 )
+                .or_else(|| {
+                    self.ribbon.qat_customize_overlay(
+                        self.win_size,
+                        self.show_menu_bar,
+                        self.ribbon_closed,
+                    )
+                })
                 .unwrap_or_else(|| iced::widget::Space::new().width(0).height(0).into())
         };
 
