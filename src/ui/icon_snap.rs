@@ -600,6 +600,26 @@ mod tests {
     }
 
     #[test]
+    fn every_line_icon_renders_after_snapping_at_every_physical_size() {
+        use resvg::usvg;
+        let options = usvg::Options::default();
+        // 16 and 32 logical px at 100, 125, 150, 175 and 200 %.
+        let sizes = [16, 20, 24, 28, 32, 40, 48, 56, 64];
+        for (path, bytes) in line_icon_files() {
+            let icon = parse(&bytes).unwrap();
+            for n in sizes {
+                for w in [1, 2] {
+                    let snapped = icon.snap(n, w);
+                    let tree = usvg::Tree::from_data(snapped.as_bytes(), &options)
+                        .unwrap_or_else(|e| panic!("{path} at {n} px: {e}"));
+                    assert_eq!(tree.size().width(), n as f32, "{path}");
+                    assert!(tree.root().has_children(), "{path} at {n} px draws nothing");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn line_weight_follows_the_table() {
         for (scale, w) in [
             (1.0, 1),

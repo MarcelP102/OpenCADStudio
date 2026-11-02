@@ -1155,6 +1155,48 @@ fn bench_ui_icon_caching(runner: &mut BenchmarkRunner) {
 // ── Plot Style Layer-Usage Table Rebuild ─────────────────────────────────────
 // Covers `build_layer_usage`: layer names bucketed by ACI into a 256-bucket
 // table, rebuilt per Plot Style modal view.
+// ── 12b. Line-icon pipeline: first use of an icon at a physical size ─────────
+// Covers `ui::icon_snap`: parse the line icon and rewrite it for one physical
+// size (the work `icons::semantic` does once per icon per size before
+// `svg::Handle::from_memory`), over the whole line-icon set at the five
+// window scales of a 16 px icon.
+
+fn bench_ui_line_icon_snap(runner: &mut BenchmarkRunner) {
+    use OpenCADStudio::ui::icon_snap;
+    if !runner.should_run("ui_line_icon_snap") {
+        return;
+    }
+    let icons: Vec<&'static [u8]> = OpenCADStudio::modules::line_icons::COMMAND_LINE_ICONS
+        .iter()
+        .map(|&(_, bytes)| bytes)
+        .collect();
+    let sizes = [(16, 1), (20, 1), (24, 1), (28, 2), (32, 2)];
+    let runs = if runner.quick_mode { 3 } else { 5 };
+    let mut samples = Vec::with_capacity(runs);
+    for _ in 0..runs {
+        let t0 = Instant::now();
+        let mut count = 0usize;
+        for &bytes in &icons {
+            for (n, w) in sizes {
+                let icon = icon_snap::parse(black_box(bytes)).expect("line icon");
+                let snapped = icon.snap(n, w);
+                black_box(iced::widget::svg::Handle::from_memory(snapped.into_bytes()));
+                count += 1;
+            }
+        }
+        samples.push(t0.elapsed().as_nanos() as f64 / count as f64);
+    }
+    let median_ns = samples[samples.len() / 2];
+    runner.record(
+        "ui_line_icon_snap",
+        "Line icon first use: parse + pixel-snap + Handle, per icon per size",
+        "ns",
+        samples,
+        Some((1_000_000_000.0 / median_ns, "icons/s")),
+        Some(1_000_000.0), // Target threshold < 1 ms
+    );
+}
+
 
 fn bench_ui_plotstyle_layer_usage(runner: &mut BenchmarkRunner) {
     if !runner.should_run("ui_plotstyle_layer_usage") {
@@ -2322,6 +2364,7 @@ fn main() {
     bench_ui_plotstyle_layer_usage(&mut runner);
     bench_ui_statusbar_derived_data(&mut runner);
     bench_ui_grip_budget(&mut runner);
+    bench_ui_line_icon_snap(&mut runner);
     bench_ui_constraint_glyphs(&mut runner);
     bench_ui_selection_overlay(&mut runner);
     bench_wide_and_tapered_arc_tessellation(&mut runner);

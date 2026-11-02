@@ -54,6 +54,7 @@ cargo bench --bench performance_benchmarks -- --quick
 - `ui_plotstyle_layer_usage`: Plot Style 256-bucket ACI layer-usage table rebuild (200 layers).
 - `ui_statusbar_derived_data`: Status-bar cached derived-data hit (layout names + scale picker `Arc` clones).
 - `ui_grip_budget`: Budgeted per-frame selection-grip projection (dense-polyline grips capped to `MAX_SELECTED_GRIPS`).
+- `ui_line_icon_snap`: First use of a line icon at one physical size — `icon_snap::parse` + `snap` + `svg::Handle::from_memory`, over the line-icon set at 16–32 px (target < 1 ms).
 - `ui_grip_budget_build`: Selection-change `apply_grip_budget` cost over the full grip set (sort + FxHashSet + filter).
 - `ui_constraint_glyphs`: Constraint-glyph cache hit (`cached_glyph_placements` key build + `Arc` clone over dozens of glyphs, no recompute).
 - `ui_selection_overlay`: Selection overlay Element construction (widget tree with capped grip count, no canvas draw).

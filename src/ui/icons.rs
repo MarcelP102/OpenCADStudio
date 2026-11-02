@@ -1356,6 +1356,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn line_icons_snap_in_light_and_dark_theme_colours() {
+        let bytes = crate::modules::line_icons::LAY_DEL;
+        for theme in [Theme::Light, Theme::Dark] {
+            let colors = SemanticColors::from_theme(&theme);
+            let themed = recolor_semantic_svg(bytes, &theme);
+            let snapped = icon_snap::parse(&themed)
+                .expect("recolouring keeps the subset")
+                .snap(24, 1)
+                .into_bytes();
+            assert!(
+                contains(&snapped, &colors.text),
+                "base lines take the text colour"
+            );
+            assert!(
+                contains(&snapped, &colors.danger),
+                "remove marks take the danger colour"
+            );
+            assert!(!contains(&snapped, b"#e05050") || colors.danger == *b"#e05050");
+        }
+    }
+
+    #[test]
+    fn line_icons_take_the_pipeline_and_older_icons_do_not() {
+        assert!(is_line_icon(crate::modules::line_icons::ZOOM_WIN));
+        assert!(!is_line_icon(SNAP));
+    }
+
+    #[test]
     fn semantic_svg_uses_multiple_theme_roles() {
         let source = br##"<svg>
             <path stroke="#e0e0e0"/>
