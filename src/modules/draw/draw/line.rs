@@ -21,7 +21,7 @@ pub fn tool() -> ToolDef {
     ToolDef {
         id: "LINE",
         label: "Line",
-        icon: IconKind::Svg(include_bytes!("../../../../assets/icons/line.svg")),
+        icon: IconKind::Svg(include_bytes!("../../../../assets/icons/v2/line.svg")),
         event: ModuleEvent::Command("LINE".to_string()),
     }
 }

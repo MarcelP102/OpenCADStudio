@@ -27,7 +27,7 @@ mod alignment;
 /// The ribbon's Insert button: its face opens the Blocks palette, its arrow
 /// the gallery of the drawing's blocks.
 pub const GALLERY_ID: &str = "INSERT_GALLERY";
-pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/blocks/insert.svg"));
+pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/v2/block.svg"));
 pub const GALLERY_ITEMS: &[(&str, &str, IconKind)] = &[("INSERT", "Insert Block", ICON)];
 
 pub fn gallery() -> crate::modules::RibbonItem {

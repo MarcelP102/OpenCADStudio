@@ -20,7 +20,7 @@ use crate::modules::annotate::radius_dim::RadiusDimensionCommand;
 use crate::modules::{IconKind, ModuleEvent, ToolDef};
 use crate::scene::model::wire_model::WireModel;
 
-pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/dim_linear.svg"));
+pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/v2/dim.svg"));
 
 pub fn tool() -> ToolDef {
     ToolDef {

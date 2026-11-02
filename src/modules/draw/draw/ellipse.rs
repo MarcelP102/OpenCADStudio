@@ -26,15 +26,11 @@ const DIR_TOL: f64 = 0.1745; // ~10°
 
 // ── Icons ─────────────────────────────────────────────────────────────────
 
-const ICON_CTR: IconKind = IconKind::Svg(include_bytes!(
-    "../../../../assets/icons/ellipse/ellipse_ctr.svg"
-));
+const ICON_CTR: IconKind = IconKind::Svg(include_bytes!("../../../../assets/icons/v2/ellC.svg"));
 const ICON_AXIS: IconKind = IconKind::Svg(include_bytes!(
     "../../../../assets/icons/ellipse/ellipse_axis.svg"
 ));
-const ICON_ARC: IconKind = IconKind::Svg(include_bytes!(
-    "../../../../assets/icons/ellipse/ellipse_arc.svg"
-));
+const ICON_ARC: IconKind = IconKind::Svg(include_bytes!("../../../../assets/icons/v2/ellArc.svg"));
 
 // ── Dropdown metadata ─────────────────────────────────────────────────────
 
@@ -46,7 +42,8 @@ pub const DROPDOWN_ITEMS: &[(&str, &str, IconKind)] = &[
     ("ELLIPSE_ARC", "Ellipse Arc", ICON_ARC),
 ];
 
-pub const ICON: IconKind = ICON_CTR;
+/// The dropdown's face: the Ellipse command itself.
+pub const ICON: IconKind = IconKind::Svg(crate::modules::line_icons::ELLIPSE);
 
 // ── Shared helpers ────────────────────────────────────────────────────────
 

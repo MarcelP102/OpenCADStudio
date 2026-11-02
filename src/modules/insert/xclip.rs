@@ -26,7 +26,7 @@ use crate::modules::layout::mview::MviewCommand;
 use crate::modules::{IconKind, ModuleEvent, ToolDef};
 use crate::scene::model::wire_model::WireModel;
 
-pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/xclip.svg"));
+pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/v2/clip.svg"));
 pub fn tool() -> ToolDef {
     ToolDef {
         id: "CLIP",

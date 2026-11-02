@@ -12,10 +12,10 @@ use codec::entities::ViewportRenderMode as Mode;
 
 use crate::modules::IconKind;
 
-const WIREFRAME_ICON: IconKind =
-    IconKind::Svg(include_bytes!("../../../assets/icons/wireframe.svg"));
-const HIDDEN_ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/hidden.svg"));
-const SHADED_ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/solid.svg"));
+const WIREFRAME_2D_ICON: IconKind = IconKind::Svg(crate::modules::line_icons::VS2D);
+const WIREFRAME_ICON: IconKind = IconKind::Svg(crate::modules::line_icons::WIRE);
+const HIDDEN_ICON: IconKind = IconKind::Svg(crate::modules::line_icons::HIDDEN);
+const SHADED_ICON: IconKind = IconKind::Svg(crate::modules::line_icons::SHADED);
 
 pub struct VisualStyle {
     pub mode: Mode,
@@ -36,7 +36,7 @@ pub const VISUAL_STYLES: &[VisualStyle] = &[
         mode: Mode::Wireframe2D,
         label: "Wireframe 2D",
         command: "VISUALSTYLES WIREFRAME2D",
-        icon: WIREFRAME_ICON,
+        icon: WIREFRAME_2D_ICON,
     },
     VisualStyle {
         mode: Mode::Wireframe3D,

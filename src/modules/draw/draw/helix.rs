@@ -17,7 +17,7 @@ pub fn tool() -> ToolDef {
     ToolDef {
         id: "HELIX",
         label: "Helix",
-        icon: IconKind::Svg(include_bytes!("../../../../assets/icons/line.svg")),
+        icon: IconKind::Svg(include_bytes!("../../../../assets/icons/helix.svg")),
         event: ModuleEvent::Command("HELIX".to_string()),
     }
 }

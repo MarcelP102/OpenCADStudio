@@ -11,7 +11,7 @@ use crate::scene::model::wire_model::WireModel;
 use crate::t;
 use glam::DVec3;
 
-pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/dim_radius.svg"));
+pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/v2/radius.svg"));
 
 pub fn tool() -> ToolDef {
     ToolDef {

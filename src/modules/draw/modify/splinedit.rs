@@ -22,7 +22,9 @@ pub fn tool() -> ToolDef {
     ToolDef {
         id: "SPLINEDIT",
         label: "Spline Edit",
-        icon: IconKind::Svg(include_bytes!("../../../../assets/icons/spline.svg")),
+        icon: IconKind::Svg(include_bytes!(
+            "../../../../assets/icons/modify_splinedit.svg"
+        )),
         event: ModuleEvent::Command("SPLINEDIT".to_string()),
     }
 }

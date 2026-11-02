@@ -7,7 +7,7 @@ use crate::command::{CadCommand, CmdOption, CmdResult};
 use crate::modules::{IconKind, ModuleEvent, ToolDef};
 use crate::scene::model::wire_model::WireModel;
 
-pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/zoom_window.svg"));
+pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/v2/zoomWin.svg"));
 
 /// Ribbon button: zoom into a rectangle picked by two corners.
 pub fn tool() -> ToolDef {

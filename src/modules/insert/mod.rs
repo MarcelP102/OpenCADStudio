@@ -34,6 +34,7 @@ pub(crate) mod xattach;
 pub(crate) mod xclip;
 pub(crate) mod xref_cmd;
 
+use crate::modules::line_icons;
 use crate::modules::{CadModule, IconKind, ModuleEvent, RibbonGroup, RibbonItem, ToolDef};
 
 /// Insert > Block Definition: the Create Block / Write Block split button.
@@ -124,12 +125,24 @@ impl CadModule for InsertModule {
                         RibbonItem::LargeDropdown {
                             id: "UNDERLAY_ATTACH",
                             label: "Attach Underlay",
-                            icon: pdf_attach::ICON,
+                            icon: IconKind::Svg(line_icons::PDF),
                             items: vec![
-                                ("PDFATTACH", "Attach PDF", pdf_attach::ICON),
-                                ("IMAGEATTACH", "Attach Image", pdf_attach::ICON),
-                                ("DWFATTACH", "Attach DWF", pdf_attach::ICON),
-                                ("DGNATTACH", "Attach DGN", pdf_attach::ICON),
+                                ("PDFATTACH", "Attach PDF", IconKind::Svg(line_icons::PDF)),
+                                (
+                                    "IMAGEATTACH",
+                                    "Attach Image",
+                                    IconKind::Svg(line_icons::IMAGE),
+                                ),
+                                (
+                                    "DWFATTACH",
+                                    "Attach DWF",
+                                    IconKind::Svg(line_icons::DWF_REF),
+                                ),
+                                (
+                                    "DGNATTACH",
+                                    "Attach DGN",
+                                    IconKind::Svg(line_icons::DGN_REF),
+                                ),
                                 ("POINTCLOUDATTACH", "Attach Point Cloud", pc_attach::ICON),
                             ],
                             default: "PDFATTACH",
@@ -180,7 +193,7 @@ impl CadModule for InsertModule {
                             label: "",
                             icon: IMPORT_ICON,
                             items: vec![
-                                ("PDFIMPORT;FILE", "PDF Import", underlay_layers::ICON),
+                                ("PDFIMPORT;FILE", "PDF Import", IconKind::Svg(line_icons::PDF)),
                                 ("DGNIMPORT", "DGN Import", underlay_layers::ICON),
                                 ("IMPORT", "Import…", IMPORT_ICON),
                             ],
@@ -217,28 +230,30 @@ impl CadModule for InsertModule {
                         RibbonItem::LargeTool(ToolDef {
                             id: "FIELD",
                             label: "Field",
-                            icon: IconKind::Svg(include_bytes!("../../../assets/icons/text.svg")),
+                            icon: IconKind::Svg(include_bytes!(
+                                "../../../assets/icons/v2/field.svg"
+                            )),
                             event: ModuleEvent::Command("FIELD".to_string()),
                         }),
                         RibbonItem::LabeledTool(ToolDef {
                             id: "UPDATEFIELD",
                             label: "Update Fields",
                             icon: IconKind::Svg(include_bytes!(
-                                "../../../assets/icons/ui/refresh.svg"
+                                "../../../assets/icons/v2/updfield.svg"
                             )),
                             event: ModuleEvent::Command("UPDATEFIELD".to_string()),
                         }),
                         RibbonItem::LabeledTool(ToolDef {
                             id: "INSERTOBJ",
                             label: "OLE Object",
-                            icon: IconKind::Svg(include_bytes!("../../../assets/icons/paste.svg")),
+                            icon: IconKind::Svg(include_bytes!("../../../assets/icons/v2/ole.svg")),
                             event: ModuleEvent::Command("INSERTOBJ".to_string()),
                         }),
                         RibbonItem::LabeledTool(ToolDef {
                             id: "HYPERLINK",
                             label: "Hyperlink",
                             icon: IconKind::Svg(include_bytes!(
-                                "../../../assets/icons/ui/arrow_long_right.svg"
+                                "../../../assets/icons/v2/link.svg"
                             )),
                             event: ModuleEvent::Command("HYPERLINK".to_string()),
                         }),

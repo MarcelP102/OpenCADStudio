@@ -21,6 +21,7 @@ use super::widgets::{
 };
 use super::{Ribbon, REDO_HISTORY_ID, UNDO_HISTORY_ID};
 use crate::app::Message;
+use crate::modules::line_icons;
 use crate::modules::IconKind;
 use crate::ui::icons;
 use crate::ui::style::{chrome, ribbon_metrics as metrics};
@@ -207,8 +208,6 @@ pub(super) fn list_target<'a>(
 /// What a command item shows.
 #[derive(Clone, Copy)]
 pub(super) enum FaceIcon {
-    /// One of the toolbar's own chrome icons, tinted for the tab row.
-    Chrome(&'static [u8]),
     /// A ribbon or menu icon, in its own colours.
     Tool(IconKind),
     /// No icon anywhere: the button shows the command name.
@@ -251,17 +250,15 @@ pub(super) struct Face {
     pub icon: FaceIcon,
 }
 
-/// Batch Plot's icon: the Layout tools' plot icon, as no ribbon button runs it.
-static PLOT_ICON: &[u8] = include_bytes!("../../../assets/icons/plot.svg");
-
-/// The toolbar's own file buttons keep the icons and labels they always had.
+/// The toolbar's own file buttons keep their labels; their icons are the
+/// line-icon set's.
 static FILE_FACES: [(&str, &[u8], &str); 6] = [
-    ("QNEW", icons::DOC_NEW, "New"),
-    ("OPEN", icons::FOLDER_OPEN, "Open"),
-    ("SAVE", icons::SAVE, "Save"),
-    ("QSAVE", icons::SAVE, "Save"),
-    ("SAVEAS", icons::FILE_EXPORT, "Save As"),
-    ("PRINT", icons::PRINT, "Print"),
+    ("QNEW", line_icons::NEW, "New"),
+    ("OPEN", line_icons::OPEN, "Open"),
+    ("SAVE", line_icons::SAVE, "Save"),
+    ("QSAVE", line_icons::SAVE, "Save"),
+    ("SAVEAS", line_icons::SAVEAS, "Save As"),
+    ("PRINT", line_icons::PLOT, "Print"),
 ];
 
 impl Ribbon {
@@ -276,20 +273,20 @@ impl Ribbon {
         {
             return Face {
                 label: crate::t!(label).into_owned(),
-                icon: FaceIcon::Chrome(icon),
+                icon: FaceIcon::Tool(IconKind::Svg(icon)),
             };
         }
         // Commands with no ribbon button take a fitting icon of their own.
         if cmd.eq_ignore_ascii_case("PUBLISH") {
             return Face {
                 label: crate::tr!("ribbon-menu", "qat-batch-plot"),
-                icon: FaceIcon::Tool(IconKind::Svg(PLOT_ICON)),
+                icon: FaceIcon::Tool(IconKind::Svg(line_icons::PLOT)),
             };
         }
         if cmd.eq_ignore_ascii_case("PREVIEW") {
             return Face {
                 label: crate::tr!("ribbon-menu", "qat-plot-preview"),
-                icon: FaceIcon::Chrome(icons::PREVIEW),
+                icon: FaceIcon::Tool(IconKind::Svg(line_icons::PREVIEW)),
             };
         }
         if let Some((label, icon)) = self.ribbon_face(cmd) {
@@ -1219,8 +1216,6 @@ fn separator<'a>() -> Element<'a, Message> {
 /// no icon shows its name.
 pub(super) fn face_icon<'a>(face: &Face, size: f32, enabled: bool) -> Element<'a, Message> {
     match face.icon {
-        FaceIcon::Chrome(bytes) if enabled => icons::chrome(bytes, size),
-        FaceIcon::Chrome(bytes) => icons::chrome_disabled(bytes, size),
         FaceIcon::Tool(IconKind::Svg(bytes)) if enabled => icons::tool(bytes, size),
         FaceIcon::Tool(IconKind::Svg(bytes)) => icons::tool_disabled(bytes, size),
         FaceIcon::Tool(IconKind::Glyph(glyph)) => text(glyph).size(size * 0.7).into(),
@@ -1333,7 +1328,7 @@ mod tests {
         let ribbon = Ribbon::default();
         let new = ribbon.command_face("QNEW");
         assert_eq!(new.label, "New");
-        assert!(matches!(new.icon, FaceIcon::Chrome(icon) if icon == icons::DOC_NEW));
+        assert!(matches!(new.icon, FaceIcon::Tool(IconKind::Svg(icon)) if icon == line_icons::NEW));
         assert_eq!(ribbon.command_face("PRINT").label, "Print");
     }
 
@@ -1549,7 +1544,7 @@ mod tests {
         assert_eq!(publish.label, crate::tr!("ribbon-menu", "qat-batch-plot"));
         assert!(matches!(
             ribbon.command_face("PREVIEW").icon,
-            FaceIcon::Chrome(_)
+            FaceIcon::Tool(IconKind::Svg(icon)) if icon == line_icons::PREVIEW
         ));
     }
 }

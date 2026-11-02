@@ -16,7 +16,7 @@ use crate::modules::{IconKind, ModuleEvent, ToolDef};
 use crate::scene::model::wire_model::WireModel;
 use crate::t;
 
-pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/table.svg"));
+pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/v2/table.svg"));
 
 pub fn tool() -> ToolDef {
     ToolDef {

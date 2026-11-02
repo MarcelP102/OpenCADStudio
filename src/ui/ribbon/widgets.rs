@@ -1844,10 +1844,15 @@ pub(super) fn render_history_control<'a>(
     let active = count > 0;
 
     let main_btn = {
-        let glyph = if dropdown_id == UNDO_HISTORY_ID {
-            icons::chrome_undo(SMALL_ICON, active)
+        let art = if dropdown_id == UNDO_HISTORY_ID {
+            crate::modules::line_icons::UNDO
         } else {
-            icons::chrome_redo(SMALL_ICON, active)
+            crate::modules::line_icons::REDO
+        };
+        let glyph = if active {
+            icons::tool(art, SMALL_ICON)
+        } else {
+            icons::tool_disabled(art, SMALL_ICON)
         };
         let btn = button(
             container(glyph)

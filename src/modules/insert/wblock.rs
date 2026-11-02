@@ -14,7 +14,7 @@ pub fn tool() -> ToolDef {
     ToolDef {
         id: "WBLOCK",
         label: "Write Block",
-        icon: IconKind::Svg(include_bytes!("../../../assets/icons/blocks/insert.svg")),
+        icon: IconKind::Svg(include_bytes!("../../../assets/icons/v2/wblock.svg")),
         event: ModuleEvent::Command("WBLOCK".to_string()),
     }
 }

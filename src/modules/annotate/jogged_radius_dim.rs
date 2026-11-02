@@ -13,7 +13,7 @@ use crate::scene::dimension_assoc::RadialSourceGeometry;
 use crate::scene::model::wire_model::WireModel;
 use crate::t;
 
-pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/dim_jog.svg"));
+pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/v2/dimjogged.svg"));
 
 pub fn tool() -> ToolDef {
     ToolDef {

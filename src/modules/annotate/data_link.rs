@@ -8,7 +8,7 @@ use codec::entities::Table;
 use codec::EntityType;
 use glam::DVec3;
 
-pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/data_link.svg"));
+pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/v2/xref.svg"));
 
 pub fn tool() -> ToolDef {
     ToolDef {

@@ -1199,24 +1199,6 @@ impl<M> Widget<M, Theme, Renderer> for VectorShape {
     }
 }
 
-/// The undo arrow drawn like [`chrome`].
-pub fn chrome_undo<'a, M: 'a>(size: f32, enabled: bool) -> Element<'a, M> {
-    if enabled {
-        chrome(UNDO, size)
-    } else {
-        chrome_disabled(UNDO, size)
-    }
-}
-
-/// The redo arrow drawn like [`chrome`].
-pub fn chrome_redo<'a, M: 'a>(size: f32, enabled: bool) -> Element<'a, M> {
-    if enabled {
-        chrome(REDO, size)
-    } else {
-        chrome_disabled(REDO, size)
-    }
-}
-
 pub fn themed_undo<'a, M: 'a>(size: f32, enabled: bool) -> Element<'a, M> {
     if enabled {
         themed(UNDO, size)

@@ -83,7 +83,7 @@ pub mod dimensional_tools {
         command(
             "DCHORIZONTAL",
             "Horizontal",
-            include_bytes!("../../../assets/icons/constrain/distance_x.svg"),
+            include_bytes!("../../../assets/icons/v2/linear.svg"),
         )
     }
     pub fn vertical() -> ToolDef {
@@ -104,21 +104,21 @@ pub mod dimensional_tools {
         command(
             "DCANGULAR",
             "Angular",
-            include_bytes!("../../../assets/icons/dim_angular.svg"),
+            include_bytes!("../../../assets/icons/v2/angular.svg"),
         )
     }
     pub fn radius() -> ToolDef {
         command(
             "DCRADIUS",
             "Radius",
-            include_bytes!("../../../assets/icons/dim_radius.svg"),
+            include_bytes!("../../../assets/icons/v2/radius.svg"),
         )
     }
     pub fn diameter() -> ToolDef {
         command(
             "DCDIAMETER",
             "Diameter",
-            include_bytes!("../../../assets/icons/dim_diameter.svg"),
+            include_bytes!("../../../assets/icons/v2/diameter.svg"),
         )
     }
     pub fn convert() -> ToolDef {

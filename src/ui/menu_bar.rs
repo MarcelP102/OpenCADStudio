@@ -972,9 +972,11 @@ fn rows(
         .collect()
 }
 
-/// The ribbon icon of the command a menu line starts.
+/// The icon of a menu line: its own (an option line such as `ZOOM P` has
+/// one in the line-icon set), else the one of the command it starts.
 fn command_icon(line: &str) -> Option<&'static [u8]> {
-    crate::modules::registry::command_icon(line.split_whitespace().next()?)
+    crate::modules::registry::command_icon(line)
+        .or_else(|| crate::modules::registry::command_icon(line.split_whitespace().next()?))
 }
 
 /// `content` with the plain pointer: a row that takes no click would let the

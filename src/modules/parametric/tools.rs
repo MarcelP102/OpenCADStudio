@@ -137,7 +137,7 @@ pub mod fixed {
         ToolDef {
             id: "FXCONSTRAINT",
             label: "Fix",
-            icon: IconKind::Svg(include_bytes!("../../../assets/icons/constrain/fixed.svg")),
+            icon: IconKind::Svg(include_bytes!("../../../assets/icons/v2/lock.svg")),
             event: ModuleEvent::Command("FXCONSTRAINT".to_string()),
         }
     }

@@ -22,11 +22,7 @@ use codec::{Document, EntityType};
 use glam::DVec3;
 
 use crate::command::{CadCommand, CmdOption, CmdResult, InputKind, WorkingPlane};
-use crate::modules::IconKind;
 use crate::scene::model::wire_model::WireModel;
-
-pub const ICON: IconKind =
-    IconKind::Svg(include_bytes!("../../../assets/icons/underlay_layers.svg"));
 
 /// Units the Unit option offers: keyword, the name the prompt shows.
 const UNITS: [(&str, &str); 9] = [

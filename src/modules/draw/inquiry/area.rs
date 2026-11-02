@@ -10,7 +10,7 @@ use crate::entities::traits::EntityTypeOps;
 use crate::modules::IconKind;
 use crate::scene::model::wire_model::WireModel;
 
-pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../../assets/icons/area.svg"));
+pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../../assets/icons/v2/mgArea.svg"));
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AreaMode {
     Single,

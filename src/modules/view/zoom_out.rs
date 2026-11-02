@@ -1,5 +1,5 @@
 use crate::modules::{IconKind, ModuleEvent, ToolDef};
-pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/zoom_out.svg"));
+pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/v2/zOut.svg"));
 pub fn tool() -> ToolDef {
     ToolDef {
         id: "ZOOM_OUT",

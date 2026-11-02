@@ -28,7 +28,7 @@ pub fn tool() -> ToolDef {
     ToolDef {
         id: "XATTACH",
         label: "Attach XREF",
-        icon: IconKind::Svg(include_bytes!("../../../assets/icons/blocks/insert.svg")),
+        icon: IconKind::Svg(include_bytes!("../../../assets/icons/v2/xref.svg")),
         event: ModuleEvent::Command("XATTACH".to_string()),
     }
 }

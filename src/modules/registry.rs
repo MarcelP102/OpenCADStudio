@@ -484,20 +484,24 @@ pub fn ribbon_commands() -> &'static HashMap<String, (&'static str, IconKind)> {
         // with dedicated SVGs in `assets/icons/`.
         for (command, label, icon) in [
             // File, session & help
-            ("UNDO", "Undo", crate::ui::icons::undo_icon()),
-            ("REDO", "Redo", crate::ui::icons::redo_icon()),
-            ("NEW", "New", crate::ui::icons::DOC_NEW),
-            ("QNEW", "New", crate::ui::icons::DOC_NEW),
-            ("OPEN", "Open", crate::ui::icons::FOLDER_OPEN),
-            ("SAVE", "Save", crate::ui::icons::SAVE),
-            ("QSAVE", "Save", crate::ui::icons::SAVE),
-            ("SAVEAS", "Save As", crate::ui::icons::FILE_EXPORT),
-            ("EXPORT", "Export", crate::ui::icons::FILE_EXPORT),
-            ("EXPORTPDF", "Export PDF", crate::ui::icons::FILE_EXPORT),
-            ("CLOSE", "Close", crate::ui::icons::CLOSE),
-            ("CLOSEALL", "Close All", crate::ui::icons::CLOSE),
-            ("QUIT", "Exit", crate::ui::icons::CLOSE),
-            ("EXIT", "Exit", crate::ui::icons::CLOSE),
+            ("UNDO", "Undo", crate::modules::line_icons::UNDO),
+            ("REDO", "Redo", crate::modules::line_icons::REDO),
+            ("NEW", "New", crate::modules::line_icons::NEW),
+            ("QNEW", "New", crate::modules::line_icons::NEW),
+            ("OPEN", "Open", crate::modules::line_icons::OPEN),
+            ("SAVE", "Save", crate::modules::line_icons::SAVE),
+            ("QSAVE", "Save", crate::modules::line_icons::SAVE),
+            ("SAVEAS", "Save As", crate::modules::line_icons::SAVEAS),
+            ("EXPORT", "Export", crate::modules::line_icons::EXPORT),
+            ("EXPORTPDF", "Export PDF", crate::modules::line_icons::PDF),
+            ("CLOSE", "Close", crate::modules::line_icons::CLOSE_DOC),
+            (
+                "CLOSEALL",
+                "Close All",
+                crate::modules::line_icons::CLOSE_ALL,
+            ),
+            ("QUIT", "Exit", crate::modules::line_icons::QUIT),
+            ("EXIT", "Exit", crate::modules::line_icons::QUIT),
             (
                 "HELP",
                 "Help",
@@ -506,7 +510,7 @@ pub fn ribbon_commands() -> &'static HashMap<String, (&'static str, IconKind)> {
             (
                 "SELECTALL",
                 "Select All",
-                include_bytes!("../../assets/icons/blocks/select_objects.svg"),
+                include_bytes!("../../assets/icons/v2/selall.svg"),
             ),
             (
                 "QSELECT",
@@ -520,7 +524,7 @@ pub fn ribbon_commands() -> &'static HashMap<String, (&'static str, IconKind)> {
             ("POLAR", "Polar Tracking", crate::ui::icons::ST_POLAR),
             ("GRID", "Grid", crate::ui::icons::GRID),
             ("SNAP", "Snap", crate::ui::icons::SNAP),
-            ("LWEIGHT", "Lineweight", crate::ui::icons::ST_LWT),
+            ("LWEIGHT", "Lineweight", crate::modules::line_icons::LWEIGHT),
             (
                 "QUICKPROPERTIES",
                 "Quick Properties",
@@ -531,7 +535,7 @@ pub fn ribbon_commands() -> &'static HashMap<String, (&'static str, IconKind)> {
             (
                 "CLEANSCREENON",
                 "Clean Screen On",
-                crate::ui::icons::ST_CLEANSCREEN,
+                crate::modules::line_icons::CLEAN,
             ),
             (
                 "CLEANSCREENOFF",
@@ -568,7 +572,11 @@ pub fn ribbon_commands() -> &'static HashMap<String, (&'static str, IconKind)> {
                 "QuickCalc",
                 include_bytes!("../../assets/icons/quickcalc/quickcalc.svg"),
             ),
-            ("FIND", "Find", include_bytes!("../../assets/icons/find.svg")),
+            (
+                "FIND",
+                "Find",
+                include_bytes!("../../assets/icons/v2/find.svg"),
+            ),
             (
                 "STYLE",
                 "Text Style",
@@ -577,17 +585,17 @@ pub fn ribbon_commands() -> &'static HashMap<String, (&'static str, IconKind)> {
             (
                 "DIMSTYLE",
                 "Dimension Style",
-                include_bytes!("../../assets/icons/dim_style.svg"),
+                include_bytes!("../../assets/icons/v2/dimstyle.svg"),
             ),
             (
                 "MLEADERSTYLE",
                 "Multileader Style",
-                include_bytes!("../../assets/icons/mleader.svg"),
+                include_bytes!("../../assets/icons/v2/mlstyle.svg"),
             ),
             (
                 "TABLESTYLE",
                 "Table Style",
-                include_bytes!("../../assets/icons/table.svg"),
+                include_bytes!("../../assets/icons/v2/tblstyle.svg"),
             ),
             (
                 "POINTCLOUDUNCROP",
@@ -628,14 +636,18 @@ pub fn ribbon_commands() -> &'static HashMap<String, (&'static str, IconKind)> {
                 include_bytes!("../../assets/icons/ui/bolt.svg"),
             ),
             ("RESETBLOCK", "Reset Block", crate::ui::icons::REFRESH),
-            ("LIST", "List", crate::ui::icons::LIST),
-            ("REDRAW", "Redraw", crate::ui::icons::REFRESH),
+            ("LIST", "List", crate::modules::line_icons::LIST),
+            ("REDRAW", "Redraw", crate::modules::line_icons::REDRAW),
             (
                 "HIDE",
                 "Hide",
                 include_bytes!("../../assets/icons/hidden.svg"),
             ),
-            ("DWGPROPS", "Drawing Properties", crate::ui::icons::INFO),
+            (
+                "DWGPROPS",
+                "Drawing Properties",
+                crate::modules::line_icons::DWGPROPS,
+            ),
             (
                 "SLICE",
                 "Slice",
@@ -671,7 +683,7 @@ pub fn ribbon_commands() -> &'static HashMap<String, (&'static str, IconKind)> {
                 "3D Array",
                 include_bytes!("../../assets/icons/model/array3d.svg"),
             ),
-            ("SETVAR", "Set Variable", SYSVAR_ICON),
+            ("SETVAR", "Set Variable", crate::modules::line_icons::SETVAR),
         ] {
             out.entry(command.to_string())
                 .or_insert((label, IconKind::Svg(icon)));
@@ -680,6 +692,13 @@ pub fn ribbon_commands() -> &'static HashMap<String, (&'static str, IconKind)> {
         for &sysvar in SYSTEM_VARIABLES {
             out.entry(sysvar.to_string())
                 .or_insert(("System Variable", IconKind::Svg(SYSVAR_ICON)));
+        }
+        // A command line with its own icon in the line-icon set shows it
+        // wherever the command does, and so do its synonyms below.
+        for &(line, icon) in super::line_icons::COMMAND_LINE_ICONS {
+            if let Some(entry) = out.get_mut(line) {
+                entry.1 = IconKind::Svg(icon);
+            }
         }
         // Propagate icons to command synonyms, sub-command variants, and `-` forms.
         for &(alias, target) in COMMAND_ICON_ALIASES {
@@ -967,16 +986,34 @@ const SYSTEM_VARIABLES: &[&str] = &[
 /// The ribbon icon of a command line, for surfaces that show the command
 /// outside the ribbon. A leading `'` (transparent use) or `-` (command-line
 /// variant) is ignored when looking up the base command's icon.
+///
+/// A command line with an icon of its own in the line-icon set (an option
+/// line such as `ZOOM P`, see [`super::line_icons`]) takes that one; an
+/// option line the ribbon names `VERB_OPTION` or `VERBOPTION` (`ARC SCE` →
+/// `ARC_SCE`) takes that tool's icon.
 pub fn command_icon(command: &str) -> Option<&'static [u8]> {
     let key = command.trim().trim_start_matches('\'').to_ascii_uppercase();
+    let key = key.split_whitespace().collect::<Vec<_>>().join(" ");
     let commands = ribbon_commands();
-    let entry = commands
-        .get(&key)
-        .or_else(|| key.strip_prefix('-').and_then(|base| commands.get(base)))?;
-    match entry.1 {
-        IconKind::Svg(bytes) => Some(bytes),
-        IconKind::Glyph(_) => None,
-    }
+    let lookup = |key: &str| -> Option<&'static [u8]> {
+        if let Some(icon) = super::line_icons::command_line_icon(key) {
+            return Some(icon);
+        }
+        let entry = commands.get(key).or_else(|| {
+            let (verb, option) = key.split_once(' ')?;
+            if option.contains(' ') {
+                return None;
+            }
+            commands
+                .get(&format!("{verb}_{option}"))
+                .or_else(|| commands.get(&format!("{verb}{option}")))
+        })?;
+        match entry.1 {
+            IconKind::Svg(bytes) => Some(bytes),
+            IconKind::Glyph(_) => None,
+        }
+    };
+    lookup(&key).or_else(|| key.strip_prefix('-').and_then(lookup))
 }
 
 #[cfg(test)]
@@ -995,8 +1032,6 @@ mod tests {
             ("PASTE", "PASTECLIP"),
             ("ARRAY", "ARRAYRECT"),
             ("CONSTRUCTIONLINE", "XLINE"),
-            ("XCLIP", "CLIP"),
-            ("IMAGECLIP", "CLIP"),
             ("IMAGEADJUST", "ADJUST"),
             ("LAYER", "LAYERS"),
             ("-LAYER", "LAYERS"),
@@ -1015,8 +1050,6 @@ mod tests {
             ("MREDO", "REDO"),
             ("QNEW", "NEW"),
             ("QSAVE", "SAVE"),
-            ("QUIT", "CLOSE"),
-            ("EXIT", "CLOSE"),
             ("SL", "SLICE"),
             ("SECTION", "SECTIONPLANE"),
             ("SECTIONCULL", "SECTIONPLANE"),
@@ -1026,7 +1059,6 @@ mod tests {
             ("BPARAMETER", "PARAMETERS"),
             ("BACTIONTOOL", "BACTION"),
             ("BLOOKUPTABLE", "TABLE"),
-            ("REGEN", "REDRAW"),
             ("LI", "LIST"),
             ("REC", "RECT"),
             ("L", "LINE"),
@@ -1037,11 +1069,25 @@ mod tests {
                 alias_icon.is_some(),
                 "expected command_icon({alias:?}) to resolve an icon"
             );
+            // The same artwork; a tool and the line-icon table may each
+            // hold their own copy of the file.
             assert_eq!(
-                alias_icon.map(|b| (b.as_ptr(), b.len())),
-                target_icon.map(|b| (b.as_ptr(), b.len())),
+                alias_icon, target_icon,
                 "expected {alias} to share the icon of {target}"
             );
+        }
+
+        // The line-icon set draws these apart from the command they alias.
+        for (command, own) in [
+            ("XCLIP", crate::modules::line_icons::XCLIP),
+            ("IMAGECLIP", crate::modules::line_icons::IMGCLIP),
+            ("QUIT", crate::modules::line_icons::QUIT),
+            ("EXIT", crate::modules::line_icons::QUIT),
+            ("CLOSE", crate::modules::line_icons::CLOSE_DOC),
+            ("REGEN", crate::modules::line_icons::REGEN),
+            ("REDRAW", crate::modules::line_icons::REDRAW),
+        ] {
+            assert_eq!(command_icon(command), Some(own), "{command}");
         }
 
         for cmd in [
@@ -1087,19 +1133,15 @@ mod tests {
             );
         }
 
-        // System variables and SETVAR must resolve to the VAR badge icon.
+        // SETVAR has its own icon in the line-icon set; system variables
+        // keep the VAR badge icon.
+        assert_eq!(
+            command_icon("SETVAR"),
+            Some(crate::modules::line_icons::SETVAR)
+        );
         for sysvar in [
-            "SETVAR",
-            "AUPREC",
-            "LUPREC",
-            "PDMODE",
-            "PDSIZE",
-            "AFLAGS",
-            "PICKBOX",
-            "SAVETIME",
-            "ANGDIR",
-            "INSUNITS",
-            "TILEMODE",
+            "AUPREC", "LUPREC", "PDMODE", "PDSIZE", "AFLAGS", "PICKBOX", "SAVETIME",
+            "ANGDIR", "INSUNITS", "TILEMODE",
         ] {
             let icon = command_icon(sysvar);
             assert_eq!(

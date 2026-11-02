@@ -32,7 +32,7 @@ pub fn tool() -> ToolDef {
     ToolDef {
         id: "MEASUREGEOM",
         label: "Measure Geometry",
-        icon: IconKind::Svg(include_bytes!("../../../../assets/icons/line.svg")),
+        icon: IconKind::Svg(include_bytes!("../../../../assets/icons/v2/measure.svg")),
         event: ModuleEvent::Command("MEASUREGEOM".to_string()),
     }
 }

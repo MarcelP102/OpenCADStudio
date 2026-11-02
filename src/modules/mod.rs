@@ -29,6 +29,7 @@ pub mod block_editor;
 pub mod draw;
 pub mod insert;
 pub mod layout;
+pub mod line_icons;
 pub mod manage;
 pub mod model;
 pub mod parametric;

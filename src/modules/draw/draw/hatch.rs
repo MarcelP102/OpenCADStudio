@@ -19,9 +19,8 @@ const ICON_HATCH: IconKind = IconKind::Svg(include_bytes!(
 const ICON_GRADIENT: IconKind = IconKind::Svg(include_bytes!(
     "../../../../assets/icons/hatch/hatch_gradient.svg"
 ));
-const ICON_BOUNDARY: IconKind = IconKind::Svg(include_bytes!(
-    "../../../../assets/icons/hatch/hatch_boundary.svg"
-));
+const ICON_BOUNDARY: IconKind =
+    IconKind::Svg(include_bytes!("../../../../assets/icons/v2/region.svg"));
 
 // ── Dropdown metadata ──────────────────────────────────────────────────────
 

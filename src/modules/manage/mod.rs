@@ -45,14 +45,14 @@ impl CadModule for ManageModule {
                         RibbonItem::Dropdown {
                             id: "ALIASEDIT_DROPDOWN",
                             icon: IconKind::Svg(include_bytes!(
-                                "../../../assets/icons/edit_aliases.svg"
+                                "../../../assets/icons/v2/shortcuts.svg"
                             )),
                             items: vec![
                                 (
                                     "ALIASEDIT",
                                     "Edit Aliases",
                                     IconKind::Svg(include_bytes!(
-                                        "../../../assets/icons/edit_aliases.svg"
+                                        "../../../assets/icons/v2/shortcuts.svg"
                                     )),
                                 ),
                                 (

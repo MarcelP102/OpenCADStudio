@@ -3,14 +3,22 @@
 use crate::modules::IconKind;
 
 /// Shared icon for the Paste button and its dropdown entries.
-pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../../assets/icons/paste.svg"));
+pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../../assets/icons/v2/paste.svg"));
 
 /// Paste-menu entries: (command id, label, icon). The first is the default
 /// fired by clicking the button body; the rest open from the ▾.
 pub const MENU_ITEMS: &[(&str, &str, IconKind)] = &[
     ("PASTECLIP", "Paste", ICON),
-    ("PASTEORIG", "Paste to Original Coordinates", ICON),
-    ("PASTEBLOCK", "Paste as Block", ICON),
+    (
+        "PASTEORIG",
+        "Paste to Original Coordinates",
+        IconKind::Svg(crate::modules::line_icons::PASTE_ORIG),
+    ),
+    (
+        "PASTEBLOCK",
+        "Paste as Block",
+        IconKind::Svg(crate::modules::line_icons::PASTE_BLK),
+    ),
 ];
 
 // ── CadCommand implementation ─────────────────────────────────────────────

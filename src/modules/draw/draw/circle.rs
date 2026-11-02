@@ -21,9 +21,7 @@ const TAU: f64 = std::f64::consts::TAU;
 const ICON_CR: IconKind = IconKind::Svg(include_bytes!(
     "../../../../assets/icons/circle/circle_cr.svg"
 ));
-const ICON_CD: IconKind = IconKind::Svg(include_bytes!(
-    "../../../../assets/icons/circle/circle_cd.svg"
-));
+const ICON_CD: IconKind = IconKind::Svg(include_bytes!("../../../../assets/icons/v2/diameter.svg"));
 const ICON_2P: IconKind = IconKind::Svg(include_bytes!(
     "../../../../assets/icons/circle/circle_2p.svg"
 ));

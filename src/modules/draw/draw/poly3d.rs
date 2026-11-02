@@ -17,7 +17,7 @@ pub fn tool() -> ToolDef {
     ToolDef {
         id: "3DPOLY",
         label: "3D Polyline",
-        icon: IconKind::Svg(include_bytes!("../../../../assets/icons/line.svg")),
+        icon: IconKind::Svg(include_bytes!("../../../../assets/icons/v2/poly3d.svg")),
         event: ModuleEvent::Command("3DPOLY".to_string()),
     }
 }

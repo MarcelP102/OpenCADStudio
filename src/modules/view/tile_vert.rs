@@ -1,5 +1,5 @@
 use crate::modules::{IconKind, ModuleEvent, ToolDef};
-pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/tile_vert.svg"));
+pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/v2/tileV.svg"));
 pub fn tool() -> ToolDef {
     ToolDef {
         id: "VERTICAL",

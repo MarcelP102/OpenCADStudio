@@ -27,7 +27,7 @@ pub fn tool() -> ToolDef {
     ToolDef {
         id: "BREAK",
         label: "Break",
-        icon: IconKind::Svg(include_bytes!("../../../../assets/icons/trim.svg")),
+        icon: IconKind::Svg(include_bytes!("../../../../assets/icons/modify_break.svg")),
         event: ModuleEvent::Command("BREAK".to_string()),
     }
 }

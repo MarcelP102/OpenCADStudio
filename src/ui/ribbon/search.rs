@@ -224,7 +224,6 @@ impl Ribbon {
                 QatItem::Command(command) => {
                     let face = self.command_face(command);
                     let icon = match face.icon {
-                        FaceIcon::Chrome(icon) => Some(IconKind::Svg(icon)),
                         FaceIcon::Tool(icon) => Some(icon),
                         FaceIcon::Text => None,
                     };

@@ -41,7 +41,7 @@ const PI: f64 = std::f64::consts::PI;
 // ── Icons ──────────────────────────────────────────────────────────────────
 
 const ICON_RECT: IconKind =
-    IconKind::Svg(include_bytes!("../../../../assets/icons/shapes/rect.svg"));
+    IconKind::Svg(include_bytes!("../../../../assets/icons/v2/rect.svg"));
 const ICON_RECT_ROT: IconKind = IconKind::Svg(include_bytes!(
     "../../../../assets/icons/shapes/rect_rot.svg"
 ));

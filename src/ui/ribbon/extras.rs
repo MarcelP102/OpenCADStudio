@@ -175,12 +175,12 @@ fn draw_tools() -> Vec<MoreTool> {
         tool(
             "MEASURE",
             "Measure",
-            include_bytes!("../../../assets/icons/measure.svg"),
+            include_bytes!("../../../assets/icons/v2/measure2.svg"),
         ),
         tool(
             "REGION",
             "Region",
-            include_bytes!("../../../assets/icons/region.svg"),
+            include_bytes!("../../../assets/icons/v2/region.svg"),
         ),
         tool(
             "BOUNDARY",
@@ -295,7 +295,7 @@ fn modify_tools() -> Vec<MoreTool> {
         tool(
             "REVERSE",
             "Reverse",
-            include_bytes!("../../../assets/icons/modify_reverse.svg"),
+            include_bytes!("../../../assets/icons/v2/reverse.svg"),
         ),
         tool(
             "NCOPY",
@@ -305,7 +305,7 @@ fn modify_tools() -> Vec<MoreTool> {
         split(
             "DRAWORDER_FRONT",
             "Draw Order",
-            include_bytes!("../../../assets/icons/modify_draworder.svg"),
+            include_bytes!("../../../assets/icons/v2/draworder.svg"),
             &[
                 ("DRAWORDER_FRONT", "Bring to Front"),
                 ("DRAWORDER_BACK", "Send to Back"),
@@ -419,7 +419,7 @@ fn build() -> Vec<(&'static str, PanelExtras)> {
                 vec![tool(
                     "SCALETEXT",
                     "Scale",
-                    include_bytes!("../../../assets/icons/scale.svg"),
+                    include_bytes!("../../../assets/icons/v2/scaletext.svg"),
                 )],
             ),
         ),
@@ -479,32 +479,32 @@ fn dimension_tools() -> Vec<MoreTool> {
         tool(
             "DIMEDIT;O",
             "Oblique",
-            include_bytes!("../../../assets/icons/dim_edit.svg"),
+            include_bytes!("../../../assets/icons/v2/oblique.svg"),
         ),
         tool(
             "DIMTEDIT_ANGLE",
             "Text Angle",
-            include_bytes!("../../../assets/icons/dim_tedit.svg"),
+            include_bytes!("../../../assets/icons/v2/dtA.svg"),
         ),
         tool(
             "DIMTEDIT_LEFT",
             "Left Justify",
-            include_bytes!("../../../assets/icons/align_left.svg"),
+            include_bytes!("../../../assets/icons/v2/dtL.svg"),
         ),
         tool(
             "DIMTEDIT_CENTER",
             "Center Justify",
-            include_bytes!("../../../assets/icons/align_hcenter.svg"),
+            include_bytes!("../../../assets/icons/v2/dtC.svg"),
         ),
         tool(
             "DIMTEDIT_RIGHT",
             "Right Justify",
-            include_bytes!("../../../assets/icons/align_right.svg"),
+            include_bytes!("../../../assets/icons/v2/dtR.svg"),
         ),
         tool(
             "DIMOVERRIDE",
             "Override",
-            include_bytes!("../../../assets/icons/dim_style.svg"),
+            include_bytes!("../../../assets/icons/v2/dimOverride.svg"),
         ),
     ]
 }

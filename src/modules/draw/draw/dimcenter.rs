@@ -20,7 +20,7 @@ pub fn tool() -> ToolDef {
     ToolDef {
         id: "CENTERMARK",
         label: "Center Mark",
-        icon: IconKind::Svg(include_bytes!("../../../../assets/icons/line.svg")),
+        icon: IconKind::Svg(include_bytes!("../../../../assets/icons/v2/center.svg")),
         event: ModuleEvent::Command("CENTERMARK".to_string()),
     }
 }

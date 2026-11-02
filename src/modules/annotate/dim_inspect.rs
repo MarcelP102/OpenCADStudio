@@ -9,7 +9,7 @@ use crate::command::{CadCommand, CmdOption, CmdResult, InputKind};
 use crate::entities::dim_inspect::Shape;
 use crate::modules::{IconKind, ModuleEvent, ToolDef};
 
-pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/dim_edit.svg"));
+pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../assets/icons/v2/inspect.svg"));
 
 pub fn tool() -> ToolDef {
     ToolDef {

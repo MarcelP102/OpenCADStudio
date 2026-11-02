@@ -135,7 +135,7 @@ impl CadModule for AnnotateModule {
                                 text_tool(
                                     "SPELL",
                                     "Check Spelling",
-                                    include_bytes!("../../../assets/icons/ui/check.svg"),
+                                    include_bytes!("../../../assets/icons/v2/spell.svg"),
                                 ),
                                 text_tool(
                                     "TEXTALIGN",
@@ -145,7 +145,7 @@ impl CadModule for AnnotateModule {
                                 text_tool(
                                     "JUSTIFYTEXT",
                                     "Justify",
-                                    include_bytes!("../../../assets/icons/mt_align_justify.svg"),
+                                    include_bytes!("../../../assets/icons/v2/justify.svg"),
                                 ),
                             ]],
                         },
@@ -182,12 +182,12 @@ impl CadModule for AnnotateModule {
                                 vec![
                                     dim_tool("DIMBREAK", "Break", include_bytes!("../../../assets/icons/dim_break.svg"), "DIMBREAK"),
                                     dim_tool("DIMSPACE", "Adjust Space", include_bytes!("../../../assets/icons/dim_space.svg"), "DIMSPACE"),
-                                    dim_tool("DIMJOGLINE", "Jog Line", include_bytes!("../../../assets/icons/dim_jog.svg"), "DIMJOGLINE"),
+                                    dim_tool("DIMJOGLINE", "Jog Line", include_bytes!("../../../assets/icons/v2/jog.svg"), "DIMJOGLINE"),
                                 ],
                                 vec![
-                                    dim_tool("DIMINSPECT", "Inspect", include_bytes!("../../../assets/icons/find.svg"), "DIMINSPECT"),
-                                    dim_tool("DIMSTYLE_APPLY", "Update", include_bytes!("../../../assets/icons/ui/refresh.svg"), r#"-DIMSTYLE ["APPLY"]"#),
-                                    dim_tool("DIMREASSOCIATE", "Reassociate", include_bytes!("../../../assets/icons/sync.svg"), "DIMREASSOCIATE"),
+                                    dim_tool("DIMINSPECT", "Inspect", include_bytes!("../../../assets/icons/v2/inspect.svg"), "DIMINSPECT"),
+                                    dim_tool("DIMSTYLE_APPLY", "Update", include_bytes!("../../../assets/icons/v2/dimupd.svg"), r#"-DIMSTYLE ["APPLY"]"#),
+                                    dim_tool("DIMREASSOCIATE", "Reassociate", include_bytes!("../../../assets/icons/v2/dimreassoc.svg"), "DIMREASSOCIATE"),
                                 ],
                             ],
                         },
@@ -322,7 +322,7 @@ impl CadModule for AnnotateModule {
                             id: "SCALELISTEDIT",
                             label: "Scale List",
                             icon: crate::modules::IconKind::Svg(include_bytes!(
-                                "../../../assets/icons/scale_list.svg"
+                                "../../../assets/icons/v2/scalelist.svg"
                             )),
                             event: crate::modules::ModuleEvent::Command(
                                 "SCALELISTEDIT".to_string(),

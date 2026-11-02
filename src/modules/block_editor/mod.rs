@@ -49,7 +49,7 @@ impl CadModule for BlockEditorModule {
                     command(
                         "BEDIT",
                         "Edit Block",
-                        include_bytes!("../../../assets/icons/edit_block.svg"),
+                        include_bytes!("../../../assets/icons/attedit.svg"),
                     ),
                     RibbonItem::LargeDropdown {
                         id: "BLOCK_SAVE",
