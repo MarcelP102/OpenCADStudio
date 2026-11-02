@@ -227,3 +227,28 @@ mod tests {
         assert_eq!(SLIDE_OUT_TOP_THIN, 11.0);
     }
 }
+
+/// The line-icon pipeline (`ui::icon_snap`): the drawing frame of the icon
+/// set and the physical line weight per window scale. Icons are drawn
+/// [`SMALL_ICON`] or [`LARGE_ICON`] logical pixels square, so
+/// `round(size × scale)` physical pixels.
+pub mod icon_metrics {
+    pub use super::{LARGE_ICON, SMALL_ICON};
+
+    /// The icons are drawn on a 24-unit grid; the visible frame runs from
+    /// this unit, this many units wide and high.
+    pub const ICON_FRAME_MIN: f32 = 2.5;
+    pub const ICON_FRAME_SIZE: f32 = 19.0;
+    /// The root viewBox of an icon drawn on that frame: the files the
+    /// pipeline handles.
+    pub const ICON_FRAME_VIEWBOX: &str = r#"viewBox="2.5 2.5 19 19""#;
+
+    /// Physical line weight: 1 px below [`LINE_150_FROM`], this many from
+    /// there up to [`DOUBLE_LINE_FROM`], 2 px from there on.
+    pub const LINE_WEIGHT_150: u32 = 1;
+    pub const LINE_150_FROM: f32 = 1.5;
+    pub const DOUBLE_LINE_FROM: f32 = 1.75;
+
+    /// Opacity of a disabled icon.
+    pub const DISABLED_OPACITY: f32 = 0.42;
+}
