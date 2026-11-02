@@ -9,6 +9,7 @@ pub mod drop_down_fit;
 pub mod font_picker;
 pub mod hover_zone;
 pub mod ime_zone;
+pub mod icon_snap;
 pub mod icons;
 pub mod menu_bar;
 pub mod modal;

@@ -16,6 +16,7 @@ use iced::widget::{container, svg, Space};
 use iced::{Color, ContentFit, Element, Length, Point, Radians, Rectangle, Renderer, Size, Theme};
 use rustc_hash::FxHashMap;
 
+use crate::ui::icon_snap;
 use crate::ui::style::common::{accessible_accent, wcag_contrast};
 use crate::ui::style::ribbon_metrics as metrics;
 
@@ -303,6 +304,10 @@ impl<M> Widget<M, Theme, Renderer> for SemanticIcon {
         _cursor: iced::advanced::mouse::Cursor,
         _viewport: &Rectangle,
     ) {
+        if is_line_icon(self.bytes) {
+            self.draw_line_icon(renderer, theme, layout.bounds());
+            return;
+        }
         let handle = match self.tint {
             Some(_) => tinted_handle(self.bytes),
             None => semantic_handle(self.bytes, theme),
@@ -336,6 +341,37 @@ impl<M> Widget<M, Theme, Renderer> for SemanticIcon {
         );
 
         renderer.draw_svg(svg, Rectangle::new(position, fitted), bounds);
+    }
+}
+
+impl SemanticIcon {
+    /// A line icon (`assets/icons/v2` and the files that took its drawings
+    /// over): snapped for its physical size and drawn on whole physical
+    /// pixels, `N / scale` logical pixels square, so iced rasterises it at
+    /// exactly `N` and does not resample it.
+    fn draw_line_icon(&self, renderer: &mut Renderer, theme: &Theme, laid: Rectangle) {
+        let scale = scale_factor();
+        let n = icon_snap::physical_size(self.size, scale);
+        let w = icon_snap::line_weight(scale);
+        let handle = line_icon_handle(self.bytes, n, w, self.tint.is_none().then_some(theme));
+        let side = n as f32 / scale;
+        let bounds = Rectangle::new(
+            Point::new(
+                on_physical_pixel(laid.center_x() - side / 2.0),
+                on_physical_pixel(laid.center_y() - side / 2.0),
+            ),
+            Size::new(side, side),
+        );
+        renderer.draw_svg(
+            core_svg::Svg {
+                handle,
+                color: self.tint.map(|tint| tint(theme)),
+                rotation: Radians(0.0),
+                opacity: self.opacity,
+            },
+            bounds,
+            bounds,
+        );
     }
 }
 
@@ -504,7 +540,7 @@ pub fn semantic_disabled<'a, M: 'a>(bytes: &'static [u8], size: f32) -> Element<
     Element::new(SemanticIcon {
         bytes,
         size,
-        opacity: 0.42,
+        opacity: metrics::icon_metrics::DISABLED_OPACITY,
         tint: None,
     })
 }
@@ -525,7 +561,7 @@ pub fn tool_disabled<'a, M: 'a>(bytes: &'static [u8], size: f32) -> Element<'a, 
     Element::new(SemanticIcon {
         bytes,
         size,
-        opacity: 0.42,
+        opacity: metrics::icon_metrics::DISABLED_OPACITY,
         tint: None,
     })
 }
@@ -545,7 +581,7 @@ pub fn chrome_disabled<'a, M: 'a>(bytes: &'static [u8], size: f32) -> Element<'a
     Element::new(SemanticIcon {
         bytes,
         size,
-        opacity: 0.42,
+        opacity: metrics::icon_metrics::DISABLED_OPACITY,
         tint: Some(|theme| theme.palette().background.base.text),
     })
 }
@@ -591,6 +627,100 @@ fn semantic_handle(bytes: &'static [u8], theme: &Theme) -> svg::Handle {
         cache.insert(key, handle.clone());
         handle
     })
+}
+
+/// Whether `bytes` is drawn on the line-icon frame, so it goes through the
+/// snapping pipeline; remembered per artwork.
+fn is_line_icon(bytes: &'static [u8]) -> bool {
+    thread_local! {
+        static LINE_ICONS: RefCell<FxHashMap<(usize, usize), bool>> =
+            RefCell::new(FxHashMap::default());
+    }
+    let key = (bytes.as_ptr() as usize, bytes.len());
+    if let Some(known) = LINE_ICONS.with(|known| known.borrow().get(&key).copied()) {
+        return known;
+    }
+    let line = icon_snap::is_line_icon(bytes);
+    LINE_ICONS.with(|known| known.borrow_mut().insert(key, line));
+    line
+}
+
+/// A snapped line icon: per artwork, physical size `n`, line weight `w`
+/// and theme colours (`None` for a one-colour icon tinted at draw time).
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+struct LineIconKey {
+    address: usize,
+    length: usize,
+    n: u32,
+    w: u32,
+    palette: Option<[[u8; 4]; 6]>,
+}
+
+#[derive(Default)]
+struct LineIconCache {
+    /// The scale generation the entries were built at.
+    generation: u32,
+    map: FxHashMap<LineIconKey, svg::Handle>,
+    /// Artwork already reported as outside the supported subset.
+    warned: rustc_hash::FxHashSet<(usize, usize)>,
+}
+
+thread_local! {
+    static LINE_ICON_CACHE: RefCell<LineIconCache> = RefCell::new(LineIconCache::default());
+}
+
+/// The handle of a line icon at physical size `n` with `w`-pixel lines,
+/// recoloured for `theme` (or left as drawn, for a tinted icon). Built
+/// once per artwork per size; the cache empties when the window scale
+/// changes. A file outside the supported subset is reported once and drawn
+/// unsnapped with lines `w × 19 / n` units wide.
+fn line_icon_handle(bytes: &'static [u8], n: u32, w: u32, theme: Option<&Theme>) -> svg::Handle {
+    let key = LineIconKey {
+        address: bytes.as_ptr() as usize,
+        length: bytes.len(),
+        n,
+        w,
+        palette: theme.map(palette_key),
+    };
+    let generation = SCALE_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
+    let hit = LINE_ICON_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.generation != generation {
+            cache.generation = generation;
+            cache.map.clear();
+        }
+        cache.map.get(&key).cloned()
+    });
+    if let Some(handle) = hit {
+        return handle;
+    }
+
+    let source = match theme {
+        Some(theme) => std::borrow::Cow::Owned(recolor_semantic_svg(bytes, theme)),
+        None => std::borrow::Cow::Borrowed(bytes),
+    };
+    let snapped = match icon_snap::parse(&source) {
+        Ok(icon) => icon.snap(n, w).into_bytes(),
+        Err(reason) => {
+            let first = LINE_ICON_CACHE
+                .with(|cache| cache.borrow_mut().warned.insert((key.address, key.length)));
+            if first {
+                log::warn!(
+                    "line icon outside the supported SVG subset ({reason}); drawn unsnapped"
+                );
+            }
+            icon_snap::plain(&source, n, w)
+        }
+    };
+    let handle = svg::Handle::from_memory(snapped);
+    LINE_ICON_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.map.len() >= SEMANTIC_CACHE_LIMIT {
+            cache.map.clear();
+        }
+        cache.map.insert(key, handle.clone());
+    });
+    handle
 }
 
 fn palette_key(theme: &Theme) -> [[u8; 4]; 6] {
@@ -1093,11 +1223,17 @@ static SCALE_FACTOR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32
 
 /// Note the window's scale factor (when it opens and whenever it changes).
 pub fn set_scale_factor(scale: f32) {
-    SCALE_FACTOR.store(
-        (scale * 1000.0).round() as u32,
-        std::sync::atomic::Ordering::Relaxed,
-    );
+    let thousandths = (scale * 1000.0).round() as u32;
+    let previous = SCALE_FACTOR.swap(thousandths, std::sync::atomic::Ordering::Relaxed);
+    if previous != thousandths {
+        // Snapped line icons are built per physical size: drop them.
+        SCALE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
 }
+
+/// Bumped whenever the window scale changes; the line-icon cache empties
+/// when it sees a new value.
+static SCALE_GENERATION: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 fn scale_factor() -> f32 {
     SCALE_FACTOR.load(std::sync::atomic::Ordering::Relaxed) as f32 / 1000.0
