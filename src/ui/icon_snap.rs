@@ -348,8 +348,8 @@ impl LineIcon {
                 out.push_str("/>");
             }
             if !straight.is_empty() {
-                // Square ends and mitred corners: a horizontal or vertical
-                // line stops on a pixel edge instead of a half-lit dot.
+                // Square ends: a horizontal or vertical line stops on a
+                // pixel edge, and two meeting segments fill their corner.
                 let _ = write!(out, r#"<path d="{straight}""#);
                 attrs(&mut out);
                 out.push_str(r#" stroke-linecap="square" stroke-linejoin="miter"/>"#);
@@ -428,8 +428,6 @@ fn stroke_subpath(
     let is_straight = |from: P, (to, curve): (P, Option<(P, P)>)| {
         curve.is_none() && (from.0 == to.0 || from.1 == to.1)
     };
-    // A closed figure of one kind keeps its close, so its first corner
-    // joins like the others.
     let mut from = start;
     let kinds: Vec<bool> = segs
         .iter()
@@ -445,27 +443,33 @@ fn stroke_subpath(
         push_cmd(straight, 'L', &[start]);
         return;
     }
-    let one_kind = kinds.iter().all(|&k| k == kinds[0]);
+    let slant_closed = closed_here && kinds.iter().all(|&k| !k);
     let mut from = start;
-    let mut run: Option<bool> = None;
+    let mut in_slant_run = false;
     for (&(to, curve), &kind) in segs.iter().zip(&kinds) {
-        let d: &mut String = if kind { &mut *straight } else { &mut *slant };
-        if run != Some(kind) {
-            push_cmd(d, 'M', &[from]);
-            run = Some(kind);
-        }
-        match curve {
-            Some((c1, c2)) => push_cmd(d, 'C', &[c1, c2, to]),
-            None => push_cmd(d, 'L', &[to]),
+        if kind {
+            // Every straight segment on its own, with square ends. A
+            // stroke of 1 px or less is drawn as a hairline, which has
+            // caps but no joins; the square ends are what fill the
+            // corner pixel, at any width.
+            push_cmd(straight, 'M', &[from]);
+            push_cmd(straight, 'L', &[to]);
+            in_slant_run = false;
+        } else {
+            if !in_slant_run {
+                push_cmd(slant, 'M', &[from]);
+                in_slant_run = true;
+            }
+            match curve {
+                Some((c1, c2)) => push_cmd(slant, 'C', &[c1, c2, to]),
+                None => push_cmd(slant, 'L', &[to]),
+            }
         }
         from = to;
     }
-    if closed_here && one_kind {
-        if kinds[0] {
-            straight.push('Z')
-        } else {
-            slant.push('Z')
-        }
+    // A closed figure of curves keeps its close, so it joins all round.
+    if slant_closed {
+        slant.push('Z');
     }
 }
 
@@ -585,17 +589,45 @@ mod tests {
         assert_eq!(svg.matches("<path").count(), 2, "{svg}");
         assert!(svg.contains(r#"stroke-linecap="square" stroke-linejoin="miter"/>"#));
         assert!(svg.contains(r#"stroke-width="1.25"/>"#), "{svg}");
-        // The straight run holds the two straight segments only.
+        // The straight path holds the two straight segments, each on its own.
         let straight = first_d(&svg);
-        assert_eq!(straight.len(), 6, "{straight:?}");
-        // A closed rectangle stays one closed straight figure.
+        assert_eq!(straight.len(), 8, "{straight:?}");
+        // A closed rectangle: four segments, no close.
         let rect = icon(r#"<path d="M4 4H20V20H4Z"/>"#).snap(24, 1);
         assert_eq!(rect.matches("<path").count(), 1);
-        assert!(rect.contains("Z\""), "{rect}");
+        assert_eq!(rect.matches('M').count(), 4, "{rect}");
         // A circle is all slant, at 1.25 x the weight.
         let circle = icon(r#"<path d="M4 12a8 8 0 1 0 16 0a8 8 0 1 0 -16 0"/>"#).snap(32, 2);
         assert!(circle.contains(r#"stroke-width="2.5"/>"#), "{circle}");
         assert!(!circle.contains("square"));
+    }
+
+    #[test]
+    fn frame_corners_are_fully_drawn_pixels() {
+        use resvg::{tiny_skia, usvg};
+        // The `new` icon's outline: corners joined at 90°, and a fold.
+        let page = icon(r#"<path d="M6 3h8l4 4v14H6z"/>"#);
+        for (n, w) in [(16, 1), (20, 1), (24, 1), (32, 2), (48, 2)] {
+            let svg = page.snap(n, w);
+            let tree = usvg::Tree::from_data(svg.as_bytes(), &usvg::Options::default()).unwrap();
+            let mut pix = tiny_skia::Pixmap::new(n, n).unwrap();
+            resvg::render(&tree, tiny_skia::Transform::identity(), &mut pix.as_mut());
+            // The bottom corners: the pixel the line weight covers there.
+            let px = |v: f64| (v - 2.5) * f64::from(n) / 19.0;
+            let (left, right, bottom) = (px(6.0), px(18.0), px(21.0));
+            let at = |x: f64, y: f64| {
+                let snap = |v: f64| {
+                    if w % 2 == 1 {
+                        v.floor()
+                    } else {
+                        v.round() - 1.0
+                    }
+                };
+                pix.pixel(snap(x) as u32, snap(y) as u32).unwrap().alpha()
+            };
+            assert_eq!(at(left, bottom), 255, "N={n}: bottom-left corner");
+            assert_eq!(at(right, bottom), 255, "N={n}: bottom-right corner");
+        }
     }
 
     #[test]
