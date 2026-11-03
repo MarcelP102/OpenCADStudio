@@ -245,10 +245,10 @@ pub mod icon_metrics {
 
     /// Physical line weight of an icon `N` physical px square:
     /// `floor(N / LINE_EVERY_PX + LINE_ROUND_UP)`, at least 1. Small icons:
-    /// 1 px at 100–150 %, 2 px from 175 %. Large icons: 2 px at 100 and
-    /// 125 %, 3 px at 150 and 175 %, 4 px at 200 %.
-    pub const LINE_EVERY_PX: f32 = 16.0;
-    pub const LINE_ROUND_UP: f32 = 0.25;
+    /// 1 px at 100–150 %, 2 px from 175 %. Large icons: 2 px at 100–150 %,
+    /// 3 px at 175 and 200 %.
+    pub const LINE_EVERY_PX: f32 = 24.0;
+    pub const LINE_ROUND_UP: f32 = 0.85;
     /// Diagonals and curves are drawn this much wider than straight lines:
     /// anti-aliased over two pixel rows, a line as wide as a straight one
     /// reads fainter.

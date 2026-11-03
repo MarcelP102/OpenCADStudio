@@ -258,7 +258,7 @@ fn current(subpaths: &mut [Vec<Seg>]) -> Result<&mut Vec<Seg>, String> {
 /// icon pixels, rounded up from
 /// [`icon_metrics::LINE_ROUND_UP`](m::LINE_ROUND_UP). A 16 px icon has 1 px
 /// lines up to 150 % (24 px) and 2 px from 175 %; a 32 px icon has 2 px
-/// lines at 100 %, so large icons carry the same weight as small ones.
+/// lines up to 150 % and 3 px from 175 %.
 pub fn line_weight(n: u32) -> u32 {
     ((n as f32 / m::LINE_EVERY_PX + m::LINE_ROUND_UP).floor() as u32).max(1)
 }
@@ -740,9 +740,9 @@ mod tests {
             (16.0, 2.0, 2),
             (32.0, 1.0, 2),
             (32.0, 1.25, 2),
-            (32.0, 1.5, 3),
+            (32.0, 1.5, 2),
             (32.0, 1.75, 3),
-            (32.0, 2.0, 4),
+            (32.0, 2.0, 3),
         ] {
             assert_eq!(
                 line_weight(physical_size(size, scale)),
