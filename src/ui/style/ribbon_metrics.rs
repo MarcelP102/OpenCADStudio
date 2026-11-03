@@ -243,11 +243,16 @@ pub mod icon_metrics {
     /// pipeline handles.
     pub const ICON_FRAME_VIEWBOX: &str = r#"viewBox="2.5 2.5 19 19""#;
 
-    /// Physical line weight: 1 px below [`LINE_150_FROM`], this many from
-    /// there up to [`DOUBLE_LINE_FROM`], 2 px from there on.
-    pub const LINE_WEIGHT_150: u32 = 1;
-    pub const LINE_150_FROM: f32 = 1.5;
-    pub const DOUBLE_LINE_FROM: f32 = 1.75;
+    /// Physical line weight of an icon `N` physical px square:
+    /// `floor(N / LINE_EVERY_PX + LINE_ROUND_UP)`, at least 1. Small icons:
+    /// 1 px at 100–150 %, 2 px from 175 %. Large icons: 2 px at 100 and
+    /// 125 %, 3 px at 150 and 175 %, 4 px at 200 %.
+    pub const LINE_EVERY_PX: f32 = 16.0;
+    pub const LINE_ROUND_UP: f32 = 0.25;
+    /// Diagonals and curves are drawn this much wider than straight lines:
+    /// anti-aliased over two pixel rows, a line as wide as a straight one
+    /// reads fainter.
+    pub const SLANT_WEIGHT: f32 = 1.25;
 
     /// Opacity of a disabled icon.
     pub const DISABLED_OPACITY: f32 = 0.42;

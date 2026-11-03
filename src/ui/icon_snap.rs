@@ -253,20 +253,14 @@ fn current(subpaths: &mut [Vec<Seg>]) -> Result<&mut Vec<Seg>, String> {
         .ok_or_else(|| "path data does not start with M".to_string())
 }
 
-/// Physical line weight, in pixels, at a window scale factor: 1 below
-/// 150 %, [`icon_metrics::LINE_WEIGHT_150`](m::LINE_WEIGHT_150) from 150 %
-/// up to 175 %, 2 from 175 %.
-pub fn line_weight(scale_factor: f32) -> u32 {
-    // The scale arrives in thousandths (see `icons::set_scale_factor`);
-    // compare in those so 1.75 is not lost to rounding.
-    let thousandths = (scale_factor * 1000.0).round() as u32;
-    if thousandths >= (m::DOUBLE_LINE_FROM * 1000.0).round() as u32 {
-        2
-    } else if thousandths >= (m::LINE_150_FROM * 1000.0).round() as u32 {
-        m::LINE_WEIGHT_150
-    } else {
-        1
-    }
+/// Physical line weight, in pixels, of an icon `n` physical pixels square:
+/// one line pixel per [`icon_metrics::LINE_EVERY_PX`](m::LINE_EVERY_PX)
+/// icon pixels, rounded up from
+/// [`icon_metrics::LINE_ROUND_UP`](m::LINE_ROUND_UP). A 16 px icon has 1 px
+/// lines up to 150 % (24 px) and 2 px from 175 %; a 32 px icon has 2 px
+/// lines at 100 %, so large icons carry the same weight as small ones.
+pub fn line_weight(n: u32) -> u32 {
+    ((n as f32 / m::LINE_EVERY_PX + m::LINE_ROUND_UP).floor() as u32).max(1)
 }
 
 /// Physical size of an icon `size` logical pixels square at `scale_factor`.
@@ -304,6 +298,8 @@ impl LineIcon {
 
         for path in &self.paths {
             let mut d = String::new();
+            let mut straight = String::new();
+            let mut slant = String::new();
             for (subpath, &closed) in path.subpaths.iter().zip(&path.closed) {
                 if path.filled {
                     // Whole subpath moves so its box's top-left corner is on
@@ -330,53 +326,146 @@ impl LineIcon {
                         }
                     }
                 } else {
-                    // On-curve points to the line grid; each control point
-                    // moves with the on-curve point it belongs to.
-                    let mut start = (0.0, 0.0);
-                    let mut snapped_start = (0.0, 0.0);
-                    for seg in subpath {
-                        match *seg {
-                            Seg::Move(p) | Seg::Line(p) => {
-                                let q = to_px(p);
-                                let s = (grid(q.0), grid(q.1));
-                                let cmd = if matches!(seg, Seg::Move(_)) {
-                                    'M'
-                                } else {
-                                    'L'
-                                };
-                                push_cmd(&mut d, cmd, &[s]);
-                                start = q;
-                                snapped_start = s;
-                            }
-                            Seg::Cubic(a, b, c) => {
-                                let (a, b, e) = (to_px(a), to_px(b), to_px(c));
-                                let se = (grid(e.0), grid(e.1));
-                                let c1 = (
-                                    a.0 + snapped_start.0 - start.0,
-                                    a.1 + snapped_start.1 - start.1,
-                                );
-                                let c2 = (b.0 + se.0 - e.0, b.1 + se.1 - e.1);
-                                push_cmd(&mut d, 'C', &[c1, c2, se]);
-                                start = e;
-                                snapped_start = se;
-                            }
-                        }
-                    }
+                    stroke_subpath(subpath, closed, &to_px, &grid, &mut straight, &mut slant);
+                    continue;
                 }
                 if closed {
                     d.push('Z');
                 }
             }
-            let _ = write!(out, r#"<path d="{d}""#);
-            for (name, value) in &path.attrs {
-                if name != "stroke-width" {
-                    let _ = write!(out, r#" {name}="{value}""#);
+            // A filled path, or the straight and the slanted runs of a
+            // stroked one.
+            let attrs = |out: &mut String| {
+                for (name, value) in &path.attrs {
+                    if name != "stroke-width" {
+                        let _ = write!(out, r#" {name}="{value}""#);
+                    }
                 }
+            };
+            if !d.is_empty() {
+                let _ = write!(out, r#"<path d="{d}""#);
+                attrs(&mut out);
+                out.push_str("/>");
             }
-            out.push_str("/>");
+            if !straight.is_empty() {
+                // Square ends and mitred corners: a horizontal or vertical
+                // line stops on a pixel edge instead of a half-lit dot.
+                let _ = write!(out, r#"<path d="{straight}""#);
+                attrs(&mut out);
+                out.push_str(r#" stroke-linecap="square" stroke-linejoin="miter"/>"#);
+            }
+            if !slant.is_empty() {
+                // Diagonals and curves cannot sit on the pixel grid; a
+                // little more weight makes them read as strong as the
+                // straight lines beside them.
+                let width = f64::from(w) * f64::from(m::SLANT_WEIGHT);
+                let _ = write!(out, r#"<path d="{slant}""#);
+                attrs(&mut out);
+                let _ = write!(
+                    out,
+                    r#" stroke-width="{}"/>"#,
+                    (width * 1000.0).round() / 1000.0
+                );
+            }
         }
         out.push_str("</svg>");
         out
+    }
+}
+
+/// A stroked subpath snapped to the line grid, split into runs of
+/// horizontal / vertical lines (into `straight`) and runs of diagonals and
+/// curves (into `slant`). On-curve points go to the grid; each control
+/// point moves with the on-curve point it belongs to.
+fn stroke_subpath(
+    subpath: &[Seg],
+    closed: bool,
+    to_px: &dyn Fn(P) -> P,
+    grid: &dyn Fn(f64) -> f64,
+    straight: &mut String,
+    slant: &mut String,
+) {
+    // Snapped segments: (end, control points of a curve).
+    let mut start = None;
+    let mut segs: Vec<(P, Option<(P, P)>)> = Vec::new();
+    let mut raw_prev = (0.0, 0.0);
+    let mut snapped_prev = (0.0, 0.0);
+    for seg in subpath {
+        match *seg {
+            Seg::Move(p) | Seg::Line(p) => {
+                let q = to_px(p);
+                let s = (grid(q.0), grid(q.1));
+                if matches!(seg, Seg::Move(_)) {
+                    start = Some(s);
+                } else {
+                    segs.push((s, None));
+                }
+                raw_prev = q;
+                snapped_prev = s;
+            }
+            Seg::Cubic(a, b, c) => {
+                let (a, b, e) = (to_px(a), to_px(b), to_px(c));
+                let se = (grid(e.0), grid(e.1));
+                let c1 = (
+                    a.0 + snapped_prev.0 - raw_prev.0,
+                    a.1 + snapped_prev.1 - raw_prev.1,
+                );
+                let c2 = (b.0 + se.0 - e.0, b.1 + se.1 - e.1);
+                segs.push((se, Some((c1, c2))));
+                raw_prev = e;
+                snapped_prev = se;
+            }
+        }
+    }
+    let Some(start) = start else { return };
+    let mut closed_here = false;
+    if closed {
+        if snapped_prev != start {
+            segs.push((start, None));
+        }
+        closed_here = true;
+    }
+    let is_straight = |from: P, (to, curve): (P, Option<(P, P)>)| {
+        curve.is_none() && (from.0 == to.0 || from.1 == to.1)
+    };
+    // A closed figure of one kind keeps its close, so its first corner
+    // joins like the others.
+    let mut from = start;
+    let kinds: Vec<bool> = segs
+        .iter()
+        .map(|&seg| {
+            let k = is_straight(from, seg);
+            from = seg.0;
+            k
+        })
+        .collect();
+    if segs.is_empty() {
+        // A lone point: a dot as wide as the line.
+        push_cmd(straight, 'M', &[start]);
+        push_cmd(straight, 'L', &[start]);
+        return;
+    }
+    let one_kind = kinds.iter().all(|&k| k == kinds[0]);
+    let mut from = start;
+    let mut run: Option<bool> = None;
+    for (&(to, curve), &kind) in segs.iter().zip(&kinds) {
+        let d: &mut String = if kind { &mut *straight } else { &mut *slant };
+        if run != Some(kind) {
+            push_cmd(d, 'M', &[from]);
+            run = Some(kind);
+        }
+        match curve {
+            Some((c1, c2)) => push_cmd(d, 'C', &[c1, c2, to]),
+            None => push_cmd(d, 'L', &[to]),
+        }
+        from = to;
+    }
+    if closed_here && one_kind {
+        if kinds[0] {
+            straight.push('Z')
+        } else {
+            slant.push('Z')
+        }
     }
 }
 
@@ -486,6 +575,27 @@ mod tests {
         assert!(line.snap(32, 2).contains(r#"stroke-width="2""#));
         assert!(line.snap(32, 2).contains(r#"viewBox="0 0 32 32""#));
         assert!(!line.snap(32, 2).contains("<g"));
+    }
+
+    #[test]
+    fn straight_runs_get_square_ends_and_slanted_runs_more_weight() {
+        // A frame corner then a diagonal: one straight run, one slanted.
+        let mixed = icon(r#"<path d="M4 4H12V12L18 18"/>"#);
+        let svg = mixed.snap(16, 1);
+        assert_eq!(svg.matches("<path").count(), 2, "{svg}");
+        assert!(svg.contains(r#"stroke-linecap="square" stroke-linejoin="miter"/>"#));
+        assert!(svg.contains(r#"stroke-width="1.25"/>"#), "{svg}");
+        // The straight run holds the two straight segments only.
+        let straight = first_d(&svg);
+        assert_eq!(straight.len(), 6, "{straight:?}");
+        // A closed rectangle stays one closed straight figure.
+        let rect = icon(r#"<path d="M4 4H20V20H4Z"/>"#).snap(24, 1);
+        assert_eq!(rect.matches("<path").count(), 1);
+        assert!(rect.contains("Z\""), "{rect}");
+        // A circle is all slant, at 1.25 x the weight.
+        let circle = icon(r#"<path d="M4 12a8 8 0 1 0 16 0a8 8 0 1 0 -16 0"/>"#).snap(32, 2);
+        assert!(circle.contains(r#"stroke-width="2.5"/>"#), "{circle}");
+        assert!(!circle.contains("square"));
     }
 
     #[test]
@@ -621,17 +731,24 @@ mod tests {
 
     #[test]
     fn line_weight_follows_the_table() {
-        for (scale, w) in [
-            (1.0, 1),
-            (1.25, 1),
-            (1.333, 1),
-            (1.5, m::LINE_WEIGHT_150),
-            (1.6, m::LINE_WEIGHT_150),
-            (1.75, 2),
-            (2.0, 2),
-            (3.0, 2),
+        // (icon size, window scale, line weight)
+        for (size, scale, w) in [
+            (16.0, 1.0, 1),
+            (16.0, 1.25, 1),
+            (16.0, 1.5, 1),
+            (16.0, 1.75, 2),
+            (16.0, 2.0, 2),
+            (32.0, 1.0, 2),
+            (32.0, 1.25, 2),
+            (32.0, 1.5, 3),
+            (32.0, 1.75, 3),
+            (32.0, 2.0, 4),
         ] {
-            assert_eq!(line_weight(scale), w, "scale {scale}");
+            assert_eq!(
+                line_weight(physical_size(size, scale)),
+                w,
+                "{size} px at {scale}"
+            );
         }
         for (size, scale, n) in [
             (16.0, 1.0, 16),

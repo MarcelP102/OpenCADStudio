@@ -352,7 +352,7 @@ impl SemanticIcon {
     fn draw_line_icon(&self, renderer: &mut Renderer, theme: &Theme, laid: Rectangle) {
         let scale = scale_factor();
         let n = icon_snap::physical_size(self.size, scale);
-        let w = icon_snap::line_weight(scale);
+        let w = icon_snap::line_weight(n);
         let handle = line_icon_handle(self.bytes, n, w, self.tint.is_none().then_some(theme));
         let side = n as f32 / scale;
         let bounds = Rectangle::new(
