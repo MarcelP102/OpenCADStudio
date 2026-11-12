@@ -19,6 +19,8 @@ mod block_cycle_order;
 mod block_editor;
 #[cfg(test)]
 mod block_editor_tests;
+#[cfg(test)]
+mod ui_shots_tests;
 mod block_feedback;
 mod block_grip_set;
 mod block_lookup;
