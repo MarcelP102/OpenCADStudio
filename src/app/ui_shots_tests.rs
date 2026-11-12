@@ -195,6 +195,14 @@ fn ui_shots() {
             let _ = app.on_dock(DockMsg::EdgeMenu(Some(crate::app::config::DockSide::Left)));
             shot(&mut app, &dir, "strip-menu", None);
         }
+        if wanted("stack") {
+            use crate::ui::dock::{DockGroup, PanelId};
+            let mut app = app();
+            app.show_layers = true;
+            app.dock.left = vec![DockGroup::stack(vec![PanelId::Properties, PanelId::Layers])];
+            app.dock_title_hover = Some(PanelId::Properties);
+            shot(&mut app, &dir, "stack", None);
+        }
         if wanted("tabs") {
             let mut app = app();
             app.automation_op(r#"{"op":"new"}"#);

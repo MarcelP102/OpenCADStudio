@@ -1346,39 +1346,42 @@ pub fn title_bar<'a>(id: PanelId, title: String, chrome: Chrome) -> Element<'a, 
     title_bar_with(id, title, chrome, None)
 }
 
-/// [`title_bar`] with a pallet's own control (a menu button) before the pin
-/// and close, shown like them only while the bar is hovered. A floating
-/// pallet has no title bar, so the control then sits alone at the top right.
+/// [`title_bar`] with a pallet's own control (its ☰ menu button) before the
+/// close. Every palette uses this one bar: 23 px on the palette body, the
+/// title in 13 px capitals, the ☰ menu and close always shown, pin
+/// (auto-hide) and detach only while the bar is hovered. The pin stands
+/// upright while docked and lies turned 90° while the palette auto-hides. A
+/// floating pallet has no title bar, so the control then sits alone at the
+/// top right.
 pub fn title_bar_with<'a>(
     id: PanelId,
     title: String,
     chrome: Chrome,
     extra: Option<Element<'a, Message>>,
 ) -> Element<'a, Message> {
+    use crate::ui::style::{chrome as tokens, palette_metrics as pm, text as ui_text};
     if chrome.floating {
         return match extra {
             Some(extra) => row![Space::new().width(Length::Fill), extra]
-                .padding([3, 6])
+                .padding([pm::TOOL_GAP, pm::TOOL_GAP])
                 .into(),
             None => Space::new().width(0).height(0).into(),
         };
     }
-    // The pallet's control and pin only show while the pointer is over the
-    // bar; close always shows. The fixed height keeps the bar from jumping
-    // when they appear.
     let mut bar = row![
         text(title.to_uppercase())
-            .size(crate::ui::style::text::UI_TITLE)
-            .line_height(crate::ui::style::text::large_line()),
+            .size(ui_text::UI_TITLE)
+            .line_height(ui_text::large_line())
+            .wrapping(iced::widget::text::Wrapping::None)
+            .style(|theme: &Theme| iced::widget::text::Style {
+                color: Some(tokens::title_text(theme)),
+            }),
         Space::new().width(Length::Fill)
     ]
-    .spacing(3)
-    .height(Length::Fixed(TITLE_BUTTON_H))
+    .height(Length::Fixed(pm::TITLE_H))
+    .padding(iced::Padding::ZERO.left(pm::TITLE_PAD_X).right(TITLE_PAD_R))
     .align_y(iced::Center);
     if chrome.title_hovered {
-        if let Some(extra) = extra {
-            bar = bar.push(extra);
-        }
         #[cfg(not(target_arch = "wasm32"))]
         {
             bar = bar.push(detach_button(id, tooltip::Position::Bottom));
@@ -1389,15 +1392,17 @@ pub fn title_bar_with<'a>(
             tooltip::Position::Bottom,
         ));
     }
+    if let Some(extra) = extra {
+        bar = bar.push(extra);
+    }
     bar = bar.push(close_button(id, tooltip::Position::Bottom));
     mouse_area(
         container(bar)
             .style(|theme: &Theme| container::Style {
-                background: Some(Background::Color(theme.palette().background.weak.color)),
+                background: Some(Background::Color(tokens::palette_body(theme))),
                 ..Default::default()
             })
-            .width(Length::Fill)
-            .padding([3, 6]),
+            .width(Length::Fill),
     )
     .on_press(Message::Dock(DockMsg::DockGrab(id)))
     .on_double_click(Message::Dock(DockMsg::FloatOut(id)))
@@ -1407,65 +1412,110 @@ pub fn title_bar_with<'a>(
     .into()
 }
 
-/// Height of a title bar's button row.
-const TITLE_BUTTON_H: f32 = 20.0;
+/// Room after the last title-bar button.
+const TITLE_PAD_R: f32 = 2.0;
 
-/// The auto-hide pin. While auto-hide is on the pin is drawn tilted instead
-/// of on a coloured background.
+/// The square button every title-bar control is: `icon` centred in a
+/// `TITLE_BUTTON` square, lit by `chrome::hover` while hovered.
+pub fn title_button<'a>(
+    icon: Element<'a, Message>,
+    message: Message,
+) -> button::Button<'a, Message> {
+    use crate::ui::style::{chrome as tokens, palette_metrics as pm};
+    button(container(icon).center(Length::Fill))
+        .on_press(message)
+        .width(Length::Fixed(pm::TITLE_BUTTON))
+        .height(Length::Fixed(pm::TITLE_BUTTON))
+        .padding(0)
+        .style(|theme: &Theme, status| button::Style {
+            background: matches!(status, button::Status::Hovered | button::Status::Pressed)
+                .then(|| Background::Color(tokens::hover(theme))),
+            text_color: tokens::text(theme),
+            ..Default::default()
+        })
+}
+
+/// A title-bar icon in the title-bar tint.
+fn title_icon<'a>(art: &'static [u8]) -> Element<'a, Message> {
+    use crate::ui::style::{chrome as tokens, palette_metrics as pm};
+    crate::ui::icons::tinted(art, pm::TITLE_ICON, tokens::title_text)
+}
+
+/// A tooltip on a title-bar button.
+fn title_tip<'a>(
+    content: impl Into<Element<'a, Message>>,
+    tip: String,
+    position: tooltip::Position,
+) -> Element<'a, Message> {
+    use crate::ui::style::{palette_metrics as pm, text as ui_text};
+    tooltip(
+        content,
+        text(tip)
+            .size(ui_text::UI_SMALL)
+            .line_height(ui_text::line()),
+        position,
+    )
+    .gap(pm::TOOL_GAP)
+    .into()
+}
+
+/// The auto-hide pin: upright while docked, turned 90° while the palette
+/// auto-hides.
 pub fn pin_button<'a>(
     id: PanelId,
     auto_collapse: bool,
     tip: tooltip::Position,
 ) -> Element<'a, Message> {
-    let icon = crate::ui::icons::themed_secondary(
-        if auto_collapse {
-            crate::ui::icons::PIN_ACTIVE
-        } else {
-            crate::ui::icons::PIN
-        },
-        12.0,
-    );
-    let pin = button(icon)
-        .on_press(Message::Dock(DockMsg::AutoCollapseToggle(id)))
-        .style(button::subtle)
-        .padding([3, 5]);
-    tooltip(pin, text(crate::t!("Auto-hide")).size(10), tip)
-        .gap(4)
-        .into()
+    let art = if auto_collapse {
+        crate::ui::icons::PIN_SIDE
+    } else {
+        crate::ui::icons::PIN
+    };
+    title_tip(
+        title_button(
+            title_icon(art),
+            Message::Dock(DockMsg::AutoCollapseToggle(id)),
+        ),
+        crate::t!("Auto-hide").into_owned(),
+        tip,
+    )
 }
 
-/// The close button of a panel's title bar.
 /// Desktop: move the pallet into a window of its own.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn detach_button<'a>(id: PanelId, tip: tooltip::Position) -> Element<'a, Message> {
-    let detach = button(crate::ui::icons::themed_secondary(
-        crate::ui::icons::DETACH,
-        12.0,
-    ))
-    .on_press(Message::Dock(DockMsg::Detach(id)))
-    .style(button::subtle)
-    .padding([3, 5]);
+    let detach = title_button(
+        title_icon(crate::ui::icons::DETACH),
+        Message::Dock(DockMsg::Detach(id)),
+    );
     let detach = container(detach).id(iced::widget::Id::new(crate::ui::modal::DETACH_BUTTON_ID));
-    tooltip(
+    title_tip(
         detach,
-        text(crate::t!("Open in its own window")).size(10),
+        crate::t!("Open in its own window").into_owned(),
         tip,
     )
-    .gap(4)
-    .into()
 }
 
+/// The close button of a panel's title bar.
 pub fn close_button<'a>(id: PanelId, tip: tooltip::Position) -> Element<'a, Message> {
-    let close = button(crate::ui::icons::themed_secondary(
-        crate::ui::icons::CLOSE,
-        12.0,
-    ))
-    .on_press(Message::Dock(DockMsg::Close(id)))
-    .style(button::subtle)
-    .padding([3, 5]);
-    tooltip(close, text(crate::t!("Close")).size(10), tip)
-        .gap(4)
-        .into()
+    title_tip(
+        title_button(
+            title_icon(crate::ui::icons::CLOSE),
+            Message::Dock(DockMsg::Close(id)),
+        ),
+        crate::t!("Close").into_owned(),
+        tip,
+    )
+}
+
+/// A palette's ☰ menu button for its title bar (the `extra` of
+/// [`title_bar_with`]).
+pub fn menu_button<'a>(message: Message, tip: String) -> Element<'a, Message> {
+    title_tip(
+        title_button(title_icon(crate::ui::icons::MENU), message),
+        tip,
+        tooltip::Position::Bottom,
+    )
 }
 
 /// Side length of a panel toolbar button's icon.
@@ -1517,15 +1567,75 @@ pub fn frame<'a>(
     .width(Length::Fixed(width))
     .height(Length::Fill)
     .style(|theme: &Theme| container::Style {
-        background: Some(Background::Color(theme.palette().background.base.color)),
-        border: Border {
-            color: theme.palette().background.neutral.color,
-            width: 1.0,
-            radius: 0.0.into(),
-        },
+        background: Some(Background::Color(crate::ui::style::chrome::palette_body(
+            theme,
+        ))),
         ..Default::default()
     })
     .into()
+}
+
+/// The splitter between stacked palettes: a `SPLITTER_H` bar in
+/// `palette_bar` with five grip dots centred, lit in the accent while
+/// hovered or dragged (`active`). One widget for every palette.
+pub struct SplitterGrip {
+    /// The splitter is being dragged.
+    pub active: bool,
+}
+
+impl iced::widget::canvas::Program<Message> for SplitterGrip {
+    /// Whether the pointer was over the splitter at the last event.
+    type State = bool;
+
+    fn update(
+        &self,
+        hovered: &mut bool,
+        _event: &iced::widget::canvas::Event,
+        bounds: iced::Rectangle,
+        cursor: iced::advanced::mouse::Cursor,
+    ) -> Option<iced::widget::Action<Message>> {
+        let over = cursor.is_over(bounds);
+        (over != *hovered).then(|| {
+            *hovered = over;
+            iced::widget::Action::request_redraw()
+        })
+    }
+
+    fn draw(
+        &self,
+        hovered: &bool,
+        renderer: &iced::Renderer,
+        theme: &Theme,
+        bounds: iced::Rectangle,
+        cursor: iced::advanced::mouse::Cursor,
+    ) -> Vec<iced::widget::canvas::Geometry> {
+        use crate::ui::style::{chrome as tokens, palette_metrics as pm, text::snap_px};
+        let mut frame = iced::widget::canvas::Frame::new(renderer, bounds.size());
+        frame.fill_rectangle(
+            iced::Point::ORIGIN,
+            bounds.size(),
+            tokens::palette_bar(theme),
+        );
+        let lit = self.active || *hovered || cursor.is_over(bounds);
+        let color = if lit {
+            tokens::accent(theme)
+        } else {
+            tokens::muted(theme)
+        };
+        let n = pm::SPLITTER_DOTS as f32;
+        let span = n * pm::SPLITTER_DOT + (n - 1.0) * pm::SPLITTER_DOT_GAP;
+        let x0 = snap_px((bounds.width - span) / 2.0);
+        let y = snap_px((bounds.height - pm::SPLITTER_DOT) / 2.0);
+        for i in 0..pm::SPLITTER_DOTS {
+            let x = x0 + i as f32 * (pm::SPLITTER_DOT + pm::SPLITTER_DOT_GAP);
+            frame.fill_rectangle(
+                iced::Point::new(x, y),
+                iced::Size::new(pm::SPLITTER_DOT, pm::SPLITTER_DOT),
+                color,
+            );
+        }
+        vec![frame.into_geometry()]
+    }
 }
 
 /// Rotated label shared by floating dock title bars and palette categories.

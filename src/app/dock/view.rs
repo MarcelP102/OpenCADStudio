@@ -208,7 +208,12 @@ impl OpenCADStudio {
                     continue;
                 }
                 if let Some(upper) = prev {
-                    layers.push(dock_splitter(side, gi, upper, pos, width));
+                    let active = matches!(
+                        self.dock_drag,
+                        Some(crate::ui::dock::DockDrag::Split { side: s, group, upper: u, .. })
+                            if s == side && group == gi && u == upper
+                    );
+                    layers.push(dock_splitter(side, gi, upper, pos, width, active));
                 }
                 layers.push(
                     container(self.expanded_panel(*id, side, width, tab))
@@ -1329,14 +1334,11 @@ fn dock_splitter(
     upper: usize,
     lower: usize,
     col_w: f32,
+    active: bool,
 ) -> Element<'static, Message> {
-    let line = container(Space::new())
+    let line = canvas(crate::ui::dock::SplitterGrip { active })
         .width(Length::Fixed(col_w + DOCK_DIVIDER_W))
-        .height(Length::Fixed(5.0))
-        .style(|theme: &Theme| container::Style {
-            background: Some(Background::Color(theme.palette().background.neutral.color)),
-            ..Default::default()
-        });
+        .height(Length::Fixed(crate::ui::style::palette_metrics::SPLITTER_H));
     mouse_area(line)
         .on_press(Message::Dock(crate::ui::dock::DockMsg::SplitGrab(
             side, gi, upper, lower,
