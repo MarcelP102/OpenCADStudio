@@ -56,7 +56,10 @@ fn dock_app() -> OpenCADStudio {
     app.show_properties = true;
     app.show_block_palette = true;
     let i = app.active_tab;
-    app.tabs[i].scene.selection.borrow_mut().view.vp_size = (1600.0, 900.0);
+    // A 900 px workspace: the docks run its full height, the drawing-tab
+    // bar between them sits over the viewport.
+    let vp_h = 900.0 - crate::ui::style::palette_metrics::TAB_BAR_H;
+    app.tabs[i].scene.selection.borrow_mut().view.vp_size = (1600.0, vp_h);
     app.win_size = (1600.0, 900.0).into();
     app
 }
@@ -700,7 +703,8 @@ fn target_screen_x(app: &OpenCADStudio, probe: glam::DVec3) -> f64 {
     let cam = app.tabs[i].scene.camera.borrow();
     let (left, right) = app.dock_edge_insets();
     let vw = f64::from(app.win_size.0 - left - right);
-    let wpp = f64::from(2.0 * cam.ortho_size()) / 900.0;
+    let vh = app.tabs[i].scene.selection.borrow().view.vp_size.1;
+    let wpp = f64::from(2.0 * cam.ortho_size()) / f64::from(vh);
     let cam_right = (cam.rotation * glam::Vec3::X).as_dvec3();
     f64::from(left) + vw * 0.5 + (probe - cam.target).dot(cam_right) / wpp
 }
