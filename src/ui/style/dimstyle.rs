@@ -403,7 +403,7 @@ impl canvas::Program<Message> for DimensionPreview {
         }
         frame.fill_text(canvas::Text {
             content: self.text.clone(),
-            position: Point::new(bounds.width * 0.5, text_y),
+            position: crate::ui::style::text::snap_point(Point::new(bounds.width * 0.5, text_y)),
             color: ink,
             size: iced::Pixels(12.0),
             align_x: iced::advanced::text::Alignment::Center,

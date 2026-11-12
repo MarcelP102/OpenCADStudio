@@ -1434,7 +1434,7 @@ impl iced::widget::canvas::Program<Message> for VerticalTitle {
             frame.rotate(std::f32::consts::FRAC_PI_2);
             frame.fill_text(Text {
                 content: label,
-                position: Point::ORIGIN,
+                position: crate::ui::style::text::snap_point(Point::ORIGIN),
                 color,
                 size: size.into(),
                 align_x: iced::alignment::Horizontal::Center.into(),

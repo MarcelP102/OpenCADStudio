@@ -13,6 +13,7 @@ use crate::app::settings::{CursorType, IsoPlane};
 use crate::app::Message;
 use crate::scene::model::object::GripShape;
 use crate::scene::SelectionState;
+use crate::ui::style::text::snap_point;
 
 use crate::snap::SnapType;
 use std::sync::Arc;
@@ -2184,7 +2185,7 @@ pub fn draw_constraint_glyph_layer(
                 };
                 frame.fill_text(canvas::Text {
                     content: label.to_string(),
-                    position: glyph_center,
+                    position: snap_point(glyph_center),
                     color,
                     size: iced::Pixels(GLYPH_SIZE),
                     align_x: iced::alignment::Horizontal::Center.into(),
@@ -3302,7 +3303,7 @@ impl canvas::Program<Message> for SelectionCanvas {
                         } else {
                             frame.fill_text(canvas::Text {
                                 content: label.clone(),
-                                position: center,
+                                position: snap_point(center),
                                 color: Color::WHITE,
                                 size: iced::Pixels(11.0),
                                 align_x: iced::alignment::Horizontal::Center.into(),
@@ -3697,7 +3698,10 @@ impl canvas::Program<Message> for SelectionCanvas {
                     );
                     frame.fill_text(canvas::Text {
                         content: label.to_string(),
-                        position: Point::new(left + width * 0.5, top + height * 0.5),
+                        position: snap_point(Point::new(
+                            left + width * 0.5,
+                            top + height * 0.5,
+                        )),
                         color: theme.palette().background.strong.text,
                         size: iced::Pixels(12.0),
                         align_x: iced::alignment::Horizontal::Center.into(),
@@ -5023,7 +5027,10 @@ fn draw_ucs_icon(
                 content: ax.label.to_string(),
                 // Offset beyond tip along the axis direction; subtract ~half glyph
                 // size to visually center the single character on the axis line.
-                position: Point::new(tip.x + nx * 8.0 - 3.5, tip.y + ny * 8.0 - 5.0),
+                position: snap_point(Point::new(
+                    tip.x + nx * 8.0 - 3.5,
+                    tip.y + ny * 8.0 - 5.0,
+                )),
                 color: col,
                 size: iced::Pixels(10.0),
                 shaping: iced::advanced::text::Shaping::Advanced,
@@ -5243,10 +5250,10 @@ impl DynInputCanvas {
         );
         frame.fill_text(canvas::Text {
             content,
-            position: Point {
+            position: snap_point(Point {
                 x: x + DYN_PAD,
                 y: y + DYN_PAD,
-            },
+            }),
             color: text,
             size: iced::Pixels(DYN_FONT),
             // Force Advanced shaping: the default `Auto` uses Basic shaping for
@@ -5304,10 +5311,10 @@ impl DynInputCanvas {
         );
         frame.fill_text(canvas::Text {
             content: self.prompt.clone(),
-            position: Point {
+            position: snap_point(Point {
                 x: pos.x + DYN_PAD,
                 y: pos.y + DYN_PAD,
-            },
+            }),
             color: palette.background.strong.text,
             size: iced::Pixels(DYN_FONT),
             shaping: iced::advanced::text::Shaping::Advanced,
@@ -5342,10 +5349,10 @@ impl DynInputCanvas {
 
         frame.fill_text(canvas::Text {
             content: text.to_string(),
-            position: Point {
+            position: snap_point(Point {
                 x: pos.x + DYN_PAD,
                 y: pos.y + DYN_PAD,
-            },
+            }),
             color: palette.background.strong.text,
             size: iced::Pixels(DYN_FONT),
             shaping: iced::advanced::text::Shaping::Advanced,
@@ -5673,10 +5680,10 @@ impl DynInputCanvas {
             );
             frame.fill_text(canvas::Text {
                 content: texts[i].clone(),
-                position: Point {
+                position: snap_point(Point {
                     x: x + DYN_PAD,
                     y: by + DYN_PAD,
-                },
+                }),
                 color: text,
                 size: iced::Pixels(DYN_FONT),
                 shaping: iced::advanced::text::Shaping::Advanced,

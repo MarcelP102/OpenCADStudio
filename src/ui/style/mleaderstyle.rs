@@ -2284,7 +2284,7 @@ impl canvas::Program<Message> for LeaderPreview {
                 }
                 frame.fill_text(canvas::Text {
                     content: self.text.clone(),
-                    position: Point::new(x, y),
+                    position: crate::ui::style::text::snap_point(Point::new(x, y)),
                     color,
                     size: iced::Pixels(size),
                     align_y: iced::alignment::Vertical::Center,
