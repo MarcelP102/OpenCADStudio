@@ -61,8 +61,10 @@ mod tests {
         for v in [UI, UI_SMALL, UI_LARGE, UI_TITLE, UI_LINE, UI_LARGE_LINE] {
             assert_eq!(v.fract(), 0.0, "{v}");
         }
-        assert!(UI_LINE >= UI_LARGE.min(UI) * 1.2);
-        assert!(UI_LARGE_LINE >= UI_TITLE * 1.2);
+        const {
+            assert!(UI_LINE >= UI * 1.2);
+            assert!(UI_LARGE_LINE >= UI_TITLE * 1.2);
+        }
     }
 
     #[test]

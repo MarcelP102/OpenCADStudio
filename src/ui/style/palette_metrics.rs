@@ -121,9 +121,11 @@ mod tests {
     fn the_board_measurements() {
         assert_eq!(STRIP_W, 31.0);
         assert_eq!(TAB_H + LINE, TAB_BAR_H);
-        assert!(STRIP_ICON < STRIP_CELL_H);
-        assert!(TITLE_BUTTON <= TITLE_H);
-        assert!(SCROLL_THUMB_W < SCROLLBAR_W);
+        const {
+            assert!(STRIP_ICON < STRIP_CELL_H);
+            assert!(TITLE_BUTTON <= TITLE_H);
+            assert!(SCROLL_THUMB_W < SCROLLBAR_W);
+        }
         assert!(
             SPLITTER_DOTS as f32 * (SPLITTER_DOT + SPLITTER_DOT_GAP) < 40.0,
             "the grip stays a small centred mark"

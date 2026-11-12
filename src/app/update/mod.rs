@@ -10416,6 +10416,12 @@ impl OpenCADStudio {
                 Task::none()
             }
 
+            Message::PropRowSelect(key) => {
+                let i = self.active_tab;
+                self.tabs[i].properties.selected_row = Some(key);
+                Task::none()
+            }
+
             Message::PropSectionToggle(title) => {
                 let sections = &mut self.collapsed_property_sections;
                 if !sections.remove(&title) {

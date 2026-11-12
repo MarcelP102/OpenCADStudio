@@ -5130,6 +5130,8 @@ pub enum Message {
     PropGroupToggle(String),
     /// Toggle an entire Properties-panel section, keyed by its title.
     PropSectionToggle(String),
+    /// Select a Properties row by pressing its name, keyed `section/name`.
+    PropRowSelect(String),
     /// Toggle an editable-dropdown row's option list open/closed, by field.
     PropEditChoiceToggle(&'static str),
     /// User is typing in a block-attribute value field (live buffer update),
