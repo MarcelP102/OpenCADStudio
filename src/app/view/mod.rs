@@ -3205,9 +3205,28 @@ bg={bg_ms:.1}ms n={view_count}"
         if let Some(e) = left_edge {
             parts.push(e);
         }
-        parts.push(
-            crate::ui::wrap_bar::PosReport::new(VIEWPORT_CAPTURE_BOUNDS_ID, viewport_stack).into(),
-        );
+        let viewport: Element<'_, Message> =
+            crate::ui::wrap_bar::PosReport::new(VIEWPORT_CAPTURE_BOUNDS_ID, viewport_stack).into();
+        // The drawing tabs sit over the drawing, between the docks, unless
+        // they are set to run across the window above the palettes.
+        parts.push(if self.doc_tabs_in_center() {
+            column![
+                doc_tab_bar(
+                    &self.tabs,
+                    self.active_tab,
+                    self.hovered_doc_tab,
+                    self.doc_tab_menu,
+                    self.doc_tab_layouts,
+                    self.file_tabs_above_docks,
+                ),
+                viewport
+            ]
+            .width(Fill)
+            .height(Fill)
+            .into()
+        } else {
+            viewport
+        });
         if let Some(e) = right_edge {
             parts.push(e);
         }
@@ -3316,13 +3335,30 @@ bg={bg_ms:.1}ms n={view_count}"
             // ribbon vs status-bar construction separately (both gated on
             // PERF; zero cost otherwise).
             mark("ribbon");
-            if self.show_file_tabs {
+            // The 1 px edge under the ribbon runs across the docks too.
+            if !self.clean_screen {
+                col = col.push(
+                    container(
+                        iced::widget::Space::new()
+                            .width(Fill)
+                            .height(crate::ui::style::palette_metrics::LINE),
+                    )
+                    .style(|theme: &Theme| container::Style {
+                        background: Some(Background::Color(crate::ui::style::chrome::edge(
+                            theme,
+                        ))),
+                        ..Default::default()
+                    }),
+                );
+            }
+            if self.show_file_tabs && self.file_tabs_above_docks {
                 col = col.push(doc_tab_bar(
                     &self.tabs,
                     self.active_tab,
                     self.hovered_doc_tab,
                     self.doc_tab_menu,
                     self.doc_tab_layouts,
+                    self.file_tabs_above_docks,
                 ));
             }
             col.push(center_stack)
@@ -4110,6 +4146,7 @@ impl OpenCADStudio {
 fn doc_tab_menu_items(
     tabs: &[DocumentTab],
     active_tab: usize,
+    above_docks: bool,
 ) -> Vec<crate::ui::palette_menu::Item> {
     use crate::ui::palette_menu::{Item, Mark};
     let mut items = Vec::new();
@@ -4142,6 +4179,14 @@ fn doc_tab_menu_items(
     items.push(Item::new(t!("Open"), Message::OpenFile));
     items.push(Item::new(t!("Save All"), Message::DocTabSaveAll));
     items.push(Item::new(t!("Close All"), Message::DocTabCloseAll));
+    items.push(Item::Separator);
+    items.push(
+        Item::new(
+            crate::tr!("doc-tabs", "above-palettes"),
+            Message::DocTabsAboveDocks(!above_docks),
+        )
+        .mark(Mark::Check(above_docks)),
+    );
     items
 }
 
@@ -4190,7 +4235,9 @@ fn tab_bar_button_style(theme: &Theme, status: button::Status) -> button::Style 
 /// 1 px apart, a + after the last tab and a ☰ menu at the far right. A tab
 /// shows a dot before its name while unsaved and always its ×. The Start
 /// page lives in the ☰ menu, which a right-click on the empty bar opens at
-/// the pointer too. Resting on a tab lists its drawing's layouts. Tabs
+/// the pointer too; it also sets whether the bar runs above the palettes
+/// or (by default) between them. Resting on a tab lists its drawing's
+/// layouts. Tabs
 /// keep their drag-to-reorder; the row wraps only when the tabs overflow.
 pub(super) fn doc_tab_bar<'a>(
     tabs: &'a [DocumentTab],
@@ -4198,6 +4245,7 @@ pub(super) fn doc_tab_bar<'a>(
     hovered_tab: Option<usize>,
     menu_open: bool,
     layouts_open: Option<usize>,
+    above_docks: bool,
 ) -> Element<'a, Message> {
     use crate::ui::palette_menu;
     use crate::ui::style::{chrome, palette_metrics as pm, text as ui_text};
@@ -4360,7 +4408,7 @@ pub(super) fn doc_tab_bar<'a>(
     .style(tab_bar_button_style);
     let menu_btn = iced_aw::DropDown::new(
         menu_btn,
-        palette_menu::menu(doc_tab_menu_items(tabs, active_tab), pm::MENU_W),
+        palette_menu::menu(doc_tab_menu_items(tabs, active_tab, above_docks), pm::MENU_W),
         menu_open,
     )
     .alignment(iced_aw::drop_down::Alignment::Bottom)
@@ -4379,7 +4427,7 @@ pub(super) fn doc_tab_bar<'a>(
         container(Space::new())
             .width(Fill)
             .height(iced::Length::Fixed(pm::TAB_H)),
-        move || palette_menu::menu(doc_tab_menu_items(tabs, active_tab), pm::MENU_W),
+        move || palette_menu::menu(doc_tab_menu_items(tabs, active_tab, above_docks), pm::MENU_W),
     );
     let bar = row![tabs_row, empty, menu_btn].align_y(iced::alignment::Vertical::Top);
     column![

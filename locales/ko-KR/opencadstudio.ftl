@@ -9416,3 +9416,6 @@ mleader-style =
     .available-linetypes = 사용 가능한 선종류
     .program-linetypes = 프로그램 선종류
     .already-loaded = { $name } (로드됨)
+
+doc-tabs =
+    .above-palettes = 팔레트 위에 탭

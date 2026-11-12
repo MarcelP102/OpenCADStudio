@@ -9424,3 +9424,6 @@ mleader-style =
     .available-linetypes = Kiểu đường có sẵn
     .program-linetypes = Kiểu đường của chương trình
     .already-loaded = { $name } (đã tải)
+
+doc-tabs =
+    .above-palettes = Thẻ phía trên bảng

@@ -9346,3 +9346,6 @@ mleader-style =
     .available-linetypes = Kullanılabilir çizgi türleri
     .program-linetypes = Program çizgi türleri
     .already-loaded = { $name } (yüklü)
+
+doc-tabs =
+    .above-palettes = Sekmeler paletlerin üstünde

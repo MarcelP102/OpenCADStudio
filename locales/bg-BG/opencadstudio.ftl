@@ -9427,3 +9427,6 @@ mleader-style =
     .available-linetypes = Налични типове линии
     .program-linetypes = Типове линии на програмата
     .already-loaded = { $name } (заредена)
+
+doc-tabs =
+    .above-palettes = Раздели над палитрите

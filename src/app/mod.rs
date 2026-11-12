@@ -1643,6 +1643,9 @@ pub(super) struct OpenCADStudio {
     pub(crate) xref_manager: crate::ui::window::xref_manager::XrefManagerPanel,
     /// Whether the document file tabs are shown at the top (FILETAB).
     show_file_tabs: bool,
+    /// The drawing tabs run across the window above the palettes instead
+    /// of between them.
+    file_tabs_above_docks: bool,
     /// Whether the layout/paper-space tabs are shown at the bottom (LAYOUTTAB).
     show_layout_tabs: bool,
     /// Last point committed by a drawing command — used as ortho/polar base.
@@ -4111,6 +4114,9 @@ pub enum Message {
     DocTabLayoutsClose,
     /// Switch to drawing tab `usize` and its layout `String`.
     DocTabLayout(usize, String),
+    /// Run the drawing tabs across the window above the palettes (`true`)
+    /// or between the palettes, over the drawing.
+    DocTabsAboveDocks(bool),
     /// Move a drawing tab before/after another drawing tab.
     TabReorder {
         from: usize,
@@ -6656,6 +6662,7 @@ impl OpenCADStudio {
             xref_col_last: None,
             xref_split_drag: false,
             show_file_tabs: true,
+            file_tabs_above_docks: false,
             show_layout_tabs: true,
             last_point: None,
             vp_snap_frame: None,

@@ -9431,3 +9431,6 @@ mleader-style =
     .available-linetypes = Доступные типы линий
     .program-linetypes = Типы линий программы
     .already-loaded = { $name } (загружен)
+
+doc-tabs =
+    .above-palettes = Вкладки над палитрами

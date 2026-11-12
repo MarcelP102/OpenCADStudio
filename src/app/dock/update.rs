@@ -858,8 +858,14 @@ impl OpenCADStudio {
     }
 
     /// Size of the workspace the dock lays out in: window width by viewport
-    /// height.
+    /// height, plus the drawing-tab bar when it sits over the drawing
+    /// between the docks (the docks then run from the ribbon down).
     pub(crate) fn dock_workspace_size(&self) -> (f32, f32) {
+        let tabs = if self.doc_tabs_in_center() {
+            crate::ui::style::palette_metrics::TAB_BAR_H
+        } else {
+            0.0
+        };
         (
             self.win_size.0,
             self.tabs[self.active_tab]
@@ -868,8 +874,15 @@ impl OpenCADStudio {
                 .borrow()
                 .view
                 .vp_size
-                .1,
+                .1
+                + tabs,
         )
+    }
+
+    /// Whether the drawing-tab bar sits over the drawing, between the
+    /// docks, rather than across the window above them.
+    pub(crate) fn doc_tabs_in_center(&self) -> bool {
+        self.show_file_tabs && !self.file_tabs_above_docks
     }
 
     /// The open pallets of group `gi` on `side`, top → bottom. Closed

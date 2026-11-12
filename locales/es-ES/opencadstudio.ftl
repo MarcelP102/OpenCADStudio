@@ -9427,3 +9427,6 @@ mleader-style =
     .available-linetypes = Tipos de línea disponibles
     .program-linetypes = Tipos de línea del programa
     .already-loaded = { $name } (cargado)
+
+doc-tabs =
+    .above-palettes = Pestañas sobre las paletas

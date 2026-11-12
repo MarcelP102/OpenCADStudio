@@ -9433,3 +9433,6 @@ mleader-style =
     .available-linetypes = Dostupné typy čar
     .program-linetypes = Typy čar programu
     .already-loaded = { $name } (načteno)
+
+doc-tabs =
+    .above-palettes = Karty nad paletami

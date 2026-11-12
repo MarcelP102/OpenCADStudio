@@ -3952,6 +3952,13 @@ impl OpenCADStudio {
                 Task::batch([switch, layout])
             }
 
+            Message::DocTabsAboveDocks(on) => {
+                self.doc_tab_menu = false;
+                self.file_tabs_above_docks = on;
+                self.save_config();
+                Task::none()
+            }
+
             Message::DocTabMenu(open, pick) => {
                 self.doc_tab_menu = open;
                 self.doc_tab_layouts = None;

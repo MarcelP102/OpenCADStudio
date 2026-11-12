@@ -9418,3 +9418,6 @@ mleader-style =
     .available-linetypes = ປະເພດເສັ້ນທີ່ມີ
     .program-linetypes = ປະເພດເສັ້ນຂອງໂປຣແກຣມ
     .already-loaded = { $name } (ໂຫຼດແລ້ວ)
+
+doc-tabs =
+    .above-palettes = ແຖບຢູ່ເທິງແຜງ

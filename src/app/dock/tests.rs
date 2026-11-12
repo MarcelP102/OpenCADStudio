@@ -2916,3 +2916,59 @@ fn strip_drops_hit_the_same_cells_on_both_sides() {
         );
     }
 }
+
+#[test]
+fn the_docks_run_up_to_the_ribbon_beside_the_drawing_tabs() {
+    with_stack(|| {
+        use crate::ui::style::palette_metrics as pm;
+        let mut app = dock_app();
+        let _ = app.update(Message::TabNew);
+        let i = app.active_tab;
+        app.tabs[i].scene.selection.borrow_mut().view.vp_size = (1200.0, 700.0);
+        let name = app.tabs[i].tab_display_name();
+        let (left, right) = app.dock_edge_insets();
+        assert!(left > 0.0 && right > 0.0);
+        // By default the tabs sit over the drawing, between the docks, and
+        // the docks are a tab bar taller than the drawing.
+        assert!(!app.file_tabs_above_docks);
+        // The viewport's height is measured whenever the view lays out.
+        let vp_h = |app: &OpenCADStudio| {
+            app.tabs[app.active_tab]
+                .scene
+                .selection
+                .borrow()
+                .view
+                .vp_size
+                .1
+        };
+        assert_eq!(app.dock_workspace_size().1, vp_h(&app) + pm::TAB_BAR_H);
+        let tab = find_in_view(&app, &name);
+        assert!(tab.x > left && tab.x < VIEW_SIZE.width - right, "{tab:?}");
+        let title = find_in_view(&app, "PROPERTIES");
+        assert!(title.y < tab.y + pm::TAB_BAR_H, "{title:?} beside {tab:?}");
+        // Above the palettes: the bar runs across the window, over the docks.
+        let _ = app.update(Message::DocTabsAboveDocks(true));
+        assert!(app.file_tabs_above_docks);
+        assert_eq!(app.dock_workspace_size().1, vp_h(&app));
+        let tab_above = find_in_view(&app, &name);
+        let title = find_in_view(&app, "PROPERTIES");
+        assert!(tab_above.x < tab.x, "{tab_above:?}");
+        assert!(
+            title.y > tab_above.y + pm::TAB_H / 2.0,
+            "{title:?} under {tab_above:?}"
+        );
+    });
+}
+
+#[test]
+fn file_tabs_above_docks_is_saved_and_off_by_default() {
+    let cfg: crate::app::config::AppConfig = serde_json::from_str("{}").unwrap();
+    assert!(!cfg.file_tabs_above_docks);
+    let cfg = crate::app::config::AppConfig {
+        file_tabs_above_docks: true,
+        ..Default::default()
+    };
+    let back: crate::app::config::AppConfig =
+        serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
+    assert!(back.file_tabs_above_docks);
+}

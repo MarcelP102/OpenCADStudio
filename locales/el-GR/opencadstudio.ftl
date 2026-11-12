@@ -9427,3 +9427,6 @@ mleader-style =
     .available-linetypes = Διαθέσιμοι τύποι γραμμής
     .program-linetypes = Τύποι γραμμής του προγράμματος
     .already-loaded = { $name } (φορτωμένος)
+
+doc-tabs =
+    .above-palettes = Καρτέλες πάνω από τις παλέτες

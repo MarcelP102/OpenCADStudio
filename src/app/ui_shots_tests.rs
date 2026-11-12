@@ -228,6 +228,10 @@ fn ui_shots() {
             app.hovered_doc_tab = Some(i);
             app.doc_tab_layouts = Some(i);
             shot(&mut app, &dir, "tabs-layouts", None);
+            app.doc_tab_layouts = None;
+            app.hovered_doc_tab = None;
+            let _ = app.update(Message::DocTabsAboveDocks(true));
+            shot(&mut app, &dir, "tabs-above", None);
         }
     });
 }

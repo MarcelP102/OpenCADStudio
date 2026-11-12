@@ -9424,3 +9424,6 @@ mleader-style =
     .available-linetypes = Käytettävissä olevat viivatyypit
     .program-linetypes = Ohjelman viivatyypit
     .already-loaded = { $name } (ladattu)
+
+doc-tabs =
+    .above-palettes = Välilehdet palettien yläpuolella

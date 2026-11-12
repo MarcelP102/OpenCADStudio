@@ -9415,3 +9415,6 @@ mleader-style =
     .available-linetypes = उपलब्ध रेखा प्रकार
     .program-linetypes = प्रोग्राम के रेखा प्रकार
     .already-loaded = { $name } (लोड किया गया)
+
+doc-tabs =
+    .above-palettes = पैलेट के ऊपर टैब

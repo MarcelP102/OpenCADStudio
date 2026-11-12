@@ -9430,3 +9430,6 @@ mleader-style =
     .available-linetypes = أنواع الخطوط المتاحة
     .program-linetypes = أنواع خطوط البرنامج
     .already-loaded = { $name } (محمّل)
+
+doc-tabs =
+    .above-palettes = علامات التبويب فوق اللوحات

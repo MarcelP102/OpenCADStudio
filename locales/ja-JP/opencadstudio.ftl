@@ -9405,3 +9405,6 @@ mleader-style =
     .available-linetypes = 使用可能な線種
     .program-linetypes = プログラムの線種
     .already-loaded = { $name }（ロード済み）
+
+doc-tabs =
+    .above-palettes = パレットの上にタブ

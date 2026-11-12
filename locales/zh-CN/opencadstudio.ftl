@@ -9400,3 +9400,6 @@ mleader-style =
     .available-linetypes = 可用线型
     .program-linetypes = 程序线型
     .already-loaded = { $name }（已加载）
+
+doc-tabs =
+    .above-palettes = 选项卡位于选项板上方

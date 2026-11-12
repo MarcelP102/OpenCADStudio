@@ -9405,3 +9405,6 @@ mleader-style =
     .available-linetypes = Elérhető vonaltípusok
     .program-linetypes = A program vonaltípusai
     .already-loaded = { $name } (betöltve)
+
+doc-tabs =
+    .above-palettes = Lapok a paletták felett
