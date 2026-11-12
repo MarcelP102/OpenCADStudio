@@ -3321,6 +3321,8 @@ bg={bg_ms:.1}ms n={view_count}"
                     &self.tabs,
                     self.active_tab,
                     self.hovered_doc_tab,
+                    self.doc_tab_menu,
+                    self.doc_tab_layouts,
                 ));
             }
             col.push(center_stack)
@@ -4050,62 +4052,34 @@ fn doc_tab_context_menu(
     has_current_path: bool,
     has_other_drawings: bool,
 ) -> Element<'static, Message> {
-    const MENU_W: f32 = 210.0;
-
-    let item = |label: &'static str, msg: Option<Message>| -> Element<'static, Message> {
-        let enabled = msg.is_some();
-
-        let content = container(text(t!(label)).size(12))
-            .padding([4, 12])
-            .width(Fill)
-            .style(move |theme: &Theme| {
-                let palette = theme.palette();
-
-                container::Style {
-                    text_color: Some(if enabled {
-                        palette.background.base.text
-                    } else {
-                        palette.background.base.text.scale_alpha(0.42)
-                    }),
-                    ..Default::default()
-                }
-            });
-
-        if let Some(msg) = msg {
-            mouse_area(content)
-                .on_press(msg)
-                .interaction(iced::mouse::Interaction::Pointer)
-                .into()
-        } else {
-            content.into()
-        }
-    };
-
-    let mut menu = column![
-        item("Save All", Some(Message::DocTabSaveAll)),
-        item("Close All", Some(Message::DocTabCloseAll)),
-        item(
-            "Close All Other Drawings",
-            has_other_drawings.then_some(Message::DocTabCloseOthers(tab_idx)),
-        ),
+    use crate::ui::palette_menu::Item;
+    let mut items = vec![
+        Item::new(t!("Save All"), Message::DocTabSaveAll),
+        Item::new(t!("Close All"), Message::DocTabCloseAll),
+        Item::new(
+            t!("Close All Other Drawings"),
+            Message::DocTabCloseOthers(tab_idx),
+        )
+        .enabled(has_other_drawings),
     ];
     if cfg!(not(target_arch = "wasm32")) {
-        menu = menu
-            .push(item(
-                "Copy Full File Path",
-                has_current_path.then_some(Message::DocTabCopyFullPath(tab_idx)),
-            ))
-            .push(item(
-                "Open File Location",
-                has_current_path.then_some(Message::DocTabOpenFileLocation(tab_idx)),
-            ));
+        items.push(Item::Separator);
+        items.push(
+            Item::new(
+                t!("Copy Full File Path"),
+                Message::DocTabCopyFullPath(tab_idx),
+            )
+            .enabled(has_current_path),
+        );
+        items.push(
+            Item::new(
+                t!("Open File Location"),
+                Message::DocTabOpenFileLocation(tab_idx),
+            )
+            .enabled(has_current_path),
+        );
     }
-
-    container(menu.spacing(0).width(MENU_W))
-        .style(container::bordered_box)
-        .padding([4, 0])
-        .width(iced::Length::Fixed(MENU_W))
-        .into()
+    crate::ui::palette_menu::menu(items, crate::ui::style::palette_metrics::MENU_W)
 }
 
 impl OpenCADStudio {
@@ -4130,13 +4104,103 @@ impl OpenCADStudio {
     }
 }
 
+/// The ☰ menu of the drawing-tab bar (also the bar's right-click menu):
+/// Start, the open drawings (a check on the current one, a dot on unsaved
+/// ones), then New, Open, Save All and Close All.
+fn doc_tab_menu_items(
+    tabs: &[DocumentTab],
+    active_tab: usize,
+) -> Vec<crate::ui::palette_menu::Item> {
+    use crate::ui::palette_menu::{Item, Mark};
+    let mut items = Vec::new();
+    if let Some(start) = tabs.iter().position(|tab| tab.is_start) {
+        items.push(
+            Item::new(t!("Start"), Message::DocTabMenu(false, Some(start)))
+                .mark(Mark::Check(start == active_tab)),
+        );
+    }
+    let drawings: Vec<_> = tabs
+        .iter()
+        .enumerate()
+        .filter(|(_, tab)| !tab.is_start)
+        .collect();
+    if !drawings.is_empty() {
+        items.push(Item::Separator);
+    }
+    for (idx, tab) in drawings {
+        items.push(
+            Item::new(
+                crate::ui::text_util::elide(&tab.tab_display_name(), DOC_TAB_NAME_CHARS),
+                Message::DocTabMenu(false, Some(idx)),
+            )
+            .mark(Mark::Check(idx == active_tab))
+            .dirty(tab.dirty),
+        );
+    }
+    items.push(Item::Separator);
+    items.push(Item::new(t!("New"), Message::TabNew));
+    items.push(Item::new(t!("Open"), Message::OpenFile));
+    items.push(Item::new(t!("Save All"), Message::DocTabSaveAll));
+    items.push(Item::new(t!("Close All"), Message::DocTabCloseAll));
+    items
+}
+
+/// The layouts of drawing `idx` shown under its hovered tab: Model and its
+/// paper layouts, a check on the current one; a pick switches drawing and
+/// layout.
+fn doc_tab_layout_items(
+    tab: &DocumentTab,
+    idx: usize,
+    active: bool,
+) -> Vec<crate::ui::palette_menu::Item> {
+    use crate::ui::palette_menu::{Item, Mark};
+    tab.scene
+        .cached_layout_names()
+        .iter()
+        .map(|name| {
+            let label = if name == "Model" {
+                t!("Model").into_owned()
+            } else {
+                name.clone()
+            };
+            Item::new(label, Message::DocTabLayout(idx, name.clone()))
+                .mark(Mark::Check(active && *name == tab.scene.current_layout))
+        })
+        .collect()
+}
+
+/// Characters of a drawing's name shown on its tab.
+const DOC_TAB_NAME_CHARS: usize = 24;
+
+/// A flat square button of the tab bar (+, ☰, a tab's ×): lit by
+/// `chrome::hover` while hovered.
+fn tab_bar_button_style(theme: &Theme, status: button::Status) -> button::Style {
+    use crate::ui::style::chrome;
+    button::Style {
+        background: matches!(status, button::Status::Hovered | button::Status::Pressed)
+            .then(|| Background::Color(chrome::hover(theme))),
+        text_color: chrome::text(theme),
+        ..Default::default()
+    }
+}
+
+/// The drawing-tab bar (variant C of the prototype): 24 px on `strip`,
+/// tabs filling it — the inactive ones `tab_inactive`, the active one
+/// `palette_body` joined to the 1 px `palette_body` line under the bar —
+/// 1 px apart, a + after the last tab and a ☰ menu at the far right. A tab
+/// shows a dot before its name while unsaved and always its ×. The Start
+/// page lives in the ☰ menu, which a right-click on the empty bar opens at
+/// the pointer too. Resting on a tab lists its drawing's layouts. Tabs
+/// keep their drag-to-reorder; the row wraps only when the tabs overflow.
 pub(super) fn doc_tab_bar<'a>(
     tabs: &'a [DocumentTab],
     active_tab: usize,
     hovered_tab: Option<usize>,
+    menu_open: bool,
+    layouts_open: Option<usize>,
 ) -> Element<'a, Message> {
-    // Document tabs live in a flex-wrap flow so they spill onto lower rows when
-    // there are more tabs than the width can hold on one line.
+    use crate::ui::palette_menu;
+    use crate::ui::style::{chrome, palette_metrics as pm, text as ui_text};
     let mut items: Vec<Element<'_, Message>> = Vec::new();
     let drag_targets: std::sync::Arc<[usize]> = tabs
         .iter()
@@ -4146,138 +4210,118 @@ pub(super) fn doc_tab_bar<'a>(
         .into();
 
     for (idx, tab) in tabs.iter().enumerate() {
+        if tab.is_start {
+            continue;
+        }
         let is_active = idx == active_tab;
         let is_hovered = hovered_tab == Some(idx);
-        let name = crate::ui::text_util::elide(&tab.tab_display_name(), 24);
-        let title_inner: Element<'_, Message> = if tab.dirty {
-            row![
-                crate::ui::icons::themed_warning(crate::ui::icons::DIRTY_DOT, 14.0),
-                text(name).size(12),
-            ]
-            .spacing(5)
-            .align_y(iced::Center)
-            .into()
+        let tab_text: fn(&Theme) -> Color = if is_active {
+            chrome::strong
         } else {
-            text(name).size(12).into()
+            chrome::tab_text
         };
-
-        let title_btn = button(title_inner)
+        let name = crate::ui::text_util::elide(&tab.tab_display_name(), DOC_TAB_NAME_CHARS);
+        let mut title = row![].spacing(pm::TAB_INNER_GAP).align_y(iced::Center);
+        if tab.dirty {
+            title = title.push(palette_menu::dot(pm::DIRTY_DOT, tab_text));
+        }
+        title = title.push(
+            text(name)
+                .size(ui_text::UI)
+                .line_height(ui_text::line())
+                .wrapping(iced::widget::text::Wrapping::None),
+        );
+        let title_btn = button(title)
             .on_press(Message::TabSwitch(idx))
             .height(Fill)
-            .padding([5, 14])
-            .style(move |theme: &Theme, _status| {
-                let palette = theme.palette();
-                button::Style {
-                    background: None,
-                    text_color: if is_active {
-                        palette.primary.weak.text
-                    } else if is_hovered {
-                        palette.background.weak.text
-                    } else {
-                        crate::ui::style::readable::muted_text(theme)
-                    },
-                    border: Border::default(),
-                    shadow: iced::Shadow::default(),
-                    snap: false,
-                }
+            .padding(iced::Padding::ZERO.left(pm::TAB_PAD_X))
+            .style(move |theme: &Theme, _status| button::Style {
+                text_color: tab_text(theme),
+                ..Default::default()
             });
-        let title_btn: Element<'_, Message> = if tab.is_start {
-            title_btn.into()
+        let title_btn: Element<'_, Message> =
+            crate::ui::wrap_bar::ReorderTab::document(idx, drag_targets.clone(), title_btn).into();
+        let close: fn(&Theme) -> Color = if is_active {
+            chrome::text
         } else {
-            crate::ui::wrap_bar::ReorderTab::document(idx, drag_targets.clone(), title_btn).into()
+            chrome::muted
         };
-
-        // Start tab is fixed — no close button. Every other tab gets a close.
-        let row_inner: Row<'_, Message> = if tab.is_start {
-            row![title_btn].spacing(0).align_y(iced::Center)
-        } else {
-            let close_btn = button(text("×").size(12))
-                .on_press(Message::TabClose(tab.id))
-                .height(Fill)
-                .padding([5, 9])
-                .style(move |theme: &Theme, status| {
-                    let palette = theme.palette();
-                    button::Style {
-                        background: matches!(
-                            status,
-                            button::Status::Hovered | button::Status::Pressed
-                        )
-                        .then_some(Background::Color(palette.warning.weak.color)),
-                        text_color: if matches!(
-                            status,
-                            button::Status::Hovered | button::Status::Pressed
-                        ) {
-                            palette.warning.weak.text
-                        } else if is_active {
-                            palette.primary.weak.text
-                        } else if is_hovered {
-                            palette.background.weak.text
-                        } else {
-                            crate::ui::style::readable::muted_text(theme)
-                        },
-                        border: Border::default(),
-                        shadow: iced::Shadow::default(),
-                        snap: false,
-                    }
-                });
-            row![title_btn, close_btn]
-                .spacing(0)
-                .height(Fill)
-                .align_y(iced::Center)
-        };
-
-        let tab_container = container(row_inner)
-            .height(iced::Length::Fixed(28.0))
-            .style(move |theme: &Theme| {
-                let palette = theme.palette();
-                let background = if is_active {
-                    palette.primary.weak.color
-                } else if is_hovered {
-                    palette.background.weak.color
-                } else {
-                    palette.background.base.color
-                };
-                container::Style {
-                    background: Some(Background::Color(background)),
-                    border: Border {
-                        color: if is_active {
-                            palette.primary.base.color
-                        } else {
-                            palette.background.neutral.color
-                        },
-                        width: 1.0,
-                        radius: 0.0.into(),
-                    },
-                    ..Default::default()
-                }
-            });
-
-        let tab_element: Element<'_, Message> = if tab.is_start {
-            tab_container.into()
-        } else {
-            let has_current_path = tab.current_path.is_some();
-            let has_other_drawings = drag_targets.len() > 1;
-            let tab_target: Element<'_, Message> = if let Some(path) = &tab.current_path {
-                iced::widget::tooltip(
-                    tab_container,
-                    container(text(path.to_string_lossy().into_owned()).size(11))
-                        .style(container::bordered_box)
-                        .padding([4, 8]),
-                    iced::widget::tooltip::Position::Bottom,
-                )
-                .gap(4)
-                .into()
-            } else {
-                tab_container.into()
-            };
-            crate::ui::wrap_bar::PosReport::owned(
-                format!("DOC_TAB:{idx}"),
-                ContextMenu::new(tab_target, move || {
-                    doc_tab_context_menu(idx, has_current_path, has_other_drawings)
-                }),
+        let close_btn = button(
+            container(
+                text("×")
+                    .size(ui_text::UI)
+                    .line_height(ui_text::line())
+                    .style(move |theme: &Theme| iced::widget::text::Style {
+                        color: Some(close(theme)),
+                    }),
             )
+            .center(Fill),
+        )
+        .on_press(Message::TabClose(tab.id))
+        .width(iced::Length::Fixed(pm::TAB_CLOSE))
+        .height(iced::Length::Fixed(pm::TAB_CLOSE))
+        .padding(0)
+        .style(tab_bar_button_style);
+        let tab_container = container(
+            row![
+                title_btn,
+                Space::new().width(pm::TAB_INNER_GAP),
+                close_btn,
+                Space::new().width(pm::TOOL_GAP)
+            ]
+            .height(Fill)
+            .align_y(iced::Center),
+        )
+        .height(iced::Length::Fixed(pm::TAB_H))
+        .style(move |theme: &Theme| container::Style {
+            background: Some(Background::Color(if is_active {
+                chrome::palette_body(theme)
+            } else if is_hovered {
+                chrome::open_panel(theme)
+            } else {
+                chrome::tab_inactive(theme)
+            })),
+            ..Default::default()
+        });
+
+        let has_current_path = tab.current_path.is_some();
+        let has_other_drawings = drag_targets.len() > 1;
+        // Resting on the tab lists its layouts; the path shows there as
+        // the list's title would, so the tab carries no tooltip of its own.
+        let tab_target: Element<'_, Message> = if layouts_open == Some(idx) {
+            iced_aw::DropDown::new(
+                tab_container,
+                palette_menu::menu(doc_tab_layout_items(tab, idx, is_active), pm::MENU_W),
+                true,
+            )
+            .alignment(iced_aw::drop_down::Alignment::Bottom)
+            .width(pm::MENU_W)
+            .on_dismiss(Message::DocTabLayoutsClose)
             .into()
+        } else if let Some(path) = &tab.current_path {
+            iced::widget::tooltip(
+                tab_container,
+                container(
+                    text(path.to_string_lossy().into_owned())
+                        .size(ui_text::UI)
+                        .line_height(ui_text::line()),
+                )
+                .style(palette_menu::frame_style)
+                .padding([pm::TOOL_GAP, pm::MENU_PAD_X]),
+                iced::widget::tooltip::Position::Bottom,
+            )
+            .gap(pm::TOOL_GAP)
+            .into()
+        } else {
+            tab_container.into()
         };
+        let tab_element: Element<'_, Message> = crate::ui::wrap_bar::PosReport::owned(
+            format!("DOC_TAB:{idx}"),
+            ContextMenu::new(tab_target, move || {
+                doc_tab_context_menu(idx, has_current_path, has_other_drawings)
+            }),
+        )
+        .into();
         items.push(
             mouse_area(tab_element)
                 .on_enter(Message::DocTabHover(Some(idx)))
@@ -4286,59 +4330,72 @@ pub(super) fn doc_tab_bar<'a>(
         );
     }
 
-    let new_btn = button(text("+").size(14))
-        .on_press(Message::TabNew)
-        .height(iced::Length::Fixed(28.0))
-        .padding([4, 8])
-        .style(|theme: &Theme, status| {
-            let palette = theme.palette();
-            let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-            button::Style {
-                background: Some(Background::Color(if hovered {
-                    palette.background.weak.color
-                } else {
-                    palette.background.base.color
-                })),
-                text_color: palette.background.base.text,
-                border: Border {
-                    color: palette.background.neutral.color,
-                    width: 1.0,
-                    radius: 3.0.into(),
-                },
-                shadow: iced::Shadow::default(),
-                snap: false,
-            }
-        });
-
-    items.push(
-        container(new_btn)
-            .padding(iced::Padding {
-                top: 0.0,
-                right: 0.0,
-                bottom: 0.0,
-                left: 2.0,
-            })
-            .into(),
-    );
-
-    container(
-        Row::with_children(items)
-            .spacing(0.0)
-            .align_y(iced::Center)
-            .wrap()
-            .vertical_spacing(2.0),
+    let new_btn = button(
+        container(crate::ui::icons::tinted(
+            crate::ui::icons::PLUS,
+            pm::STRIP_PLUS_ICON,
+            chrome::tab_text,
+        ))
+        .center(Fill),
     )
-    .style(|theme: &Theme| container::Style {
-        background: Some(Background::Color(theme.palette().background.base.color)),
-        border: Border {
-            color: theme.palette().background.neutral.color,
-            width: 1.0,
-            radius: 0.0.into(),
-        },
-        ..Default::default()
-    })
-    .width(Fill)
-    .padding([2, 2])
+    .on_press(Message::TabNew)
+    .width(iced::Length::Fixed(pm::TAB_BUTTON_W))
+    .height(iced::Length::Fixed(pm::TAB_H))
+    .padding(0)
+    .style(tab_bar_button_style);
+    items.push(new_btn.into());
+
+    let menu_btn = button(
+        container(crate::ui::icons::tinted(
+            crate::ui::icons::MENU,
+            pm::TITLE_ICON,
+            chrome::tab_text,
+        ))
+        .center(Fill),
+    )
+    .on_press(Message::DocTabMenu(!menu_open, None))
+    .width(iced::Length::Fixed(pm::TAB_BUTTON_W))
+    .height(iced::Length::Fixed(pm::TAB_H))
+    .padding(0)
+    .style(tab_bar_button_style);
+    let menu_btn = iced_aw::DropDown::new(
+        menu_btn,
+        palette_menu::menu(doc_tab_menu_items(tabs, active_tab), pm::MENU_W),
+        menu_open,
+    )
+    .alignment(iced_aw::drop_down::Alignment::Bottom)
+    .width(pm::MENU_W)
+    .on_dismiss(Message::DocTabMenu(false, None));
+
+    let tabs_row = Row::with_children(items)
+        .spacing(pm::TAB_GAP)
+        .align_y(iced::Center)
+        .wrap()
+        .vertical_spacing(pm::TAB_GAP);
+    // The empty part of the bar, after the tabs, opens the same menu at the
+    // pointer. The tabs take their room first (wrapping only when they
+    // overflow); the empty part fills what is left of the row.
+    let empty = ContextMenu::new(
+        container(Space::new())
+            .width(Fill)
+            .height(iced::Length::Fixed(pm::TAB_H)),
+        move || palette_menu::menu(doc_tab_menu_items(tabs, active_tab), pm::MENU_W),
+    );
+    let bar = row![tabs_row, empty, menu_btn].align_y(iced::alignment::Vertical::Top);
+    column![
+        container(bar)
+            .width(Fill)
+            .style(|theme: &Theme| container::Style {
+                background: Some(Background::Color(chrome::strip(theme))),
+                ..Default::default()
+            }),
+        container(Space::new().width(Fill).height(pm::LINE)).style(|theme: &Theme| {
+            container::Style {
+                background: Some(Background::Color(chrome::palette_body(theme))),
+                ..Default::default()
+            }
+        }),
+    ]
     .into()
 }
 

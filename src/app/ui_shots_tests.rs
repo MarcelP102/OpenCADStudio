@@ -92,6 +92,18 @@ fn shot(app: &mut OpenCADStudio, dir: &std::path::Path, name: &str, cursor: Opti
                 }
             }
             let mut ui = UserInterface::build(app.view_main(), SIZE, cache, &mut renderer);
+            // Overlays (dropdowns, menus) are laid out by an update.
+            let mut ignored: Vec<Message> = Vec::new();
+            let _ = ui.update(
+                &window::Headless,
+                &shell::Waker::noop(),
+                &[iced::Event::Window(iced::window::Event::RedrawRequested(
+                    std::time::Instant::now(),
+                ))],
+                cursor,
+                &mut renderer,
+                &mut ignored,
+            );
             let base = iced::theme::Base::base(&theme);
             ui.draw(
                 &mut renderer,
@@ -205,9 +217,17 @@ fn ui_shots() {
         }
         if wanted("tabs") {
             let mut app = app();
-            app.automation_op(r#"{"op":"new"}"#);
-            app.automation_op(r#"{"op":"new"}"#);
+            let _ = app.update(Message::TabNew);
+            let _ = app.update(Message::TabNew);
+            let i = app.active_tab;
+            app.tabs[i].dirty = true;
             shot(&mut app, &dir, "tabs", None);
+            app.doc_tab_menu = true;
+            shot(&mut app, &dir, "tabs-menu", None);
+            app.doc_tab_menu = false;
+            app.hovered_doc_tab = Some(i);
+            app.doc_tab_layouts = Some(i);
+            shot(&mut app, &dir, "tabs-layouts", None);
         }
     });
 }

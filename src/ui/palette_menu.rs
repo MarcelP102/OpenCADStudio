@@ -62,6 +62,16 @@ impl Item {
         self
     }
 
+    /// The item greyed out and inert unless `on`.
+    pub fn enabled(mut self, on: bool) -> Self {
+        if let Item::Action { on_press, .. } = &mut self {
+            if !on {
+                *on_press = None;
+            }
+        }
+        self
+    }
+
     /// The item with a dirty dot after its label.
     pub fn dirty(mut self, on: bool) -> Self {
         if let Item::Action { dirty, .. } = &mut self {

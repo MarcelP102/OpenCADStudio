@@ -770,6 +770,12 @@ pub(super) struct OpenCADStudio {
     tabs: Vec<DocumentTab>,
     active_tab: usize,
     hovered_doc_tab: Option<usize>,
+    /// The drawing-tab bar's ☰ menu is open.
+    doc_tab_menu: bool,
+    /// The tab whose layouts list is open.
+    doc_tab_layouts: Option<usize>,
+    /// Bumped on every tab hover change, so a stale rest is ignored.
+    doc_tab_hover_gen: u64,
     tab_counter: usize,
     ribbon: Ribbon,
     /// Recently opened files, newest first — backs the Start page panel.
@@ -4095,6 +4101,16 @@ pub enum Message {
     TabSwitch(usize),
     /// Drawing tab currently under the pointer; controls integrated close affordance.
     DocTabHover(Option<usize>),
+    /// Open or close the tab bar's ☰ menu; with a tab index, also switch to
+    /// that tab (a pick from the menu).
+    DocTabMenu(bool, Option<usize>),
+    /// The pointer has rested on tab `usize` (hover generation `u64`): list
+    /// its layouts if it is still there.
+    DocTabLayoutsSettled(usize, u64),
+    /// Close a tab's layouts list.
+    DocTabLayoutsClose,
+    /// Switch to drawing tab `usize` and its layout `String`.
+    DocTabLayout(usize, String),
     /// Move a drawing tab before/after another drawing tab.
     TabReorder {
         from: usize,
@@ -6250,6 +6266,9 @@ impl OpenCADStudio {
             tabs: vec![start_tab],
             active_tab: 0,
             hovered_doc_tab: None,
+            doc_tab_menu: false,
+            doc_tab_layouts: None,
+            doc_tab_hover_gen: 0,
             tab_counter: 0,
             ribbon: Ribbon::new(),
             // Populated from the consolidated config after construction

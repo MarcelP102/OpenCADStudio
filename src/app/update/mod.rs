@@ -112,6 +112,27 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
+/// Resolves once the pointer has rested on a drawing tab long enough to
+/// list its layouts (a sleeping helper thread; the web build has none and
+/// resolves at once).
+fn doc_tab_rest() -> impl std::future::Future<Output = ()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    let rx = {
+        let (tx, rx) = iced::futures::channel::oneshot::channel::<()>();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(
+                crate::ui::style::palette_metrics::TAB_HOVER_MS,
+            ));
+            let _ = tx.send(());
+        });
+        rx
+    };
+    async move {
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = rx.await;
+    }
+}
+
 fn reorder_insertion_index(from: usize, to: usize, after: bool, len: usize) -> Option<usize> {
     if from >= len || to >= len || from == to {
         return None;
@@ -3787,6 +3808,7 @@ impl OpenCADStudio {
             }
 
             Message::TabSwitch(idx) => {
+                self.doc_tab_layouts = None;
                 if idx != self.active_tab {
                     self.close_table_cell_editor();
                 }
@@ -3874,8 +3896,71 @@ impl OpenCADStudio {
             }
 
             Message::DocTabHover(index) => {
-                self.hovered_doc_tab = index.filter(|&idx| idx < self.tabs.len());
+                let index = index.filter(|&idx| idx < self.tabs.len());
+                if index == self.hovered_doc_tab {
+                    return Task::none();
+                }
+                self.hovered_doc_tab = index;
+                self.doc_tab_hover_gen = self.doc_tab_hover_gen.wrapping_add(1);
+                // Another tab's rest closes the open list; leaving for the
+                // list itself keeps it.
+                if index.is_some() && index != self.doc_tab_layouts {
+                    self.doc_tab_layouts = None;
+                }
+                match index {
+                    // Not while a menu is open.
+                    Some(idx) if !self.doc_tab_menu => {
+                        let gen = self.doc_tab_hover_gen;
+                        Task::perform(doc_tab_rest(), move |_| {
+                            Message::DocTabLayoutsSettled(idx, gen)
+                        })
+                    }
+                    _ => Task::none(),
+                }
+            }
+
+            Message::DocTabLayoutsSettled(idx, gen) => {
+                if gen == self.doc_tab_hover_gen
+                    && self.hovered_doc_tab == Some(idx)
+                    && !self.doc_tab_menu
+                {
+                    self.doc_tab_layouts = Some(idx);
+                }
                 Task::none()
+            }
+
+            Message::DocTabLayoutsClose => {
+                self.doc_tab_layouts = None;
+                Task::none()
+            }
+
+            Message::DocTabLayout(idx, layout) => {
+                self.doc_tab_layouts = None;
+                if idx >= self.tabs.len() {
+                    return Task::none();
+                }
+                let switch = if idx == self.active_tab {
+                    Task::none()
+                } else {
+                    self.update(Message::TabSwitch(idx))
+                };
+                let layout = if self.tabs[self.active_tab].scene.current_layout == layout {
+                    Task::none()
+                } else {
+                    self.update(Message::LayoutSwitch(layout))
+                };
+                Task::batch([switch, layout])
+            }
+
+            Message::DocTabMenu(open, pick) => {
+                self.doc_tab_menu = open;
+                self.doc_tab_layouts = None;
+                match pick {
+                    Some(idx) if idx < self.tabs.len() && idx != self.active_tab => {
+                        self.update(Message::TabSwitch(idx))
+                    }
+                    _ => Task::none(),
+                }
             }
 
             Message::TabReorder { from, to, after } => {
