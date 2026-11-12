@@ -46,7 +46,7 @@ const BOX_BUTTON: f32 = 18.0;
 const MAGNIFIER_W: f32 = 24.0;
 const MAGNIFIER_H: f32 = 20.0;
 /// Size of the typed text and the placeholder.
-const INPUT_SIZE: f32 = 11.5;
+const INPUT_SIZE: f32 = crate::ui::style::text::UI;
 /// The field over the magnifier button on a narrow window, and how far above
 /// the button it stands.
 const FIELD_W: f32 = 300.0;
@@ -1074,7 +1074,7 @@ impl Ribbon {
             list = list.push(
                 container(
                     text(group.title())
-                        .size(10.5)
+                        .size(crate::ui::style::text::UI_SMALL)
                         .style(|theme: &Theme| text::Style {
                             color: Some(chrome::muted(theme)),
                         }),

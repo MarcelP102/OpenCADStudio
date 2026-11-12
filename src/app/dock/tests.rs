@@ -1042,7 +1042,7 @@ fn docked_title_bar_double_click_floats_the_pallet_in_the_real_view() {
             iced::mouse::Button::Left,
         ));
         // The block palette's title text sits in its docked title bar.
-        let title = find_in_view(&app, "Blocks");
+        let title = find_in_view(&app, "BLOCKS");
         drive_view(
             &mut app,
             title,
@@ -1131,7 +1131,7 @@ fn hovering_a_strip_icon_reveals_an_auto_hiding_edge_in_the_real_view() {
         let mut app = dock_app();
         // Mirror the layout onto the left so the block palette's title marks
         // where the workspace starts, then auto-hide the right edge.
-        let title = find_in_view(&app, "Blocks");
+        let title = find_in_view(&app, "BLOCKS");
         let _ = app.on_dock(DockMsg::AutoCollapseToggle(PanelId::BlockPalette));
         assert!(!app.dock_edge_expanded(DockSide::Right));
         // The title bar text sits ~13 px below the workspace top; the strip's
@@ -2524,14 +2524,14 @@ fn authoring_clean_screen(open: &str, close: &str, manager: bool) {
     let (id, label, other, other_open) = if manager {
         (
             PanelId::ParametersManager,
-            "Parameters Manager",
+            "PARAMETERS MANAGER",
             PanelId::AuthoringPalettes,
             "BAUTHORPALETTE",
         )
     } else {
         (
             PanelId::AuthoringPalettes,
-            "Authoring Palettes",
+            "AUTHORING PALETTES",
             PanelId::ParametersManager,
             "PARAMETERS",
         )

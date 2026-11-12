@@ -23,8 +23,10 @@ use iced::{
 };
 
 // ── Row-height-derived constants ─────────────────────────────────────────
-const FONT_SZ: f32 = ROW_H * 0.42; // ≈11 px
-const COMBO_PAD_V: f32 = (ROW_H - FONT_SZ * 1.3 - 2.0) / 2.0; // fills combo to ROW_H
+const FONT_SZ: f32 = crate::ui::style::text::UI;
+/// Whole-pixel vertical padding so a combo / input with a `text::UI_LINE`
+/// line height and a 1 px border fills `ROW_H`.
+const COMBO_PAD_V: f32 = ((ROW_H - crate::ui::style::text::UI_LINE - 2.0) / 2.0).floor();
 const PATTERN_CARD_W: f32 = 158.0;
 const PATTERN_PREVIEW_H: f32 = 58.0;
 const PATTERN_PICKER_W: f32 = 348.0;
@@ -281,6 +283,7 @@ pub(crate) fn hatch_pattern_picker_content<'a>(
         .on_input(on_search)
         .on_submit(on_confirm)
         .size(FONT_SZ)
+        .line_height(crate::ui::style::text::line())
         .padding([5, 7])
         .width(Length::Fill);
 
@@ -297,9 +300,13 @@ pub(crate) fn hatch_pattern_picker_content<'a>(
             let card = button(
                 column![
                     preview,
-                    container(text(crate::ui::text_util::elide(&entry.name, 20)).size(FONT_SZ))
-                        .width(Length::Fill)
-                        .align_x(iced::Center),
+                    container(
+                        text(crate::ui::text_util::elide(&entry.name, 20))
+                            .size(FONT_SZ)
+                            .line_height(crate::ui::style::text::line())
+                    )
+                    .width(Length::Fill)
+                    .align_x(iced::Center),
                 ]
                 .spacing(3),
             )
@@ -340,6 +347,7 @@ pub(crate) fn hatch_pattern_picker_content<'a>(
         container(
             text(t!("No matching patterns"))
                 .size(FONT_SZ)
+                .line_height(crate::ui::style::text::line())
                 .style(hint_text_style),
         )
         .padding(12)
@@ -815,6 +823,7 @@ impl PropertiesPanel {
         let title_content: Element<'_, Message> = if self.selection_groups.is_empty() {
             text(crate::ui::text_util::elide(&self.title, 34))
                 .size(FONT_SZ)
+                .line_height(crate::ui::style::text::line())
                 .style(muted_text_style)
                 .into()
         } else {
@@ -825,6 +834,7 @@ impl PropertiesPanel {
                 Message::PropSelectionGroupChanged,
             )
             .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
             .padding([2, 6])
             .input_style(combo_input_style)
             .on_open(Message::PropColorPickerClose)
@@ -899,6 +909,7 @@ impl PropertiesPanel {
         let title = container(
             text(crate::ui::text_util::elide(&self.title, 34))
                 .size(FONT_SZ)
+                .line_height(crate::ui::style::text::line())
                 .style(muted_text_style),
         )
         .style(|theme: &Theme| {
@@ -1058,6 +1069,7 @@ impl PropertiesPanel {
                     .on_input(move |value| Message::PropBlockInput { key, value })
                     .on_submit(Message::PropBlockCommit(key))
                     .size(FONT_SZ)
+                    .line_height(crate::ui::style::text::line())
                     .style(text_input_style)
                     .padding([3, 6])
                     .width(Length::Fill);
@@ -1069,7 +1081,14 @@ impl PropertiesPanel {
                 if description.is_empty() {
                     row
                 } else {
-                    tooltip(row, text(description).size(FONT_SZ), tooltip::Position::Top).into()
+                    tooltip(
+                        row,
+                        text(description)
+                            .size(FONT_SZ)
+                            .line_height(crate::ui::style::text::line()),
+                        tooltip::Position::Top,
+                    )
+                    .into()
                 }
             }
             PropValue::BlockChoice {
@@ -1094,8 +1113,14 @@ impl PropertiesPanel {
                 .style(button::subtle)
                 .padding([2, 6]);
                 let head = container(
-                    row![text(shown).size(FONT_SZ).width(Length::Fill), caret]
-                        .align_y(iced::Center),
+                    row![
+                        text(shown)
+                            .size(FONT_SZ)
+                            .line_height(crate::ui::style::text::line())
+                            .width(Length::Fill),
+                        caret
+                    ]
+                    .align_y(iced::Center),
                 )
                 .style(container::bordered_box)
                 .padding([2, 6])
@@ -1110,11 +1135,15 @@ impl PropertiesPanel {
                 let mut rows = Vec::with_capacity(options.len());
                 for (index, option) in options.iter().enumerate() {
                     let msg = Message::PropBlockChoice { key, index };
-                    let btn = button(text(option.as_str()).size(FONT_SZ))
-                        .on_press(msg.clone())
-                        .style(button::subtle)
-                        .padding([2, 6])
-                        .width(Length::Fill);
+                    let btn = button(
+                        text(option.as_str())
+                            .size(FONT_SZ)
+                            .line_height(crate::ui::style::text::line()),
+                    )
+                    .on_press(msg.clone())
+                    .style(button::subtle)
+                    .padding([2, 6])
+                    .width(Length::Fill);
                     rows.push(DropdownRow::item(btn, option.clone(), msg));
                 }
                 let list = DropdownList::new(rows)
@@ -1136,7 +1165,14 @@ impl PropertiesPanel {
                 if description.is_empty() {
                     row
                 } else {
-                    tooltip(row, text(description).size(FONT_SZ), tooltip::Position::Top).into()
+                    tooltip(
+                        row,
+                        text(description)
+                            .size(FONT_SZ)
+                            .line_height(crate::ui::style::text::line()),
+                        tooltip::Position::Top,
+                    )
+                    .into()
                 }
             }
             PropValue::ColorChoice(color) => self.render_color_row(label, prop.field, *color, None),
@@ -1164,7 +1200,14 @@ impl PropertiesPanel {
                 if description.is_empty() {
                     row
                 } else {
-                    tooltip(row, text(description).size(FONT_SZ), tooltip::Position::Top).into()
+                    tooltip(
+                        row,
+                        text(description)
+                            .size(FONT_SZ)
+                            .line_height(crate::ui::style::text::line()),
+                        tooltip::Position::Top,
+                    )
+                    .into()
                 }
             }
             PropValue::EditChoice { value, options } => {
@@ -1227,6 +1270,7 @@ impl PropertiesPanel {
             Message::PropLayerChanged,
         )
         .size(FONT_SZ)
+        .line_height(crate::ui::style::text::line())
         .padding(Padding {
             top: COMBO_PAD_V,
             bottom: COMBO_PAD_V,
@@ -1370,6 +1414,7 @@ impl PropertiesPanel {
             |item: LwItem| Message::PropLwChanged(item.0),
         )
         .size(FONT_SZ)
+        .line_height(crate::ui::style::text::line())
         .padding(Padding {
             top: COMBO_PAD_V,
             bottom: COMBO_PAD_V,
@@ -1400,6 +1445,7 @@ impl PropertiesPanel {
             },
         )
         .size(FONT_SZ)
+        .line_height(crate::ui::style::text::line())
         .padding(Padding {
             top: COMBO_PAD_V,
             bottom: COMBO_PAD_V,
@@ -1421,6 +1467,7 @@ impl PropertiesPanel {
             |item: LwItem| Message::PropLwChanged(item.0),
         )
         .size(FONT_SZ)
+        .line_height(crate::ui::style::text::line())
         .padding(Padding {
             top: COMBO_PAD_V,
             bottom: COMBO_PAD_V,
@@ -1449,6 +1496,7 @@ impl PropertiesPanel {
             },
         )
         .size(FONT_SZ)
+        .line_height(crate::ui::style::text::line())
         .padding(Padding {
             top: COMBO_PAD_V,
             bottom: COMBO_PAD_V,
@@ -1483,6 +1531,7 @@ impl PropertiesPanel {
             |item: LinetypeItem| Message::PropLinetypeChanged(item.name),
         )
         .size(FONT_SZ)
+        .line_height(crate::ui::style::text::line())
         .padding(Padding {
             top: COMBO_PAD_V,
             bottom: COMBO_PAD_V,
@@ -1525,7 +1574,10 @@ impl PropertiesPanel {
         .on_press(Message::PropChoiceToggle { field, quick })
         .style(button::subtle)
         .padding([2, 6]);
-        let label_text = text(shown).size(FONT_SZ).width(Length::Fill);
+        let label_text = text(shown)
+            .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
+            .width(Length::Fill);
         let label_text = if varies {
             label_text.style(hint_text_style)
         } else {
@@ -1553,15 +1605,19 @@ impl PropertiesPanel {
                 field,
                 value: option.clone(),
             };
-            let btn = button(text(label.clone()).size(FONT_SZ))
-                .on_press(msg.clone())
-                .style(if is_current {
-                    button::secondary
-                } else {
-                    button::subtle
-                })
-                .padding([2, 6])
-                .width(Length::Fill);
+            let btn = button(
+                text(label.clone())
+                    .size(FONT_SZ)
+                    .line_height(crate::ui::style::text::line()),
+            )
+            .on_press(msg.clone())
+            .style(if is_current {
+                button::secondary
+            } else {
+                button::subtle
+            })
+            .padding([2, 6])
+            .width(Length::Fill);
             rows.push(DropdownRow::item(btn, label, msg));
         }
         let list = DropdownList::new(rows)
@@ -1608,6 +1664,7 @@ impl PropertiesPanel {
             .on_input(move |v| Message::PropGeomInput { field, value: v })
             .on_submit(Message::PropGeomCommit(field))
             .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
             .style(text_input_style)
             .padding([3, 6])
             .width(Length::Fill);
@@ -1637,6 +1694,7 @@ impl PropertiesPanel {
             .on_input(move |v| Message::PropGeomInput { field, value: v })
             .on_submit(Message::PropGeomCommit(field))
             .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
             .style(|theme: &Theme, status| text_input::Style {
                 // The wrapping container draws the border and background; keep
                 // the input transparent and borderless so field + caret read as
@@ -1730,11 +1788,15 @@ impl PropertiesPanel {
                 field,
                 value: value.clone(),
             };
-            let btn = button(text(opt.as_str()).size(FONT_SZ))
-                .on_press(msg.clone())
-                .style(button::subtle)
-                .padding([2, 6])
-                .width(Length::Fill);
+            let btn = button(
+                text(opt.as_str())
+                    .size(FONT_SZ)
+                    .line_height(crate::ui::style::text::line()),
+            )
+            .on_press(msg.clone())
+            .style(button::subtle)
+            .padding([2, 6])
+            .width(Length::Fill);
             if typed.is_some_and(|t| t.eq_ignore_ascii_case(opt.as_str())) {
                 initial_selected = Some(rows.len());
             }
@@ -1784,6 +1846,7 @@ impl PropertiesPanel {
             })
             .on_submit(Message::PropPluginParamCommit(name.to_string()))
             .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
             .style(text_input_style)
             .padding([3, 6])
             .width(Length::Fill);
@@ -1809,6 +1872,7 @@ impl PropertiesPanel {
             })
             .on_submit(Message::PropAttrCommit(tag.to_string()))
             .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
             .style(text_input_style)
             .padding([3, 6])
             .width(Length::Fill);
@@ -1851,6 +1915,7 @@ impl PropertiesPanel {
                 field: ParamField::Name,
             })
             .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
             .style(text_input_style)
             .padding([3, 6])
             .width(Length::FillPortion(3));
@@ -1874,6 +1939,7 @@ impl PropertiesPanel {
                 field: ParamField::Formula,
             })
             .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
             .style(text_input_style)
             .padding([3, 6])
             .width(Length::FillPortion(3));
@@ -1882,18 +1948,25 @@ impl PropertiesPanel {
             Ok(v) => (format!("{v:.4}"), false),
             Err(_) => ("—".to_string(), true),
         };
-        let value_label = container(text(value_text).size(FONT_SZ).style(move |theme: &Theme| {
-            iced::widget::text::Style {
-                color: is_error.then_some(theme.palette().danger.base.color),
-            }
-        }))
+        let value_label = container(
+            text(value_text)
+                .size(FONT_SZ)
+                .line_height(crate::ui::style::text::line())
+                .style(move |theme: &Theme| iced::widget::text::Style {
+                    color: is_error.then_some(theme.palette().danger.base.color),
+                }),
+        )
         .width(Length::FillPortion(2))
         .align_x(iced::Right);
 
-        let delete_btn = button(text("\u{2715}").size(FONT_SZ))
-            .on_press(Message::PropParamDelete(index))
-            .style(button::text)
-            .padding([2, 6]);
+        let delete_btn = button(
+            text("\u{2715}")
+                .size(FONT_SZ)
+                .line_height(crate::ui::style::text::line()),
+        )
+        .on_press(Message::PropParamDelete(index))
+        .style(button::text)
+        .padding([2, 6]);
 
         let active = name_active || formula_active;
         let bg = move |theme: &Theme| {
@@ -1918,7 +1991,9 @@ impl PropertiesPanel {
         if let Err(err) = resolved {
             tooltip(
                 content,
-                text(err.as_str()).size(FONT_SZ),
+                text(err.as_str())
+                    .size(FONT_SZ)
+                    .line_height(crate::ui::style::text::line()),
                 tooltip::Position::Top,
             )
             .gap(4.0)
@@ -1951,6 +2026,7 @@ impl PropertiesPanel {
             row![
                 text(crate::ui::text_util::elide(current, 16))
                     .size(FONT_SZ)
+                    .line_height(crate::ui::style::text::line())
                     .width(Length::Fill),
                 if self.hatch_pattern_picker_open && self.picker_here() {
                     crate::ui::icons::themed_arrow_up(FONT_SZ)
@@ -2021,31 +2097,36 @@ impl PropertiesPanel {
 /// A boolean toggle button row (for "Invisible" etc.).
 fn render_stepper_row<'a>(label: &'a str, display: &'a str) -> Element<'a, Message> {
     let arrow = |glyph: &'static str, delta: i8| {
-        button(text(glyph).size(FONT_SZ))
-            .on_press(Message::PropVertexStep(delta))
-            .padding([0, 6])
-            .style(|theme: &Theme, status| {
-                let palette = theme.palette();
-                let pair = match status {
-                    button::Status::Hovered | button::Status::Pressed => palette.background.weak,
-                    _ => palette.background.base,
-                };
-                button::Style {
-                    background: Some(Background::Color(pair.color)),
-                    border: Border {
-                        color: palette.background.neutral.color,
-                        width: 1.0,
-                        radius: 2.0.into(),
-                    },
-                    text_color: pair.text,
-                    ..Default::default()
-                }
-            })
+        button(
+            text(glyph)
+                .size(FONT_SZ)
+                .line_height(crate::ui::style::text::line()),
+        )
+        .on_press(Message::PropVertexStep(delta))
+        .padding([0, 6])
+        .style(|theme: &Theme, status| {
+            let palette = theme.palette();
+            let pair = match status {
+                button::Status::Hovered | button::Status::Pressed => palette.background.weak,
+                _ => palette.background.base,
+            };
+            button::Style {
+                background: Some(Background::Color(pair.color)),
+                border: Border {
+                    color: palette.background.neutral.color,
+                    width: 1.0,
+                    radius: 2.0.into(),
+                },
+                text_color: pair.text,
+                ..Default::default()
+            }
+        })
     };
     let widget = iced::widget::row![
         arrow("◀", -1),
         text(display)
             .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
             .width(Length::Fill)
             .align_x(iced::Center),
         arrow("▶", 1),
@@ -2061,11 +2142,14 @@ fn render_bool_row<'a>(label: &'a str, field: &'static str, value: bool) -> Elem
     } else {
         t!("No").into_owned()
     };
-    let btn = button(text(btn_label).size(FONT_SZ).style(move |theme: &Theme| {
-        iced::widget::text::Style {
-            color: value.then_some(theme.palette().warning.base.color),
-        }
-    }))
+    let btn = button(
+        text(btn_label)
+            .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
+            .style(move |theme: &Theme| iced::widget::text::Style {
+                color: value.then_some(theme.palette().warning.base.color),
+            }),
+    )
     .on_press(Message::PropBoolToggle(field))
     .style(move |theme: &Theme, status| {
         let palette = theme.palette();
@@ -2191,6 +2275,7 @@ fn render_group_row(
                 },
                 text(crate::ui::text_util::elide(base, 16))
                     .size(FONT_SZ)
+                    .line_height(crate::ui::style::text::line())
                     .style(muted_text_style),
             ]
             .spacing(4)
@@ -2251,10 +2336,14 @@ fn render_group_row(
 fn render_annotative_scale_row<'a>(label: &'a str, value: &'a str) -> Element<'a, Message> {
     let field = crate::ui::read_only::field(value, FONT_SZ, Length::Fill);
 
-    let manage = button(text("...").size(FONT_SZ))
-        .on_press(Message::AnnoObjectScaleOpen)
-        .style(button::secondary)
-        .padding([2, 7]);
+    let manage = button(
+        text("...")
+            .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line()),
+    )
+    .on_press(Message::AnnoObjectScaleOpen)
+    .style(button::secondary)
+    .padding([2, 7]);
 
     let controls = row![field, manage, iced::widget::space().width(10)]
         .spacing(2)
@@ -2265,10 +2354,14 @@ fn render_annotative_scale_row<'a>(label: &'a str, value: &'a str) -> Element<'a
 }
 fn render_hyperlink_row<'a>(label: &'a str, value: &'a str) -> Element<'a, Message> {
     let field = crate::ui::read_only::field(value, FONT_SZ, Length::Fill);
-    let manage = button(text("...").size(FONT_SZ))
-        .on_press(Message::PropHyperlinkOpen)
-        .style(button::secondary)
-        .padding([2, 7]);
+    let manage = button(
+        text("...")
+            .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line()),
+    )
+    .on_press(Message::PropHyperlinkOpen)
+    .style(button::secondary)
+    .padding([2, 7]);
     let controls = row![field, manage, iced::widget::space().width(10)]
         .spacing(2)
         .align_y(iced::Center)
@@ -2291,7 +2384,9 @@ fn render_ro_with_tooltip_row<'a>(
     let field = crate::ui::read_only::field(value, FONT_SZ, Length::Fill);
     let wrapped = tooltip(
         field,
-        text(tooltip_text).size(FONT_SZ),
+        text(tooltip_text)
+            .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line()),
         tooltip::Position::Top,
     )
     .gap(4.0)
@@ -2327,35 +2422,44 @@ fn render_entity_link_row<'a>(
     handles: Vec<Handle>,
     conflicting: bool,
 ) -> Element<'a, Message> {
-    let link = button(text(label).size(FONT_SZ).width(Length::Fill))
-        .on_press(Message::PropConstraintLinkClick(handles))
-        .style(move |theme: &Theme, status| {
-            let palette = theme.palette();
-            let pair = if conflicting {
-                palette.danger.weak
-            } else {
-                match status {
-                    button::Status::Hovered | button::Status::Pressed => palette.background.weak,
-                    _ => palette.background.base,
-                }
-            };
-            button::Style {
-                background: Some(Background::Color(pair.color)),
-                border: Border {
-                    color: palette.background.neutral.color,
-                    width: 1.0,
-                    radius: 2.0.into(),
-                },
-                text_color: pair.text,
-                ..Default::default()
+    let link = button(
+        text(label)
+            .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
+            .width(Length::Fill),
+    )
+    .on_press(Message::PropConstraintLinkClick(handles))
+    .style(move |theme: &Theme, status| {
+        let palette = theme.palette();
+        let pair = if conflicting {
+            palette.danger.weak
+        } else {
+            match status {
+                button::Status::Hovered | button::Status::Pressed => palette.background.weak,
+                _ => palette.background.base,
             }
-        })
-        .padding([3, 8])
-        .width(Length::Fill);
-    let delete = button(text("\u{2715}").size(FONT_SZ))
-        .on_press(Message::PropConstraintDelete(id))
-        .style(button::text)
-        .padding([2, 6]);
+        };
+        button::Style {
+            background: Some(Background::Color(pair.color)),
+            border: Border {
+                color: palette.background.neutral.color,
+                width: 1.0,
+                radius: 2.0.into(),
+            },
+            text_color: pair.text,
+            ..Default::default()
+        }
+    })
+    .padding([3, 8])
+    .width(Length::Fill);
+    let delete = button(
+        text("\u{2715}")
+            .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line()),
+    )
+    .on_press(Message::PropConstraintDelete(id))
+    .style(button::text)
+    .padding([2, 6]);
     container(row![link, delete].spacing(2).align_y(iced::Center))
         .width(Length::Fill)
         .into()
@@ -2370,8 +2474,12 @@ fn render_entity_link_row<'a>(
 fn render_param_add_row<'a>() -> Element<'a, Message> {
     let btn = button(
         row![
-            text("+").size(FONT_SZ),
-            text(t!("Add parameter").into_owned()).size(FONT_SZ)
+            text("+")
+                .size(FONT_SZ)
+                .line_height(crate::ui::style::text::line()),
+            text(t!("Add parameter").into_owned())
+                .size(FONT_SZ)
+                .line_height(crate::ui::style::text::line())
         ]
         .spacing(6)
         .align_y(iced::Center),
@@ -2394,7 +2502,9 @@ fn render_params_visibility_toggle_row<'a>(value: bool) -> Element<'a, Message> 
     let btn = button(
         row![
             crate::ui::icons::semantic(crate::ui::icons::layer_visible(value), 13.0),
-            text(btn_label).size(FONT_SZ),
+            text(btn_label)
+                .size(FONT_SZ)
+                .line_height(crate::ui::style::text::line()),
         ]
         .spacing(6)
         .align_y(iced::Center),
@@ -2425,6 +2535,7 @@ fn render_params_visibility_toggle_row<'a>(value: bool) -> Element<'a, Message> 
         row![
             text(t!("Values").into_owned())
                 .size(FONT_SZ)
+                .line_height(crate::ui::style::text::line())
                 .width(Length::Fill),
             btn
         ]
@@ -2450,23 +2561,29 @@ fn full_label_tooltip<'a>(
     if label.chars().count() <= max {
         return label_col.into();
     }
-    tooltip(label_col, text(label).size(FONT_SZ), tooltip::Position::Top)
-        .gap(4.0)
-        .padding(6.0)
-        .style(|theme: &Theme| {
-            let palette = theme.palette();
-            container::Style {
-                background: Some(Background::Color(palette.background.base.color)),
-                text_color: Some(palette.background.base.text),
-                border: Border {
-                    color: palette.background.neutral.color,
-                    width: 1.0,
-                    radius: 4.0.into(),
-                },
-                ..Default::default()
-            }
-        })
-        .into()
+    tooltip(
+        label_col,
+        text(label)
+            .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line()),
+        tooltip::Position::Top,
+    )
+    .gap(4.0)
+    .padding(6.0)
+    .style(|theme: &Theme| {
+        let palette = theme.palette();
+        container::Style {
+            background: Some(Background::Color(palette.background.base.color)),
+            text_color: Some(palette.background.base.text),
+            border: Border {
+                color: palette.background.neutral.color,
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            ..Default::default()
+        }
+    })
+    .into()
 }
 
 /// Build a label | widget property row.
@@ -2485,6 +2602,7 @@ fn prop_row_with_active<'a>(
     let label_col = container(
         text(crate::ui::text_util::elide(label, 18))
             .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
             .style(muted_text_style),
     )
     .style(move |theme: &Theme| container::Style {

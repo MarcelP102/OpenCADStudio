@@ -675,7 +675,7 @@ fn group_label<'a>(group: &MoreGroup) -> Element<'a, Message> {
     });
     row![
         text(t!(group.title).to_uppercase())
-            .size(9.5)
+            .size(crate::ui::style::text::UI_SMALL)
             .style(|theme: &Theme| text::Style {
                 color: Some(chrome::muted(theme)),
             }),
@@ -857,9 +857,12 @@ fn footer_bar<'a>(
     };
     // The title and its chevron in the footer's text colour.
     let title = button(
-        row![text(t!(panel.title())).size(11.5), icons::dropup_arrow()]
-            .spacing(4)
-            .align_y(iced::Center),
+        row![
+            text(t!(panel.title())).size(crate::ui::style::text::UI),
+            icons::dropup_arrow()
+        ]
+        .spacing(4)
+        .align_y(iced::Center),
     )
     .on_press(if peek {
         Message::ToggleRibbonDropdown(panel.id.to_string())

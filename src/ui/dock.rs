@@ -1315,10 +1315,15 @@ pub fn title_bar_with<'a>(
     // The pallet's control and pin only show while the pointer is over the
     // bar; close always shows. The fixed height keeps the bar from jumping
     // when they appear.
-    let mut bar = row![text(title).size(12), Space::new().width(Length::Fill)]
-        .spacing(3)
-        .height(Length::Fixed(TITLE_BUTTON_H))
-        .align_y(iced::Center);
+    let mut bar = row![
+        text(title.to_uppercase())
+            .size(crate::ui::style::text::UI_TITLE)
+            .line_height(crate::ui::style::text::large_line()),
+        Space::new().width(Length::Fill)
+    ]
+    .spacing(3)
+    .height(Length::Fixed(TITLE_BUTTON_H))
+    .align_y(iced::Center);
     if chrome.title_hovered {
         if let Some(extra) = extra {
             bar = bar.push(extra);
@@ -1503,7 +1508,7 @@ impl iced::widget::canvas::Program<crate::app::Message> for VerticalLabel {
             };
             frame.fill_text(iced::widget::canvas::Text {
                 content: self.text.clone(),
-                position: iced::Point::new(start, 0.0),
+                position: crate::ui::style::text::snap_point(iced::Point::new(start, 0.0)),
                 color: crate::ui::style::readable::muted_text(theme),
                 size: iced::Pixels(STRIP_LABEL_SIZE),
                 align_x,

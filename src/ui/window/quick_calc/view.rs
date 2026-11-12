@@ -274,7 +274,7 @@ pub(super) fn text_button<'a>(
 
 /// One option of a segmented control; the options share the width.
 pub(super) fn segment<'a>(label: String, on: bool, msg: QuickCalcMsg) -> Element<'a, Message> {
-    button(container(text(label).size(10.5)).center(Fill))
+    button(container(text(label).size(crate::ui::style::text::UI_SMALL)).center(Fill))
         .width(Fill)
         .height(20)
         .padding([0, 8])
@@ -667,20 +667,24 @@ fn body<'a>(p: &'a QuickCalcPalette, inputs: &Inputs, height: f32) -> Element<'a
             .padding(0)
             .on_press(m(QuickCalcMsg::HistoryLoad(i)))
             .style(button::text);
-            let result = button(text(e.value.display()).size(12.5).font(STRONG))
-                .padding(0)
-                .on_press(m(QuickCalcMsg::HistoryCopy(i)))
-                .style(|theme: &Theme, status| {
-                    let t = tokens(theme);
-                    button::Style {
-                        text_color: if matches!(status, button::Status::Hovered) {
-                            t.accent
-                        } else {
-                            t.text
-                        },
-                        ..Default::default()
-                    }
-                });
+            let result = button(
+                text(e.value.display())
+                    .size(crate::ui::style::text::UI_LARGE)
+                    .font(STRONG),
+            )
+            .padding(0)
+            .on_press(m(QuickCalcMsg::HistoryCopy(i)))
+            .style(|theme: &Theme, status| {
+                let t = tokens(theme);
+                button::Style {
+                    text_color: if matches!(status, button::Status::Hovered) {
+                        t.accent
+                    } else {
+                        t.text
+                    },
+                    ..Default::default()
+                }
+            });
             container(
                 row![expr, tip(result, crate::t!("Copy result").into_owned()),]
                     .spacing(10)
@@ -717,7 +721,8 @@ fn body<'a>(p: &'a QuickCalcPalette, inputs: &Inputs, height: f32) -> Element<'a
                 crate::t!("Specify second point in the drawing"),
             ),
         };
-        let mut heading = row![text(title.into_owned()).size(11.5)].spacing(6);
+        let mut heading =
+            row![text(title.into_owned()).size(crate::ui::style::text::UI)].spacing(6);
         if kind.steps() > 1 {
             heading = heading.push(muted(
                 crate::tf!("step {} of {}", step, kind.steps()).into_owned(),
@@ -728,9 +733,12 @@ fn body<'a>(p: &'a QuickCalcPalette, inputs: &Inputs, height: f32) -> Element<'a
             container(
                 row![
                     icon(POINT, 16.0, |t| t.accent),
-                    column![heading, text(prompt.into_owned()).size(11.5)]
-                        .spacing(1)
-                        .width(Fill),
+                    column![
+                        heading,
+                        text(prompt.into_owned()).size(crate::ui::style::text::UI)
+                    ]
+                    .spacing(1)
+                    .width(Fill),
                     text_button(text(crate::t!("Cancel")).size(11), QuickCalcMsg::CancelPick),
                 ]
                 .spacing(8)
@@ -790,7 +798,7 @@ fn body<'a>(p: &'a QuickCalcPalette, inputs: &Inputs, height: f32) -> Element<'a
                     row![
                         icon(ERROR, 13.0, |t| t.danger_text),
                         text(e.message.clone())
-                            .size(11.5)
+                            .size(crate::ui::style::text::UI)
                             .style(|theme: &Theme| text::Style {
                                 color: Some(tokens(theme).danger_text),
                             }),

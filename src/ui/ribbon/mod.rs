@@ -256,7 +256,7 @@ fn floating_id(key: &str) -> String {
 /// Height of a tab, and of the tab row it stands at the bottom of.
 const TAB_H: f32 = metrics::TAB_H;
 const TAB_ROW_H: f32 = metrics::TAB_ROW_H;
-const TAB_TEXT_SIZE: f32 = 12.5;
+const TAB_TEXT_SIZE: f32 = crate::ui::style::text::UI_LARGE;
 /// The list of a ribbon dropdown: a large icon and the name on each row,
 /// the room around a row and the gap between its parts.
 const DD_LABEL: f32 = 13.0;
@@ -1303,6 +1303,7 @@ impl Ribbon {
                             module.title(),
                         ))
                         .size(TAB_TEXT_SIZE)
+                        .line_height(crate::ui::style::text::large_line())
                         .wrapping(iced::widget::text::Wrapping::None),
                     )
                     .center_y(Fill)

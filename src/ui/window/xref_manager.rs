@@ -27,7 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const IS_WASM: bool = cfg!(target_arch = "wasm32");
 
 /// Font size for table cells (mirrors `layers.rs`).
-const FONT_SZ: f32 = ROW_H * 0.42; // ≈11 px at ROW_H=26
+const FONT_SZ: f32 = crate::ui::style::text::UI;
 /// Fixed table height so the details pane below keeps stable space.
 const TABLE_H: f32 = 480.0;
 /// Minimum table area height under split dragging.
@@ -1846,12 +1846,18 @@ fn xref_row<'a>(
             });
         name_cell = name_cell.push(arrow);
     }
-    let name_text: Element<'_, Message> = text(name).size(FONT_SZ).into();
+    let name_text: Element<'_, Message> = text(name)
+        .size(FONT_SZ)
+        .line_height(crate::ui::style::text::line())
+        .into();
     name_cell = name_cell.push(name_text);
     let gutter = || iced::widget::Space::new().width(Length::Fixed(COL_GUTTER));
     let status_cell: Element<'_, Message> = row![
         container(status_icon(entry.status)).align_y(iced::Center),
-        text(status_text(entry.status)).size(FONT_SZ).width(Fill),
+        text(status_text(entry.status))
+            .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
+            .width(Fill),
     ]
     .spacing(4)
     .align_y(iced::Center)
@@ -1864,18 +1870,22 @@ fn xref_row<'a>(
         gutter(),
         text(format_size(entry.size_bytes))
             .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[2])),
         gutter(),
         text(type_text(entry))
             .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[3])),
         gutter(),
         text(format_date(entry.modified))
             .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[4])),
         gutter(),
         text(entry.saved_path.clone())
             .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[5])),
     ]
     .spacing(0)
@@ -2042,7 +2052,10 @@ fn host_row<'a>(
             .push(iced::widget::Space::new().width(Length::Fixed(INDENT_W * display.depth as f32)));
     }
     name_cell = name_cell.push({
-        let name_text: Element<'_, Message> = text(name).size(FONT_SZ).into();
+        let name_text: Element<'_, Message> = text(name)
+            .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
+            .into();
         name_text
     });
     let gutter = || iced::widget::Space::new().width(Length::Fixed(COL_GUTTER));
@@ -2051,17 +2064,28 @@ fn host_row<'a>(
         gutter(),
         text(crate::t!("Opened"))
             .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[1])),
         gutter(),
-        text("—").size(FONT_SZ).width(Length::Fixed(cw[2])),
+        text("—")
+            .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
+            .width(Length::Fixed(cw[2])),
         gutter(),
         text(crate::t!("Current"))
             .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[3])),
         gutter(),
-        text("—").size(FONT_SZ).width(Length::Fixed(cw[4])),
+        text("—")
+            .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
+            .width(Length::Fixed(cw[4])),
         gutter(),
-        text(saved).size(FONT_SZ).width(Length::Fixed(cw[5])),
+        text(saved)
+            .size(FONT_SZ)
+            .line_height(crate::ui::style::text::line())
+            .width(Length::Fixed(cw[5])),
     ]
     .spacing(0)
     .width(Length::Fixed(table_w))

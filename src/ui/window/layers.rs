@@ -340,12 +340,14 @@ pub fn layer_is_protected(name: &str, current: &str) -> bool {
 }
 
 // ── Row-height-derived constants ─────────────────────────────────────────
+use crate::ui::style::text::line as ui_line;
 /// SVG icon size inside a layer-table cell.
 const ICON_SZ: f32 = ROW_H * 0.62; // ≈16 px at ROW_H=26
 /// Font size for cell text.
-const FONT_SZ: f32 = ROW_H * 0.42; // ≈11 px at ROW_H=26
-/// Vertical padding for combo_box / text_input so their total height = ROW_H.
-const COMBO_PAD_V: f32 = (ROW_H - FONT_SZ * 1.3 - 2.0) / 2.0;
+const FONT_SZ: f32 = crate::ui::style::text::UI;
+/// Whole-pixel vertical padding so a combo / input with a `text::UI_LINE`
+/// line height and a 1 px border fills `ROW_H`.
+const COMBO_PAD_V: f32 = ((ROW_H - crate::ui::style::text::UI_LINE - 2.0) / 2.0).floor();
 const LINETYPE_MENU_W: f32 = 220.0;
 /// Widget id for the layer-table scrollable, so a freshly created layer can be
 /// scrolled into view after it is added (#271).
@@ -833,9 +835,14 @@ impl LayerPanel {
             let no_selection = matches!(&line, TreeRow::Node(TreeNode::Selected, _))
                 && self.selected_object_layers.is_empty();
             let count: Element<'_, Message> = match count {
-                _ if no_selection => text("—").size(FONT_SZ).style(muted_style).into(),
+                _ if no_selection => text("—")
+                    .size(FONT_SZ)
+                    .line_height(ui_line())
+                    .style(muted_style)
+                    .into(),
                 Some(n) => text(n.to_string())
                     .size(FONT_SZ)
+                    .line_height(ui_line())
                     .style(move |theme: &Theme| text::Style {
                         color: Some(if chosen {
                             selection_colors(theme).1
@@ -848,6 +855,7 @@ impl LayerPanel {
             };
             let label = text(label)
                 .size(FONT_SZ)
+                .line_height(ui_line())
                 .wrapping(iced::widget::text::Wrapping::None)
                 .width(Fill);
             let label = if no_selection {
@@ -871,6 +879,7 @@ impl LayerPanel {
                         .on_input(Message::LayerTreeRenameEdit)
                         .on_submit(Message::LayerTreeRenameCommit)
                         .size(FONT_SZ)
+                        .line_height(ui_line())
                         .padding([2, 4])
                         .width(Fill)
                         .style(|theme, status| field_style_with_radius(theme, status, 2.0))
@@ -992,7 +1001,8 @@ impl LayerPanel {
                     self.highlighted,
                     self.eye_layers.join(", ")
                 ))
-                .size(FONT_SZ),
+                .size(FONT_SZ)
+                .line_height(ui_line()),
             ]
             .spacing(6)
             .align_y(iced::Center)
@@ -1014,9 +1024,10 @@ impl LayerPanel {
                     .on_toggle(Message::LayerRibbonFollows),
                 text(format!("{}:", t!("Current layer")))
                     .size(FONT_SZ)
+                    .line_height(ui_line())
                     .style(muted_style),
-                text(self.current_layer.as_str()).size(FONT_SZ),
-                text(summary).size(FONT_SZ).style(muted_style),
+                text(self.current_layer.as_str()).size(FONT_SZ).line_height(ui_line()),
+                text(summary).size(FONT_SZ).line_height(ui_line()).style(muted_style),
             ]
             .spacing(8)
             .align_y(iced::Center),
@@ -1615,6 +1626,7 @@ impl LayerPanel {
                 text_input(t!("Search…").as_ref(), &self.filter)
                     .on_input(Message::LayerManagerFilterChanged)
                     .size(FONT_SZ)
+                    .line_height(ui_line())
                     .padding([3, 6])
                     .width(Length::Fixed(if compact { 120.0 } else { 170.0 }))
                     .style(|theme, status| field_style_with_radius(theme, status, 2.0)),
@@ -1734,6 +1746,7 @@ impl LayerPanel {
                     text_input(t!("Search…").as_ref(), &self.filter)
                         .on_input(Message::LayerManagerFilterChanged)
                         .size(FONT_SZ)
+                        .line_height(ui_line())
                         .padding([3, 6])
                         .width(Length::Fill)
                         .style(|theme, status| field_style_with_radius(theme, status, 2.0)),
@@ -1760,9 +1773,11 @@ impl LayerPanel {
             row![
                 text(format!("{}:", t!("Current layer")))
                     .size(FONT_SZ)
+                    .line_height(ui_line())
                     .style(muted_style),
                 text(self.current_layer.as_str())
                     .size(FONT_SZ)
+                    .line_height(ui_line())
                     .wrapping(iced::widget::text::Wrapping::None),
                 text(format!(
                     "· {}",
@@ -1773,6 +1788,7 @@ impl LayerPanel {
                     )
                 ))
                 .size(FONT_SZ)
+                .line_height(ui_line())
                 .style(muted_style)
                 .wrapping(iced::widget::text::Wrapping::None),
             ]
@@ -1832,7 +1848,7 @@ fn column_chooser<'a>() -> Element<'a, Message> {
             .align_y(iced::Center),
         );
     }
-    let close = button(text(t!("Close")).size(FONT_SZ))
+    let close = button(text(t!("Close")).size(FONT_SZ).line_height(ui_line()))
         .on_press(Message::LayerColumnsMenu(false))
         .padding([2, 10])
         .style(button::secondary);
@@ -2036,7 +2052,7 @@ fn toolbar_btn_cond<'a>(
 
 /// Hover popup showing a layer's full name when the cell truncates it.
 fn name_tip<'a>(name: &'a str) -> Element<'a, Message> {
-    container(text(name).size(FONT_SZ))
+    container(text(name).size(FONT_SZ).line_height(ui_line()))
         .padding(Padding {
             top: 3.0,
             bottom: 3.0,
@@ -2061,7 +2077,7 @@ fn name_tip<'a>(name: &'a str) -> Element<'a, Message> {
 
 /// A tooltip with owned text, for the toolbar's icon-only buttons.
 fn name_tip_owned<'a>(label: Cow<'static, str>) -> Element<'a, Message> {
-    container(text(label).size(FONT_SZ))
+    container(text(label).size(FONT_SZ).line_height(ui_line()))
         .padding([3, 7])
         .style(|theme: &Theme| {
             let palette = theme.palette();
@@ -2186,6 +2202,7 @@ fn layer_row<'a>(
             .on_input(Message::LayerRenameEdit)
             .on_submit(Message::LayerRenameCommit)
             .size(FONT_SZ)
+            .line_height(ui_line())
             .padding(Padding {
                 top: COMBO_PAD_V,
                 bottom: COMBO_PAD_V,
@@ -2206,6 +2223,7 @@ fn layer_row<'a>(
             container(
                 text(crate::ui::text_util::elide(&layer.name, name_budget))
                     .size(FONT_SZ)
+                    .line_height(ui_line())
                     .wrapping(iced::widget::text::Wrapping::None),
             )
             .clip(true)
@@ -2272,6 +2290,7 @@ fn layer_row<'a>(
                 |item: LinetypeItem| Message::LayerLinetypeSet(item.name),
             )
             .size(FONT_SZ)
+            .line_height(ui_line())
             .padding(Padding {
                 top: COMBO_PAD_V,
                 bottom: COMBO_PAD_V,
@@ -2285,6 +2304,7 @@ fn layer_row<'a>(
     } else {
         text(layer.linetype.as_str())
             .size(FONT_SZ)
+            .line_height(ui_line())
             .style(muted_style)
             .width(Length::Fixed(COL_LT))
             .into()
@@ -2300,6 +2320,7 @@ fn layer_row<'a>(
             |item: LwItem| Message::LayerLineweightSet(item.0),
         )
         .size(FONT_SZ)
+        .line_height(ui_line())
         .padding(Padding {
             top: COMBO_PAD_V,
             bottom: COMBO_PAD_V,
@@ -2312,6 +2333,7 @@ fn layer_row<'a>(
     } else {
         text(cur_lw_item.to_string())
             .size(FONT_SZ)
+            .line_height(ui_line())
             .style(muted_style)
             .width(Length::Fixed(COL_LW))
             .into()
@@ -2325,6 +2347,7 @@ fn layer_row<'a>(
         .on_input(move |s| Message::LayerTransparencyEdit(lname_trans.clone(), s))
         .on_submit(Message::LayerTransparencyCommit)
         .size(FONT_SZ)
+        .line_height(ui_line())
         .padding(Padding {
             top: COMBO_PAD_V,
             bottom: COMBO_PAD_V,
@@ -2344,6 +2367,7 @@ fn layer_row<'a>(
         .on_input(move |s| Message::LayerDescriptionEdit(lname_desc.clone(), s))
         .on_submit(Message::LayerDescriptionCommit)
         .size(FONT_SZ)
+        .line_height(ui_line())
         .padding(Padding {
             top: COMBO_PAD_V,
             bottom: COMBO_PAD_V,
@@ -2359,6 +2383,7 @@ fn layer_row<'a>(
     // Objects: the count, and how many sit inside blocks when some do.
     let objects_text = text(layer.objects.to_string())
         .size(FONT_SZ)
+        .line_height(ui_line())
         .width(Length::Fixed(COL_OBJECTS))
         .align_x(iced::alignment::Horizontal::Right);
     let objects_cell: Element<'_, Message> = if layer.in_blocks > 0 {
@@ -2611,9 +2636,19 @@ fn menu_item(
                 .width(12),
             );
         }
-        content = content.push(text(label.clone()).size(FONT_SZ).width(Fill));
+        content = content.push(
+            text(label.clone())
+                .size(FONT_SZ)
+                .line_height(ui_line())
+                .width(Fill),
+        );
         if let Some(key) = key {
-            content = content.push(text(key).size(FONT_SZ).style(muted_style));
+            content = content.push(
+                text(key)
+                    .size(FONT_SZ)
+                    .line_height(ui_line())
+                    .style(muted_style),
+            );
         }
         container(content)
             .width(Fill)
@@ -2760,6 +2795,7 @@ fn row_menu(name: &str, groups: &[(String, bool)], in_group: bool) -> Element<'s
             row![
                 text(crate::tr!("layer-groups", "add-to"))
                     .size(FONT_SZ)
+                    .line_height(ui_line())
                     .width(Fill),
                 crate::ui::icons::themed_arrow_down(8.0),
             ]

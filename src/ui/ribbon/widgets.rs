@@ -72,8 +72,9 @@ const LARGE_LABEL_HPAD: f32 = 8.0;
 /// Large ribbon labels use at most two lines before their button grows.
 const LARGE_LABEL_LINES: f32 = 2.0;
 const LARGE_LABEL_SIZE: f32 = 12.0;
-/// Line height of a large button's label, relative to its size.
-const LARGE_LABEL_LINE: f32 = 1.15;
+/// Line height of a large button's label, in whole pixels (was 1.15 x 12 =
+/// 13.8 px, which put the second line on a fractional pixel).
+const LARGE_LABEL_LINE: f32 = 14.0;
 /// Padding around a small button's icon.
 const SMALL_PAD: f32 = metrics::SMALL_PAD;
 /// Width of an icon-only small button.
@@ -89,7 +90,7 @@ pub(super) const TOOL_BAR_H_UNTITLED: f32 = metrics::TOOL_AREA_UNTITLED_H;
 /// Height of the title strip at the bottom of a panel.
 pub(super) const PANEL_TITLE_H: f32 = metrics::TITLE_STRIP_H;
 /// Size of a panel title.
-pub(super) const PANEL_TITLE_SIZE: f32 = 11.5;
+pub(super) const PANEL_TITLE_SIZE: f32 = crate::ui::style::text::UI;
 
 /// Gap between the combo dropdown and the tool rows beneath it.
 const COMBO_ROW_SPACING: f32 = ROW_GAP;
@@ -126,13 +127,15 @@ fn ribbon_label_bounds(
             content: label,
             bounds: Size::new(width, f32::INFINITY),
             size: Pixels(LARGE_LABEL_SIZE),
-            line_height: advanced_text::LineHeight::Relative(LARGE_LABEL_LINE),
+            line_height: advanced_text::LineHeight::Absolute(Pixels(LARGE_LABEL_LINE)),
             font: renderer.default_font(),
             align_x: advanced_text::Alignment::Center,
             align_y: iced::alignment::Vertical::Center,
             shaping: advanced_text::Shaping::default(),
             wrapping,
             ellipsis: advanced_text::Ellipsis::None,
+            // Hinting is off in the pinned iced: `iced_graphics::text::hint_factor`
+            // returns `None`; follow `renderer.hint_factor()` once it is enabled.
             hint_factor: None,
         });
     paragraph.min_bounds()
@@ -144,7 +147,7 @@ fn ribbon_label_bounds(
 /// changes do not rely on character-count estimates.
 fn measure_large_width(renderer: &iced::Renderer, label: &str) -> f32 {
     let base_inner = (LARGE_W - LARGE_LABEL_HPAD).max(1.0);
-    let line_height = advanced_text::LineHeight::Relative(LARGE_LABEL_LINE)
+    let line_height = advanced_text::LineHeight::Absolute(Pixels(LARGE_LABEL_LINE))
         .to_absolute(Pixels(LARGE_LABEL_SIZE))
         .0;
     let max_label_height = line_height * LARGE_LABEL_LINES + 0.5;
@@ -375,7 +378,7 @@ fn automatic_split_button<'a>(
 fn large_label<'a>(label: String) -> iced::widget::Text<'a, Theme, iced::Renderer> {
     text(label)
         .size(LARGE_LABEL_SIZE)
-        .line_height(LARGE_LABEL_LINE)
+        .line_height(Pixels(LARGE_LABEL_LINE))
         .width(Fill)
         .align_x(iced::Center)
 }
@@ -1189,7 +1192,7 @@ pub(super) fn render_large_dropdown<'a>(
             row![
                 text(second.to_string())
                     .size(LARGE_LABEL_SIZE)
-                    .line_height(LARGE_LABEL_LINE),
+                    .line_height(Pixels(LARGE_LABEL_LINE)),
                 arrow,
             ]
             .spacing(2)
@@ -2045,7 +2048,7 @@ mod size_tests {
         assert_eq!(TOOL_BAR_H, 99.0);
         assert_eq!(TOOL_BAR_H_UNTITLED, 89.0);
         // Two label lines fit under the icon of a large button.
-        let line = LARGE_LABEL_SIZE * LARGE_LABEL_LINE;
+        let line = LARGE_LABEL_LINE;
         assert!(3.0 + LARGE_ICON + 2.0 + LARGE_LABEL_LINES * line <= LARGE_H);
     }
 }

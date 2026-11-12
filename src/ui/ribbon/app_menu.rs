@@ -101,7 +101,7 @@ impl Ribbon {
             rows.push(
                 container(
                     text(crate::tr!("ribbon-menu", "recent-drawings").to_uppercase())
-                        .size(9.5)
+                        .size(crate::ui::style::text::UI_SMALL)
                         .style(|theme: &Theme| text::Style {
                             color: Some(chrome::muted(theme)),
                         }),

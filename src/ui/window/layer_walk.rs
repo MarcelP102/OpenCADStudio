@@ -32,9 +32,11 @@ use std::rc::Rc;
 /// Icon size inside a walk row (mirrors the Layer Manager table).
 const ICON_SZ: f32 = ROW_H * 0.62;
 /// Cell text size (mirrors the Layer Manager table).
-const FONT_SZ: f32 = ROW_H * 0.42;
+const FONT_SZ: f32 = crate::ui::style::text::UI;
 /// Vertical padding that makes inputs match the row height.
-const COMBO_PAD_V: f32 = (ROW_H - FONT_SZ * 1.3 - 2.0) / 2.0;
+/// Whole-pixel vertical padding so a combo / input with a `text::UI_LINE`
+/// line height and a 1 px border fills `ROW_H`.
+const COMBO_PAD_V: f32 = ((ROW_H - crate::ui::style::text::UI_LINE - 2.0) / 2.0).floor();
 /// Menu geometry, matching the xref manager's row menus.
 const MENU_ROW_H: f32 = 24.0;
 const MENU_SEP_H: f32 = 5.0;
@@ -759,6 +761,7 @@ fn view_content<'a>(
             |name: String| msg(LayerWalkMsg::SavedFilterPick(name)),
         )
         .size(FONT_SZ)
+        .line_height(crate::ui::style::text::line())
         .padding([COMBO_PAD_V, 6.0])
         .width(Length::Fixed(118.0))
         .input_style(|theme, status| field_style_with_radius(theme, status, 2.0))
@@ -771,6 +774,7 @@ fn view_content<'a>(
     .on_input(|s| msg(LayerWalkMsg::FilterEdit(s)))
     .on_submit(msg(LayerWalkMsg::FilterApply))
     .size(FONT_SZ)
+    .line_height(crate::ui::style::text::line())
     .padding([COMBO_PAD_V, 6.0])
     .width(Length::Fill)
     .style(|theme, status| field_style_with_radius(theme, status, 2.0));
@@ -1072,7 +1076,9 @@ fn walk_row(
     } else {
         UNDERLYING_ALPHA
     };
-    let mut label = text(crate::ui::text_util::elide(&row.name, 48)).size(FONT_SZ);
+    let mut label = text(crate::ui::text_util::elide(&row.name, 48))
+        .size(FONT_SZ)
+        .line_height(crate::ui::style::text::line());
     if matches && !is_selected {
         label = label.font(iced::Font::DEFAULT.weight(iced::font::Weight::Semibold));
     }
@@ -1091,6 +1097,7 @@ fn walk_row(
             tooltip(
                 text(row.count.to_string())
                     .size(FONT_SZ)
+                    .line_height(crate::ui::style::text::line())
                     .width(Length::Fixed(COL_COUNT))
                     .align_x(iced::Right),
                 text(crate::tr!("layer-walk", "count-tip", count = row.count)).size(10),

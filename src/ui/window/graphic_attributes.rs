@@ -657,12 +657,16 @@ fn popup_alignment(side: DockSide) -> iced_aw::drop_down::Alignment {
 }
 
 fn compact_button_content(label: &'static str) -> Element<'static, Message> {
-    container(text(label).size(crate::ui::ROW_H * 0.42))
-        .width(12)
-        .height(Fill)
-        .align_x(iced::Center)
-        .align_y(iced::Center)
-        .into()
+    container(
+        text(label)
+            .size(crate::ui::style::text::UI)
+            .line_height(crate::ui::style::text::line()),
+    )
+    .width(12)
+    .height(Fill)
+    .align_x(iced::Center)
+    .align_y(iced::Center)
+    .into()
 }
 
 fn popup_item<'a>(label: std::borrow::Cow<'a, str>, message: Message) -> Element<'a, Message> {
@@ -1031,7 +1035,8 @@ fn linetype_row<'a>(
             msg(GraphicAttributesMsg::LineLinetype(item.name))
         },
     )
-    .size(crate::ui::ROW_H * 0.42)
+    .size(crate::ui::style::text::UI)
+    .line_height(crate::ui::style::text::line())
     .padding(Padding {
         top: 3.0,
         bottom: 3.0,
@@ -1089,7 +1094,8 @@ fn linetype_scale_field<'a>(
     };
     let mut field = text_input(if varies { "*VARIES*" } else { "" }, &shown)
         .id(iced::widget::Id::new(LINETYPE_SCALE_FIELD))
-        .size(crate::ui::ROW_H * 0.42)
+        .size(crate::ui::style::text::UI)
+        .line_height(crate::ui::style::text::line())
         .padding([5, 5])
         .style(move |theme: &Theme, status| {
             let mut style = crate::ui::properties::combo_input_style(theme, status);
@@ -1143,7 +1149,8 @@ fn lineweight_field<'a>(
         selected.as_ref(),
         |item: crate::ui::properties::LwItem| msg(GraphicAttributesMsg::LineLineweight(item.0)),
     )
-    .size(crate::ui::ROW_H * 0.42)
+    .size(crate::ui::style::text::UI)
+    .line_height(crate::ui::style::text::line())
     .padding(Padding {
         top: 3.0,
         bottom: 3.0,
