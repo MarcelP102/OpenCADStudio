@@ -60,9 +60,8 @@ pub enum DockMsg {
     /// Pallet menu pick: hide `panel` when it shows, else open it docked on
     /// the edge (as a new group unless it already has a group there).
     EdgeMenuToggle(DockSide, PanelId),
-    /// Show each pallet's name beside its icon in the strips (`true`), or
-    /// icons only.
-    StripLabels(bool),
+    /// What the strips show per pallet: icons, icons and names, or names.
+    StripNames(StripNames),
     /// Begin dragging a whole group by its edge band in the icon strip.
     GroupGrab(DockSide, usize),
     /// The pointer entered a group's edge band (side, group).
@@ -542,9 +541,54 @@ pub struct DockState {
     /// Desktop: where each dialog's window of its own last was, by dialog
     /// name.
     pub tool_windows: BTreeMap<String, crate::app::tool_windows::WindowPlacement>,
-    /// The icon strips label each pallet, sharing the edge's height between
-    /// them, instead of showing icons only.
-    pub strip_labels: bool,
+    /// What the icon strips show per pallet: its icon, its icon and name,
+    /// or its name. Older configs stored `strip_labels: bool` (`true` reads
+    /// as icons and names).
+    #[serde(alias = "strip_labels", deserialize_with = "strip_names_compat")]
+    pub strip_names: StripNames,
+}
+
+/// What a palette strip shows for each pallet. Names read upward on both
+/// edges.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StripNames {
+    /// The icon alone.
+    #[default]
+    Icons,
+    /// The icon, with the name above it.
+    IconsAndNames,
+    /// The name alone.
+    NamesOnly,
+}
+
+impl StripNames {
+    /// The strip shows the pallet's icon.
+    pub fn icons(self) -> bool {
+        !matches!(self, StripNames::NamesOnly)
+    }
+
+    /// The strip shows the pallet's name.
+    pub fn names(self) -> bool {
+        !matches!(self, StripNames::Icons)
+    }
+}
+
+/// Read [`StripNames`], or the old `strip_labels: bool`.
+fn strip_names_compat<'de, D>(de: D) -> Result<StripNames, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Repr {
+        Old(bool),
+        New(StripNames),
+    }
+    Ok(match Repr::deserialize(de)? {
+        Repr::Old(true) => StripNames::IconsAndNames,
+        Repr::Old(false) => StripNames::Icons,
+        Repr::New(names) => names,
+    })
 }
 
 impl Default for DockState {
@@ -558,7 +602,7 @@ impl Default for DockState {
             panels: BTreeMap::new(),
             detached: BTreeMap::new(),
             tool_windows: BTreeMap::new(),
-            strip_labels: false,
+            strip_names: StripNames::Icons,
         }
     }
 }
@@ -1129,24 +1173,23 @@ pub const DOCK_EDGE_ZONE: f32 = 48.0;
 pub const DOCK_DIVIDER_W: f32 = 5.0;
 /// Width of a floating panel's vertical title bar.
 pub const DOCK_FLOAT_BAR_W: f32 = 28.0;
-/// Width of an edge's vertical icon strip.
-pub const DOCK_STRIP_W: f32 = 40.0;
+/// Width of an edge's vertical icon strip: its light part and the 1 px
+/// edge line on the palette side.
+pub const DOCK_STRIP_W: f32 = crate::ui::style::palette_metrics::STRIP_W;
 /// Height of one pallet icon in the strip.
-pub const STRIP_CELL_H: f32 = 32.0;
+pub const STRIP_CELL_H: f32 = crate::ui::style::palette_metrics::STRIP_CELL_H;
 /// Size of a pallet icon in the strip.
-pub const RAIL_ICON: f32 = 20.0;
-/// Text size of a strip tab's name.
-pub const STRIP_LABEL_SIZE: f32 = 13.0;
-/// Space after a strip tab's name.
-const STRIP_LABEL_PAD: f32 = 12.0;
+pub const RAIL_ICON: f32 = crate::ui::style::palette_metrics::STRIP_ICON;
+/// Text size of a strip tab's name (shown in capitals).
+pub const STRIP_LABEL_SIZE: f32 = crate::ui::style::text::UI;
 /// Height of the + button below a strip's groups.
-pub const STRIP_PLUS_H: f32 = 28.0;
-/// Space above and below a group's icons, inside the group.
-pub const STRIP_PAD: f32 = 6.0;
-/// Hairline divider between groups.
-pub const STRIP_DIVIDER_H: f32 = 1.0;
+pub const STRIP_PLUS_H: f32 = crate::ui::style::palette_metrics::STRIP_PLUS_H;
+/// Room above a group's first icon and below its last, inside those cells.
+pub const STRIP_PAD: f32 = crate::ui::style::palette_metrics::STRIP_GROUP_PAD;
+/// Line between groups.
+pub const STRIP_DIVIDER_H: f32 = crate::ui::style::palette_metrics::LINE;
 /// Space between the last group and the + button.
-pub const STRIP_PLUS_GAP: f32 = 8.0;
+pub const STRIP_PLUS_GAP: f32 = crate::ui::style::palette_metrics::STRIP_GROUP_PAD;
 /// Width of the band along a group's window-side edge that drags the whole
 /// group (the icons drag single pallets).
 pub const STRIP_GRIP_W: f32 = 8.0;
@@ -1223,15 +1266,23 @@ pub fn strip_menu_top(y: f32, menu_h: f32, strip_h: f32) -> f32 {
     y.min(strip_h - menu_h).max(0.0)
 }
 
-/// Length of a pallet's tab in the strip: the icon alone, or labelled, the
-/// icon followed by its name read upward, as long as the name is.
-pub fn strip_tab_h(title: &str, labelled: bool) -> f32 {
-    if !labelled {
+/// Length of a pallet's tab in the strip: the icon cell alone, or with
+/// names, the name (in capitals, read upward) above the icon, or the name
+/// alone, with equal room above and below.
+pub fn strip_tab_h(title: &str, names: StripNames) -> f32 {
+    use crate::ui::style::palette_metrics as pm;
+    if !names.names() {
         return STRIP_CELL_H;
     }
-    STRIP_CELL_H - 4.0
-        + crate::ui::style::text_metrics::width(title, STRIP_LABEL_SIZE, false).ceil()
-        + STRIP_LABEL_PAD
+    let name =
+        crate::ui::style::text_metrics::width(&title.to_uppercase(), STRIP_LABEL_SIZE, false)
+            .ceil();
+    let icon = if names.icons() {
+        pm::STRIP_ICON + pm::STRIP_NAME_GAP
+    } else {
+        0.0
+    };
+    2.0 * pm::STRIP_NAME_PAD + icon + name
 }
 
 /// What a dragged pallet released at height `y` over the icon strip joins.

@@ -2454,7 +2454,9 @@ fn labelled_strip_tabs_are_as_long_as_their_names() {
         .iter()
         .flat_map(|g| &g.cells)
         .all(|&h| h == STRIP_CELL_H));
-    let _ = app.on_dock(DockMsg::StripLabels(true));
+    let _ = app.on_dock(DockMsg::StripNames(
+        crate::ui::dock::StripNames::IconsAndNames,
+    ));
     let (labelled, plus_top) = app.dock_strip_layout(DockSide::Left);
     // A tab holds its icon and name, stacked like a tab bar: a short strip,
     // not one that stretches down the whole edge.
@@ -2464,7 +2466,7 @@ fn labelled_strip_tabs_are_as_long_as_their_names() {
         "{tabs:?}"
     );
     assert!(plus_top < app.dock_workspace_size().1 / 2.0, "{plus_top}");
-    let _ = app.on_dock(DockMsg::StripLabels(false));
+    let _ = app.on_dock(DockMsg::StripNames(crate::ui::dock::StripNames::Icons));
     assert_eq!(app.dock_strip_layout(DockSide::Left).0, icons);
 }
 
@@ -2792,4 +2794,125 @@ fn toolpalettes_commands_transparency_and_distinct_from_authoring_palettes() {
     assert_eq!(app.tabs[i].scene.document, before_doc);
     assert_eq!(app.tabs[i].history.undo_stack.len(), before_history);
     assert!(!app.block_edit_dirty(i));
+}
+
+#[test]
+fn strip_names_reads_the_old_strip_labels_flag() {
+    use crate::ui::dock::{DockState, StripNames};
+    let read = |json: &str| serde_json::from_str::<DockState>(json).unwrap().strip_names;
+    assert_eq!(read(r#"{"strip_labels": true}"#), StripNames::IconsAndNames);
+    assert_eq!(read(r#"{"strip_labels": false}"#), StripNames::Icons);
+    assert_eq!(
+        read(r#"{"strip_names": "NamesOnly"}"#),
+        StripNames::NamesOnly
+    );
+    assert_eq!(read("{}"), StripNames::Icons, "icons by default");
+    // Saved under the new name only, and read back the same.
+    let state = DockState {
+        strip_names: StripNames::NamesOnly,
+        ..DockState::default()
+    };
+    let json = serde_json::to_string(&state).unwrap();
+    assert!(json.contains("\"strip_names\":\"NamesOnly\"") && !json.contains("strip_labels"));
+    assert_eq!(read(&json), StripNames::NamesOnly);
+}
+
+#[test]
+fn the_strip_has_the_board_sizes() {
+    use crate::ui::dock::{strip_hit, strip_layout, StripHit, DOCK_STRIP_W, STRIP_CELL_H};
+    use crate::ui::style::palette_metrics as pm;
+    assert_eq!(DOCK_STRIP_W, 31.0);
+    assert_eq!(STRIP_CELL_H, 28.0);
+    let (layout, plus_top) = strip_layout(&[(0, vec![STRIP_CELL_H; 2]), (1, vec![STRIP_CELL_H])]);
+    // The 2 px group padding sits inside the first and last cells.
+    assert_eq!(layout[0].icons_top, pm::STRIP_GROUP_PAD);
+    assert_eq!(
+        layout[0].bottom(),
+        2.0 * pm::STRIP_GROUP_PAD + 2.0 * STRIP_CELL_H
+    );
+    assert_eq!(layout[1].top, layout[0].bottom() + pm::LINE);
+    assert_eq!(
+        plus_top,
+        layout[1].bottom() + pm::LINE + pm::STRIP_GROUP_PAD
+    );
+    // Centre of each cell joins its group, before or after the cell's own
+    // pallet depending on the half; the line between groups starts one.
+    let mid = layout[0].icons_top + STRIP_CELL_H * 0.75;
+    assert_eq!(
+        strip_hit(mid, &layout),
+        StripHit::Join { group: 0, index: 1 }
+    );
+    assert_eq!(
+        strip_hit(layout[1].top, &layout),
+        StripHit::NewGroup(Some(1))
+    );
+    assert_eq!(
+        strip_hit(plus_top + 50.0, &layout),
+        StripHit::NewGroup(None)
+    );
+}
+
+#[test]
+fn strip_tabs_follow_the_names_mode() {
+    use crate::ui::dock::{strip_tab_h, StripNames, STRIP_CELL_H};
+    use crate::ui::style::palette_metrics as pm;
+    assert_eq!(strip_tab_h("Properties", StripNames::Icons), STRIP_CELL_H);
+    let both = strip_tab_h("Properties", StripNames::IconsAndNames);
+    let names = strip_tab_h("Properties", StripNames::NamesOnly);
+    assert_eq!(both - names, pm::STRIP_ICON + pm::STRIP_NAME_GAP);
+    assert!(names > 2.0 * pm::STRIP_NAME_PAD + 40.0, "{names}");
+    for h in [both, names] {
+        assert_eq!(h.fract(), 0.0, "whole pixels: {h}");
+    }
+}
+
+/// A pallet dragged over either strip lands where the pointer is: the
+/// right strip mirrors the left one, measured from its own window edge.
+#[test]
+fn strip_drops_hit_the_same_cells_on_both_sides() {
+    use crate::app::config::DockSide;
+    use crate::ui::dock::{DockGroup, DockMsg, DropTarget, PanelId, DOCK_STRIP_W, STRIP_CELL_H};
+    for side in [DockSide::Left, DockSide::Right] {
+        let mut app = dock_app();
+        app.show_browser = true;
+        app.show_layers = true;
+        let groups = vec![
+            DockGroup::stack(vec![PanelId::Properties, PanelId::Browser]),
+            DockGroup::single(PanelId::Layers),
+        ];
+        let (here, there) = match side {
+            DockSide::Left => (&mut app.dock.left, &mut app.dock.right),
+            DockSide::Right => (&mut app.dock.right, &mut app.dock.left),
+        };
+        *here = groups;
+        *there = vec![DockGroup::single(PanelId::BlockPalette)];
+        let (layout, _) = app.dock_strip_layout(side);
+        let (ww, _) = app.dock_workspace_size();
+        // The middle of the strip's light part, from its own window edge.
+        let x = match side {
+            DockSide::Left => (DOCK_STRIP_W - 1.0) / 2.0,
+            DockSide::Right => ww - (DOCK_STRIP_W - 1.0) / 2.0,
+        };
+        let _ = app.on_dock(DockMsg::IconPress(PanelId::BlockPalette));
+        let _ = app.on_dock(DockMsg::DragMove(iced::Point::new(ww / 2.0, 300.0)));
+        let _ = app.on_dock(DockMsg::DragMove(iced::Point::new(
+            x,
+            layout[0].icons_top + STRIP_CELL_H + 2.0,
+        )));
+        assert_eq!(
+            drag_target(&app),
+            Some(DropTarget::Join {
+                side,
+                group: 0,
+                index: 1
+            }),
+            "{side:?}"
+        );
+        let _ = app.on_dock(DockMsg::DragMove(iced::Point::new(x, layout[1].top)));
+        assert_eq!(
+            drag_target(&app),
+            Some(DropTarget::Edge { side, index: 1 }),
+            "{side:?}"
+        );
+    }
 }

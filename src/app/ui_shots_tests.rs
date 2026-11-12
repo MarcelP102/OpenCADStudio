@@ -35,7 +35,7 @@ fn app() -> OpenCADStudio {
     app.show_block_palette = true;
     let i = app.active_tab;
     app.tabs[i].scene.selection.borrow_mut().view.vp_size = (SIZE.width, SIZE.height);
-    app.win_size = (SIZE.width, SIZE.height).into();
+    app.win_size = (SIZE.width, SIZE.height);
     app
 }
 
@@ -175,6 +175,25 @@ fn ui_shots() {
             let mut app = app();
             let _ = app.dispatch_command("QUICKCALC");
             shot(&mut app, &dir, "quickcalc", None);
+        }
+        if wanted("strip") {
+            use crate::ui::dock::{DockMsg, StripNames};
+            for (name, mode) in [
+                ("strip-icons-names", StripNames::IconsAndNames),
+                ("strip-names", StripNames::NamesOnly),
+            ] {
+                let mut app = app();
+                app.show_layers = true;
+                let _ = app.on_dock(DockMsg::EdgeMenuToggle(
+                    crate::app::config::DockSide::Left,
+                    crate::ui::dock::PanelId::Layers,
+                ));
+                let _ = app.on_dock(DockMsg::StripNames(mode));
+                shot(&mut app, &dir, name, None);
+            }
+            let mut app = app();
+            let _ = app.on_dock(DockMsg::EdgeMenu(Some(crate::app::config::DockSide::Left)));
+            shot(&mut app, &dir, "strip-menu", None);
         }
         if wanted("tabs") {
             let mut app = app();

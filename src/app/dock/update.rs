@@ -153,9 +153,9 @@ impl OpenCADStudio {
                 self.dock_edge_menu_y = Some(self.dock_strip_pointer_y);
             }
             DockMsg::StripPointer(p) => self.dock_strip_pointer_y = p.y,
-            DockMsg::StripLabels(on) => {
+            DockMsg::StripNames(names) => {
                 self.dock_edge_menu = None;
-                self.dock.strip_labels = on;
+                self.dock.strip_names = names;
                 self.save_config();
             }
             DockMsg::EdgeMenuToggle(side, id) => {
@@ -955,7 +955,7 @@ impl OpenCADStudio {
         &self,
         side: crate::app::config::DockSide,
     ) -> (Vec<crate::ui::dock::StripGroup>, f32) {
-        let labelled = self.dock.strip_labels;
+        let names = self.dock.strip_names;
         let groups: Vec<(usize, Vec<f32>)> = self
             .dock_visible_groups(side)
             .into_iter()
@@ -963,7 +963,7 @@ impl OpenCADStudio {
                 let cells = self
                     .dock_group_visible(side, gi)
                     .into_iter()
-                    .map(|id| crate::ui::dock::strip_tab_h(&crate::t!(id.title()), labelled))
+                    .map(|id| crate::ui::dock::strip_tab_h(&crate::t!(id.title()), names))
                     .collect();
                 (gi, cells)
             })

@@ -7187,6 +7187,7 @@ count-feature =
 dock =
     .icons-only = Только значки
     .icons-and-names = Значки и названия
+    .names-only = Только названия
     .allow-docking = Разрешить закрепление
     .auto-hide = Автоскрытие
     .dock-left = Закрепить слева

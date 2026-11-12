@@ -7184,6 +7184,7 @@ count-feature =
 dock =
     .icons-only = Nur Symbole
     .icons-and-names = Symbole und Namen
+    .names-only = Nur Namen
     .allow-docking = Andocken zulassen
     .auto-hide = Automatisch ausblenden
     .dock-left = Links andocken

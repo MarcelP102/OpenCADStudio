@@ -7198,6 +7198,7 @@ count-feature =
 dock =
     .icons-only = الأيقونات فقط
     .icons-and-names = الأيقونات والأسماء
+    .names-only = الأسماء فقط
     .allow-docking = السماح بالإرساء
     .auto-hide = إخفاء تلقائي
     .dock-left = إرساء إلى اليسار

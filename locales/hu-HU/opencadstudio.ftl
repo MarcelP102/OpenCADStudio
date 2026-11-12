@@ -7164,6 +7164,7 @@ count-feature =
 dock =
     .icons-only = Csak ikonok
     .icons-and-names = Ikonok és nevek
+    .names-only = Csak nevek
     .allow-docking = Dokkolás engedélyezése
     .auto-hide = Automatikus elrejtés
     .dock-left = Dokkolás balra

@@ -7186,6 +7186,7 @@ count-feature =
 dock =
     .icons-only = Само икони
     .icons-and-names = Икони и имена
+    .names-only = Само имена
     .allow-docking = Разреши закачане
     .auto-hide = Автоматично скриване
     .dock-left = Закачи вляво

@@ -7184,6 +7184,7 @@ count-feature =
 dock =
     .icons-only = Alleen pictogrammen
     .icons-and-names = Pictogrammen en namen
+    .names-only = Alleen namen
     .allow-docking = Koppelen toestaan
     .auto-hide = Automatisch verbergen
     .dock-left = Links koppelen

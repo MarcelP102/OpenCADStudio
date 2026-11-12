@@ -7187,6 +7187,7 @@ count-feature =
 dock =
     .icons-only = ສະເພາະໄອຄອນ
     .icons-and-names = ໄອຄອນ ແລະ ຊື່
+    .names-only = ຊື່ເທົ່ານັ້ນ
     .allow-docking = ອະນຸຍາດການຕິດຂອບ
     .auto-hide = ເຊື່ອງອັດຕະໂນມັດ
     .dock-left = ຕິດຂອບຊ້າຍ

@@ -7109,6 +7109,7 @@ count-feature =
 dock =
     .icons-only = Yalnızca simgeler
     .icons-and-names = Simgeler ve adlar
+    .names-only = Yalnızca adlar
     .allow-docking = Yerleştirmeye izin ver
     .auto-hide = Otomatik gizle
     .dock-left = Sola yerleştir
