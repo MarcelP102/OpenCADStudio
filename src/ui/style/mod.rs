@@ -18,6 +18,7 @@ pub mod studio_theme;
 pub mod style_list;
 pub mod style_manager;
 pub mod tablestyle;
+pub mod text;
 pub mod text_metrics;
 pub mod textstyle;
 
