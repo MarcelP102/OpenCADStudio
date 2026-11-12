@@ -118,6 +118,51 @@ pub fn lit_border(theme: &Theme) -> Color {
     mix(panel(theme), accent(theme), 0.7)
 }
 
+// ── Palette area (strip, docked palettes, Properties, drawing tabs) ──────
+//
+// The prototype "palettes up to the ribbon" names its own surfaces. Where
+// one is within a step of a chrome surface it is that surface, so the
+// palettes and the ribbon stay one family; the others are steps of their
+// own, by the same OKLCH rule, so every theme follows.
+
+/// Palette background, its title bar, the open strip group and the active
+/// drawing tab.
+pub fn palette_body(theme: &Theme) -> Color {
+    panel(theme)
+}
+
+/// Category bars, property grid lines, the combo field, the splitter.
+pub fn palette_bar(theme: &Theme) -> Color {
+    surface(theme, 0.013)
+}
+
+/// Palette strip and drawing-tab bar background.
+pub fn strip(theme: &Theme) -> Color {
+    bar(theme)
+}
+
+/// The dark 1 px edge: strip and palette border, the lines around the open
+/// strip group, the line under the ribbon.
+pub fn edge(theme: &Theme) -> Color {
+    surface(theme, -0.041)
+}
+
+/// Line between strip groups.
+pub fn strip_divider(theme: &Theme) -> Color {
+    surface(theme, 0.132)
+}
+
+/// Name cell of the selected property row: the accent at 38 % over the
+/// palette body.
+pub fn row_selected(theme: &Theme) -> Color {
+    mix(palette_body(theme), accent(theme), 0.38)
+}
+
+/// Inactive drawing tab.
+pub fn tab_inactive(theme: &Theme) -> Color {
+    title_bar(theme)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
