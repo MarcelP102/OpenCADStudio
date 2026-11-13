@@ -689,12 +689,14 @@ impl XrefManagerPanel {
         // List / Tree view buttons with active-state coloring: the current
         // mode renders in the primary accent (blue), the other is clickable.
         let mode_btn = |label: String, active: bool| -> Element<'static, Message> {
+            // The mode shown sends nothing (it stays on), but stays enabled
+            // so it reads as the active one, not a disabled one.
             let msg = if active {
-                None
+                Message::Noop
             } else {
-                Some(Message::XrefManagerToggleTree)
+                Message::XrefManagerToggleTree
             };
-            kit::text_button(label, msg, active)
+            kit::text_button(label, Some(msg), active)
         };
         let list_btn = mode_btn(crate::t!("List").into_owned(), !self.tree);
         let tree_btn = mode_btn(crate::t!("Tree").into_owned(), self.tree);
@@ -1324,145 +1326,6 @@ fn menu_item(label: String, msg: Option<Message>, gate: Option<String>) -> Item 
     }
 }
 
-/// Wrapper that publishes a right-click message before delegating to child
-/// (which may capture right-clicks, e.g. `ContextMenu`).
-struct RightClickArea<'a> {
-    child: Element<'a, Message>,
-    on_right_press: Message,
-}
-
-impl<'a> RightClickArea<'a> {
-    pub fn new(child: impl Into<Element<'a, Message>>, on_right_press: Message) -> Self {
-        Self {
-            child: child.into(),
-            on_right_press,
-        }
-    }
-}
-
-impl<'a> iced_core::Widget<Message, Theme, iced::Renderer> for RightClickArea<'a> {
-    fn diff(&mut self, tree: &mut iced_core::widget::Tree) {
-        tree.diff_children(std::slice::from_mut(&mut self.child));
-    }
-
-    fn size(&self) -> iced::Size<Length> {
-        self.child.as_widget().size()
-    }
-
-    fn layout(
-        &mut self,
-        tree: &mut iced_core::widget::Tree,
-        renderer: &iced::Renderer,
-        limits: &iced_core::layout::Limits,
-    ) -> iced_core::layout::Node {
-        self.child
-            .as_widget_mut()
-            .layout(&mut tree.children[0], renderer, limits)
-    }
-
-    fn update(
-        &mut self,
-        tree: &mut iced_core::widget::Tree,
-        event: &iced_core::Event,
-        layout: iced_core::Layout<'_>,
-        cursor: iced_core::mouse::Cursor,
-        renderer: &iced::Renderer,
-        shell: &mut iced_core::Shell<'_, Message>,
-        viewport: &iced::Rectangle,
-    ) {
-        if let iced_core::Event::Mouse(iced_core::mouse::Event::ButtonPressed(
-            iced_core::mouse::Button::Right,
-        )) = event
-        {
-            if cursor.is_over(layout.bounds()) {
-                shell.publish(self.on_right_press.clone());
-            }
-        }
-        self.child.as_widget_mut().update(
-            &mut tree.children[0],
-            event,
-            layout,
-            cursor,
-            renderer,
-            shell,
-            viewport,
-        );
-    }
-
-    fn mouse_interaction(
-        &self,
-        tree: &iced_core::widget::Tree,
-        layout: iced_core::Layout<'_>,
-        cursor: iced_core::mouse::Cursor,
-        viewport: &iced::Rectangle,
-        renderer: &iced::Renderer,
-    ) -> iced_core::mouse::Interaction {
-        self.child.as_widget().mouse_interaction(
-            &tree.children[0],
-            layout,
-            cursor,
-            viewport,
-            renderer,
-        )
-    }
-
-    fn operate(
-        &mut self,
-        tree: &mut iced_core::widget::Tree,
-        layout: iced_core::Layout<'_>,
-        renderer: &iced::Renderer,
-        operation: &mut dyn iced_core::widget::Operation,
-    ) {
-        self.child
-            .as_widget_mut()
-            .operate(&mut tree.children[0], layout, renderer, operation);
-    }
-
-    fn draw(
-        &self,
-        tree: &iced_core::widget::Tree,
-        renderer: &mut iced::Renderer,
-        theme: &Theme,
-        style: &iced_core::renderer::Style,
-        layout: iced_core::Layout<'_>,
-        cursor: iced_core::mouse::Cursor,
-        viewport: &iced::Rectangle,
-    ) {
-        self.child.as_widget().draw(
-            &tree.children[0],
-            renderer,
-            theme,
-            style,
-            layout,
-            cursor,
-            viewport,
-        );
-    }
-
-    fn overlay<'b>(
-        &'b mut self,
-        tree: &'b mut iced_core::widget::Tree,
-        layout: iced_core::Layout<'b>,
-        renderer: &iced::Renderer,
-        viewport: &iced::Rectangle,
-        translation: iced::Vector,
-    ) -> Option<iced_core::overlay::Element<'b, Message, Theme, iced::Renderer>> {
-        self.child.as_widget_mut().overlay(
-            &mut tree.children[0],
-            layout,
-            renderer,
-            viewport,
-            translation,
-        )
-    }
-}
-
-impl<'a> From<RightClickArea<'a>> for Element<'a, Message> {
-    fn from(widget: RightClickArea<'a>) -> Self {
-        Element::new(widget)
-    }
-}
-
 const MENU_ROW_H: f32 = pm::MENU_ITEM_H;
 const MENU_SEP_H: f32 = pm::MENU_SEPARATOR_H;
 const MENU_PADDING: f32 = pm::MENU_PAD_Y;
@@ -1741,7 +1604,11 @@ fn xref_row<'a>(
         let row_id = row_id.clone();
         move || row_menu_for(row_id.clone(), change_path_open)
     });
-    RightClickArea::new(cm, Message::XrefRowRightClick(row_id)).into()
+    kit::press_first(
+        cm,
+        iced::mouse::Button::Right,
+        Message::XrefRowRightClick(row_id),
+    )
 }
 
 /// One tree-mode row: indent + optional expand arrow + file icon + name.
@@ -1799,7 +1666,11 @@ fn tree_row(
         let row_id = row_id.clone();
         move || row_menu_for(row_id.clone(), change_path_open)
     });
-    RightClickArea::new(cm, Message::XrefRowRightClick(row_id)).into()
+    kit::press_first(
+        cm,
+        iced::mouse::Button::Right,
+        Message::XrefRowRightClick(row_id),
+    )
 }
 
 /// Tree-mode host root: home icon + name with the current-drawing marker.

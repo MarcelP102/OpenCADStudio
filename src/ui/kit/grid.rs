@@ -81,9 +81,10 @@ pub fn value_text<'a>(value: impl Into<String>, muted: bool) -> Element<'a, Mess
 }
 
 /// One grid row: `name` in the fixed name column, `value` filling the
-/// rest. `selected` paints the name cell `row_selected`. Pressing the name
-/// cell sends `on_select` (when given), so the row can be selected without
-/// focusing the value.
+/// rest. `selected` paints the name cell `row_selected`. Pressing the row
+/// sends `on_select` (when given): the name cell selects it without
+/// focusing the value, the value cell selects it as its field takes the
+/// press (so the controls of the selected row appear).
 pub fn row_view<'a>(
     name: Element<'a, Message>,
     value: Element<'a, Message>,
@@ -104,10 +105,6 @@ pub fn row_view<'a>(
             })),
             ..Default::default()
         });
-    let name_cell: Element<'a, Message> = match on_select {
-        Some(message) => mouse_area(name_cell).on_press(message).into(),
-        None => name_cell.into(),
-    };
     let value_cell = container(value)
         .width(Length::Fill)
         .height(Length::Fixed(pm::ROW_H))
@@ -117,6 +114,13 @@ pub fn row_view<'a>(
             background: Some(Background::Color(chrome::palette_body(theme))),
             ..Default::default()
         });
+    let (name_cell, value_cell): (Element<'a, Message>, Element<'a, Message>) = match on_select {
+        Some(message) => (
+            mouse_area(name_cell).on_press(message.clone()).into(),
+            super::press_first(value_cell, iced::mouse::Button::Left, message),
+        ),
+        None => (name_cell.into(), value_cell.into()),
+    };
     column![
         row![
             Space::new().width(pm::INDENT),

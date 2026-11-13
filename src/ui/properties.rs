@@ -1716,7 +1716,13 @@ impl PropertiesPanel {
             left: 3.0,
             right: 4.0,
         });
-        let caret = crate::ui::kit::on_selected_row(caret);
+        // While its field is being edited the row reads as selected, so
+        // its caret shows too.
+        let caret: Element<'_, Message> = if active {
+            caret.into()
+        } else {
+            crate::ui::kit::on_selected_row(caret)
+        };
         let head = container(row![input, caret].align_y(iced::Center))
             .style(move |theme: &Theme| {
                 let palette = theme.palette();

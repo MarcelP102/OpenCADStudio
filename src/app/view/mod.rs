@@ -4373,28 +4373,57 @@ pub(super) fn doc_tab_bar<'a>(
     .height(iced::Length::Fixed(pm::TAB_H))
     .padding(0)
     .style(tab_bar_button_style);
-    let menu_items = doc_tab_menu_items(tabs, active_tab, above_docks);
-    let menu_w = palette_menu::width(&menu_items);
-    let menu_btn = iced_aw::DropDown::new(menu_btn, palette_menu::menu(menu_items), menu_open)
+    // The menu is built only while it is open.
+    let (menu, menu_w): (Element<'_, Message>, f32) = if menu_open {
+        let items = doc_tab_menu_items(tabs, active_tab, above_docks);
+        let width = palette_menu::width(&items);
+        (palette_menu::menu(items), width)
+    } else {
+        (Space::new().into(), 0.0)
+    };
+    let menu_btn = iced_aw::DropDown::new(menu_btn, menu, menu_open)
         .alignment(iced_aw::drop_down::Alignment::Bottom)
         .width(menu_w)
         .on_dismiss(Message::DocTabMenu(false, None));
 
     let tabs_row = Row::with_children(items)
         .spacing(pm::TAB_GAP)
-        .align_y(iced::Center)
-        .wrap()
-        .vertical_spacing(pm::TAB_GAP);
-    // The empty part of the bar, after the tabs, opens the same menu at the
-    // pointer. The tabs take their room first (wrapping only when they
-    // overflow); the empty part fills what is left of the row.
-    let empty = ContextMenu::new(
-        container(Space::new())
-            .width(Fill)
-            .height(iced::Length::Fixed(pm::TAB_H)),
-        move || palette_menu::menu(doc_tab_menu_items(tabs, active_tab, above_docks)),
-    );
-    let bar = row![tabs_row, empty, menu_btn].align_y(iced::alignment::Vertical::Top);
+        .align_y(iced::Center);
+    let bar = if above_docks {
+        // Across the window: the tabs wrap onto more lines when they
+        // overflow (the docks start under the bar, whatever its height).
+        // The empty part of the bar, after the tabs, opens the same menu at
+        // the pointer; it fills what is left of the row.
+        let empty = ContextMenu::new(
+            container(Space::new())
+                .width(Fill)
+                .height(iced::Length::Fixed(pm::TAB_H)),
+            move || palette_menu::menu(doc_tab_menu_items(tabs, active_tab, above_docks)),
+        );
+        row![
+            tabs_row.wrap().vertical_spacing(pm::TAB_GAP),
+            empty,
+            menu_btn
+        ]
+        .align_y(iced::alignment::Vertical::Top)
+    } else {
+        // Between the docks: one line, its height part of the docks'
+        // workspace (`dock_workspace_size`). Tabs past the end scroll
+        // sideways and are all listed in the ☰ menu; a right-click on the
+        // bar outside a tab opens that menu at the pointer.
+        let strip = ContextMenu::new(
+            scrollable(tabs_row)
+                .direction(iced::widget::scrollable::Direction::Horizontal(
+                    iced::widget::scrollable::Scrollbar::new()
+                        .width(0.0)
+                        .scroller_width(0.0),
+                ))
+                .width(Fill)
+                .height(iced::Length::Fixed(pm::TAB_H)),
+            move || palette_menu::menu(doc_tab_menu_items(tabs, active_tab, above_docks)),
+        );
+        row![strip, menu_btn].align_y(iced::alignment::Vertical::Top)
+    };
     column![
         container(bar)
             .width(Fill)

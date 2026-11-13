@@ -16,8 +16,6 @@ pub enum Mark {
     Check(bool),
     /// A dot when on (one of a set of choices).
     Radio(bool),
-    /// A small dot: the drawing has unsaved changes.
-    Dirty,
 }
 
 /// One entry of a [`menu`].
@@ -118,7 +116,6 @@ fn mark_cell<'a>(mark: Mark) -> Element<'a, Message> {
             crate::ui::icons::tinted(crate::ui::icons::CHECK, MARK_ICON, chrome::text)
         }
         Mark::Radio(true) => dot(RADIO_DOT, chrome::text),
-        Mark::Dirty => dot(pm::DIRTY_DOT, chrome::text),
         _ => Space::new().into(),
     };
     container(inner)
