@@ -10,6 +10,15 @@ use iced::{Background, Element, Length, Padding, Theme};
 /// border.
 const BOX_PAD_Y: f32 = (pm::TOOL_H - text::UI_LINE - 2.0 * pm::LINE) / 2.0;
 
+/// Padding of a text input or combo filling a 22 px box (a toolbar-height
+/// field, as opposed to a [`super::FIELD_PAD`] grid cell).
+pub const BOX_PAD: Padding = Padding {
+    top: BOX_PAD_Y,
+    bottom: BOX_PAD_Y,
+    left: pm::CELL_PAD_X,
+    right: pm::CELL_PAD_X,
+};
+
 /// A search field: the `palette_bar` box, 22 px, 11 px text. Returned as a
 /// text input so callers can add `on_submit`, an `id`, ...
 pub fn search_field<'a>(
@@ -21,12 +30,7 @@ pub fn search_field<'a>(
         .on_input(on_input)
         .size(text::UI)
         .line_height(text::line())
-        .padding(Padding {
-            top: BOX_PAD_Y,
-            bottom: BOX_PAD_Y,
-            left: pm::CELL_PAD_X,
-            right: pm::CELL_PAD_X,
-        })
+        .padding(BOX_PAD)
         .width(Length::Fill)
         .style(super::combo_style)
 }
@@ -45,6 +49,36 @@ pub fn select_box<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, M
             ..Default::default()
         })
         .into()
+}
+
+/// A button that opens a list (a picker head, an L / B / C mode button):
+/// the `palette_bar` box, `hover` while hovered, the accent edge while its
+/// list is `open`.
+pub fn box_button_style(
+    open: bool,
+) -> impl Fn(&Theme, iced::widget::button::Status) -> iced::widget::button::Style {
+    move |theme: &Theme, status: iced::widget::button::Status| {
+        use iced::widget::button::Status;
+        let hovered = matches!(status, Status::Hovered | Status::Pressed);
+        iced::widget::button::Style {
+            background: Some(Background::Color(if hovered {
+                chrome::hover(theme)
+            } else {
+                chrome::palette_bar(theme)
+            })),
+            text_color: chrome::text(theme),
+            border: iced::Border {
+                color: if open {
+                    chrome::accent(theme)
+                } else {
+                    chrome::palette_bar(theme)
+                },
+                width: pm::LINE,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        }
+    }
 }
 
 #[cfg(test)]

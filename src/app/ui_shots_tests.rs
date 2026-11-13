@@ -248,6 +248,11 @@ fn ui_shots() {
             for (name, id, command) in palettes {
                 let mut app = app();
                 let _ = app.dispatch_command(command);
+                // Some commands answer with a message rather than opening the
+                // palette themselves.
+                if id == PanelId::GraphicAttributes && !app.dock_panel_visible(id) {
+                    let _ = app.update(Message::ToggleGraphicAttributes);
+                }
                 app.dock.left = vec![DockGroup::stack(vec![PanelId::Properties, id])];
                 shot(&mut app, &dir, &format!("family-{name}"), None);
             }
