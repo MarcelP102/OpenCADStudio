@@ -97,7 +97,7 @@ One PR each, in this order. Every prompt ends with screenshots at 100 / 125 / 15
 | 8a | **Layer Manager**: toolbar, search, filter tree, list with toggle columns, inline rename, footer. Keep its persisted column widths. | `layers.rs` | L |
 | 8b | **External References**: same list and tree, details pane as a grid, splitter = `SplitterGrip`. | `xref_manager.rs` | L |
 | 8c | **Sheet Set Manager**: tabs, trees, `category_view` → `category_bar`, one scroll area per pane. | `sheet_set.rs` | L |
-| 9 | **Retire and guard.** Remove `ROW_H = 26`, the `prop_grid` re-export and the now unused local `FONT_SZ` / `COMBO_PAD_V`. Add `docs/ui/audit_counts.sh` and a CI step that fails when a palette file (the list in section 2) uses `theme.palette()` / `background.*` / `primary.*`, `Color::from_rgb*` or a literal in `.size/.padding/.spacing/.width/.height`. | `ui/mod.rs`, CI, script | S |
+| 9 | **Retire and guard.** Remove `ROW_H = 26`, the `prop_grid` re-export and the now unused local `FONT_SZ` / `COMBO_PAD_V`. Add `docs/ui/audit_counts.sh` and a CI step (in the informational lint job, like rustfmt and clippy) that reports when a palette file (the list in section 2) uses `theme.palette()` / `background.*` / `primary.*`, `Color::from_rgb*` or a literal in `.size/.padding/.spacing/.width/.height`. | `ui/mod.rs`, CI, script | S |
 | 10 | **Plugin panels.** Map each `DialogControl` (fields, buttons, text inputs, lists) onto the kit, so plugin palettes join the family without plugin changes. | `window/plugin_panel.rs` | M |
 
 ## 5. Rules for every prompt
