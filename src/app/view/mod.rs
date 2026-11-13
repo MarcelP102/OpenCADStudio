@@ -285,7 +285,7 @@ mod modal;
 pub(in crate::app) mod overlay;
 mod viewcube;
 
-use controls::{dyn_component_value, viewport_controls};
+use controls::{dyn_component_value, viewport_controls, VP_INSET};
 use overlay::{
     mtext_editor_overlay, position_canvas_overlay, position_canvas_overlay_near_cursor,
     qselect_overlay, text_inline_overlay, viewport_context_menu_overlay, viewport_quad_overlay,
@@ -845,7 +845,8 @@ impl OpenCADStudio {
         let viewcube_visible = self.show_viewcube
             && !thumbnail_capture_clean
             && !tab.is_start
-            && viewcube_has_room(render_bar_w, active_vp_w);
+            // The bar sits `VP_INSET` in from the viewport's left edge.
+            && viewcube_has_room(render_bar_w + VP_INSET, active_vp_w);
         // Start tab: render welcome page in place of the viewport.
         // Surrounding chrome (tab bar, status bar) stays; the welcome widget
         // returned here also flags the rest of `view` to skip drawing-only
@@ -2445,10 +2446,16 @@ bg={bg_ms:.1}ms n={view_count}"
                 .into();
                 // Pin the bar to the active model tile's top-left corner so it
                 // follows the active panel in a tiled layout.
+                // It sits `VP_INSET` in from the tile's corner; the fit
+                // decision gets the width left after that inset.
                 let bar_layer = iced::widget::pin(
-                    container(adaptive).width(iced::Length::Fixed(rect.width.max(1.0))),
+                    container(adaptive)
+                        .width(iced::Length::Fixed((rect.width - VP_INSET).max(1.0))),
                 )
-                .position(iced::Point::new(rect.x.max(0.0), rect.y.max(0.0)));
+                .position(iced::Point::new(
+                    rect.x.max(0.0) + VP_INSET,
+                    rect.y.max(0.0) + VP_INSET,
+                ));
                 viewport_stack = viewport_stack.push(bar_layer);
             }
 
@@ -2533,9 +2540,10 @@ bg={bg_ms:.1}ms n={view_count}"
                     .report_width0(self.render_bar_w.clone())
                     .into();
                     let picker_layer = iced::widget::pin(
-                        container(adaptive).width(iced::Length::Fixed(rect.width.max(1.0))),
+                        container(adaptive)
+                            .width(iced::Length::Fixed((rect.width - VP_INSET).max(1.0))),
                     )
-                    .position(iced::Point::new(x + 4.0, y + 4.0));
+                    .position(iced::Point::new(x + VP_INSET, y + VP_INSET));
                     viewport_stack = viewport_stack.push(picker_layer);
                 }
 
