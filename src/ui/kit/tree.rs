@@ -147,18 +147,7 @@ impl<'a> TreeRow<'a> {
         }
         let selected = self.selected;
         let interactive = self.on_press.is_some();
-        let body = |hovered: bool| {
-            move |theme: &Theme| container::Style {
-                background: if selected {
-                    Some(Background::Color(chrome::row_selected(theme)))
-                } else if hovered && interactive {
-                    Some(Background::Color(chrome::hover(theme)))
-                } else {
-                    None
-                },
-                ..Default::default()
-            }
-        };
+        let body = |hovered: bool| row_style(selected, hovered && interactive);
         let row_box = container(cells)
             .width(Length::Fill)
             .height(Length::Fixed(pm::ROW_H))
@@ -190,5 +179,20 @@ impl<'a> TreeRow<'a> {
             area = area.on_right_press(m);
         }
         area.into()
+    }
+}
+
+/// The background of a list or tree row: `row_selected` when selected,
+/// `hover` while hovered, nothing otherwise.
+pub(super) fn row_style(selected: bool, hovered: bool) -> impl Fn(&Theme) -> container::Style {
+    move |theme: &Theme| container::Style {
+        background: if selected {
+            Some(Background::Color(chrome::row_selected(theme)))
+        } else if hovered {
+            Some(Background::Color(chrome::hover(theme)))
+        } else {
+            None
+        },
+        ..Default::default()
     }
 }

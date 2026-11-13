@@ -91,3 +91,50 @@ pub fn bar_button<'a>(
     .style(flat_button_style(false));
     tooltip(b, tip, TipPosition::Bottom)
 }
+
+/// A text button of a palette (Create Table, Insert, Cancel): 22 px high on
+/// `palette_bar`, lit by `hover`; `primary` fills it with the accent.
+pub fn text_button<'a>(
+    caption: impl Into<String>,
+    message: Option<Message>,
+    primary: bool,
+) -> Element<'a, Message> {
+    button(
+        container(
+            iced::widget::text(caption.into())
+                .size(crate::ui::style::text::UI)
+                .line_height(crate::ui::style::text::line()),
+        )
+        .center_y(Length::Fill),
+    )
+    .on_press_maybe(message)
+    .height(Length::Fixed(pm::TOOL_H))
+    .padding([0.0, pm::MENU_PAD_X])
+    .style(move |theme: &Theme, status| {
+        let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        let disabled = matches!(status, button::Status::Disabled);
+        let background = match (primary, hovered) {
+            (true, false) => chrome::accent(theme),
+            (true, true) => chrome::mix(chrome::accent(theme), chrome::strong(theme), 0.15),
+            (false, false) => chrome::palette_bar(theme),
+            (false, true) => chrome::hover(theme),
+        };
+        button::Style {
+            background: Some(Background::Color(background)),
+            text_color: if disabled {
+                chrome::muted(theme)
+            } else if primary {
+                chrome::on_accent(theme)
+            } else {
+                chrome::text(theme)
+            },
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: BUTTON_RADIUS.into(),
+            },
+            ..Default::default()
+        }
+    })
+    .into()
+}

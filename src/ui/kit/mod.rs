@@ -26,6 +26,7 @@
 mod field;
 mod frame;
 mod grid;
+mod list;
 mod status;
 mod tabs;
 mod toolbar;
@@ -35,6 +36,7 @@ mod tree;
 pub use field::*;
 pub use frame::*;
 pub use grid::*;
+pub use list::*;
 pub use status::*;
 pub use tabs::*;
 pub use toolbar::*;

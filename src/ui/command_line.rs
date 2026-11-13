@@ -162,6 +162,9 @@ fn format_error(msg: &str) -> String {
 
 const MAX_HISTORY: usize = 64;
 
+/// Opacity of the accent behind selected history text.
+const HISTORY_SELECTION_ALPHA: f32 = 0.5;
+
 #[derive(Clone)]
 pub struct CommandLine {
     pub input: String,
@@ -873,6 +876,7 @@ impl CommandLine {
     /// The Command History pallet: the whole log in one read-only editor
     /// (select across lines, Ctrl+C), with Copy and Clear, filling the
     /// pallet. It stays open beside the drawing or in a window of its own.
+    /// The Command History palette: a toolbar (copy, clear) over the log.
     pub fn history_panel<'a>(
         &'a self,
         history_content: &'a text_editor::Content,
@@ -884,62 +888,59 @@ impl CommandLine {
             t!("Command History").into_owned(),
             chrome,
         );
+        use crate::ui::kit;
+        use crate::ui::style::{chrome, palette_metrics as pm};
         let log = text_editor(history_content)
             .on_action(Message::CommandHistoryEdit)
-            .size(11)
-            .padding([2, 8])
+            .size(crate::ui::style::text::UI)
+            .line_height(crate::ui::style::text::line())
+            .padding(0)
             .height(Length::Shrink)
             .highlight_with::<HistoryHighlighter>(
                 self.history_highlight_settings(),
                 history_highlight_format,
             )
-            .style(|theme: &Theme, _status| {
-                let palette = theme.palette();
-                text_editor::Style {
-                    background: Background::Color(palette.background.base.color),
-                    border: Border::default(),
-                    placeholder: crate::ui::style::readable::hint_text(theme),
-                    value: palette.background.base.text,
-                    selection: palette.primary.base.color.scale_alpha(0.5),
-                }
+            .style(|theme: &Theme, _status| text_editor::Style {
+                background: Background::Color(chrome::palette_body(theme)),
+                border: Border::default(),
+                placeholder: chrome::muted(theme),
+                value: chrome::text(theme),
+                selection: chrome::accent(theme).scale_alpha(HISTORY_SELECTION_ALPHA),
             });
-        let log = scrollable(log)
-            .height(Length::Fill)
-            .direction(scrollable::Direction::Vertical(
-                scrollable::Scrollbar::new().width(8).scroller_width(6),
-            ))
-            .anchor_bottom();
-        let tool = |icon: Element<'a, Message>, label: String, msg: Message| {
-            button(
-                row![icon, text(label).size(11)]
-                    .spacing(4)
-                    .align_y(iced::Center),
-            )
-            .on_press(msg)
-            .style(header_btn_style)
-            .padding([2, 6])
-        };
-        let header = container(
-            row![
-                Space::new().width(Length::Fill),
-                tool(
-                    crate::ui::icons::themed_success(crate::ui::icons::COPY, 11.0),
-                    t!("Copy").into_owned(),
-                    Message::CommandHistoryCopy,
-                ),
-                tool(
-                    crate::ui::icons::themed_warning(crate::ui::icons::TRASH, 11.0),
-                    t!("Clear").into_owned(),
-                    Message::CommandHistoryClear,
-                ),
-            ]
-            .spacing(6)
-            .align_y(iced::Center),
+        // The log scrolls like a palette's grid, kept at its newest line.
+        let log = scrollable(container(log).padding(iced::Padding {
+            left: pm::GRID_INSET_L,
+            right: pm::GRID_INSET_R,
+            ..iced::Padding::ZERO
+        }))
+        .height(Length::Fill)
+        .direction(scrollable::Direction::Vertical(
+            scrollable::Scrollbar::new()
+                .width(pm::SCROLLBAR_W)
+                .scroller_width(pm::SCROLL_THUMB_W)
+                .margin(0),
+        ))
+        .style(kit::scroll_style)
+        .anchor_bottom();
+        let tools = kit::toolbar(vec![
+            kit::tool_button(
+                kit::tool_icon(crate::ui::icons::COPY),
+                t!("Copy").into_owned(),
+                Some(Message::CommandHistoryCopy),
+                false,
+            ),
+            kit::tool_button(
+                kit::tool_icon(crate::ui::icons::TRASH),
+                t!("Clear").into_owned(),
+                Some(Message::CommandHistoryClear),
+                false,
+            ),
+        ]);
+        kit::palette(
+            title_bar,
+            column![tools, Space::new().height(pm::TOOL_GAP), log],
+            width,
         )
-        .width(Length::Fill)
-        .padding([2, 8]);
-        let body = container(column![header, log]).height(Length::Fill);
-        crate::ui::dock::frame(title_bar, body, width)
     }
 
     pub fn view<'a>(

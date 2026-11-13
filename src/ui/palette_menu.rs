@@ -32,6 +32,8 @@ pub enum Item {
         on_press: Option<Box<Message>>,
     },
     Separator,
+    /// A muted caption over the items after it ("EXPAND BY").
+    Heading(String),
 }
 
 impl Item {
@@ -145,6 +147,18 @@ fn item<'a>(it: Item) -> Element<'a, Message> {
         .center_y(Length::Fixed(pm::MENU_SEPARATOR_H))
         .width(Length::Fill)
         .into(),
+        Item::Heading(caption) => container(
+            text(caption)
+                .size(ui_text::UI_SMALL)
+                .line_height(ui_text::line())
+                .style(|theme: &Theme| iced::widget::text::Style {
+                    color: Some(chrome::muted(theme)),
+                }),
+        )
+        .padding(iced::Padding::ZERO.left(pm::MENU_CHECK_W))
+        .center_y(Length::Fixed(pm::MENU_ITEM_H))
+        .width(Length::Fill)
+        .into(),
         Item::Action {
             mark,
             icon,
@@ -202,6 +216,11 @@ pub fn width(items: &[Item]) -> f32 {
         .iter()
         .filter_map(|it| match it {
             Item::Separator => None,
+            Item::Heading(caption) => Some(
+                pm::MENU_CHECK_W
+                    + crate::ui::style::text_metrics::width(caption, ui_text::UI_SMALL, false)
+                        .ceil(),
+            ),
             Item::Action {
                 icon, label, dirty, ..
             } => {
@@ -231,7 +250,7 @@ pub fn height(items: &[Item]) -> f32 {
             .iter()
             .map(|i| match i {
                 Item::Separator => pm::MENU_SEPARATOR_H,
-                Item::Action { .. } => pm::MENU_ITEM_H,
+                Item::Heading(_) | Item::Action { .. } => pm::MENU_ITEM_H,
             })
             .sum::<f32>()
 }

@@ -103,6 +103,11 @@ pub fn accent(theme: &Theme) -> Color {
     theme.palette().primary.base.color
 }
 
+/// Text and icons on an accent fill (a primary button).
+pub fn on_accent(theme: &Theme) -> Color {
+    theme.palette().primary.base.text
+}
+
 pub fn danger(theme: &Theme) -> Color {
     theme.palette().danger.base.color
 }
