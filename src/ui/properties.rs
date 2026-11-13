@@ -853,7 +853,7 @@ impl PropertiesPanel {
         // The object list box, inset as far as the grid below it.
         let title_bar = container(
             container(title_content)
-                .style(crate::ui::prop_grid::combo_container_style)
+                .style(crate::ui::kit::combo_container_style)
                 .width(Length::Fill)
                 .height(Length::Fixed(crate::ui::style::palette_metrics::TOOL_H))
                 .padding([0.0, crate::ui::style::palette_metrics::CELL_PAD_X])
@@ -869,23 +869,13 @@ impl PropertiesPanel {
 
         // ── Content ─────────────────────────────────────────────────────────
         let content: Element<'_, Message> = if self.sections.is_empty() {
-            container(
-                text(t!("Select an object to view properties"))
-                    .size(crate::ui::style::text::UI_SMALL)
-                    .line_height(crate::ui::style::text::line())
-                    .style(hint_text_style),
-            )
-            .padding([
-                crate::ui::style::palette_metrics::TOOL_GAP,
-                crate::ui::style::palette_metrics::GRID_INSET_L,
-            ])
-            .into()
+            crate::ui::kit::empty_state(t!("Select an object to view properties"))
         } else {
             let mut col = column![].spacing(0);
             for section in &self.sections {
                 col = col.push(self.render_section(section));
             }
-            crate::ui::prop_grid::scroll_area(col.width(Length::Fill))
+            crate::ui::kit::scroll_area(col.width(Length::Fill))
                 .map(|message| tag_picker(false, message))
         };
 
@@ -915,7 +905,7 @@ impl PropertiesPanel {
                 .line_height(crate::ui::style::text::line())
                 .style(muted_text_style),
         )
-        .style(crate::ui::prop_grid::combo_container_style)
+        .style(crate::ui::kit::combo_container_style)
         .width(Length::Fill)
         .padding([
             crate::ui::style::palette_metrics::TOOL_GAP,
@@ -944,7 +934,7 @@ impl PropertiesPanel {
                     .scroller_width(crate::ui::style::palette_metrics::SCROLL_THUMB_W)
                     .margin(0),
             ))
-            .style(crate::ui::prop_grid::scroll_style)
+            .style(crate::ui::kit::scroll_style)
             .width(Length::Fill)
             .height(Length::Shrink),
         )
@@ -973,7 +963,7 @@ impl PropertiesPanel {
 
     fn render_section<'a>(&'a self, section: &'a PropSection) -> Element<'a, Message> {
         let collapsed = self.collapsed_sections.contains(&section.title);
-        let hdr = crate::ui::prop_grid::category_bar(
+        let hdr = crate::ui::kit::category_bar(
             section.title.clone(),
             collapsed,
             Message::PropSectionToggle(section.title.clone()),
@@ -1018,16 +1008,16 @@ impl PropertiesPanel {
             }
         }
 
-        crate::ui::prop_grid::building_row(None, false);
+        crate::ui::kit::building_row(None, false);
         col.into()
     }
 
     /// Note the row `section/name` about to be built (see
-    /// [`crate::ui::prop_grid::building_row`]).
+    /// [`crate::ui::kit::building_row`]).
     fn building_row(&self, section: &str, name: &str) {
         let key = format!("{section}/{name}");
         let selected = self.selected_row.as_deref() == Some(key.as_str());
-        crate::ui::prop_grid::building_row(Some(Message::PropRowSelect(key)), selected);
+        crate::ui::kit::building_row(Some(Message::PropRowSelect(key)), selected);
     }
 
     /// Render one property row with an explicit display label (the grouped
@@ -1059,7 +1049,7 @@ impl PropertiesPanel {
                     .size(FONT_SZ)
                     .line_height(crate::ui::style::text::line())
                     .style(text_input_style)
-                    .padding(crate::ui::prop_grid::FIELD_PAD)
+                    .padding(crate::ui::kit::FIELD_PAD)
                     .width(Length::Fill);
                 let row = prop_row_with_active(
                     label,
@@ -1069,14 +1059,11 @@ impl PropertiesPanel {
                 if description.is_empty() {
                     row
                 } else {
-                    tooltip(
+                    crate::ui::kit::tooltip(
                         row,
-                        text(description)
-                            .size(FONT_SZ)
-                            .line_height(crate::ui::style::text::line()),
-                        tooltip::Position::Top,
+                        description.as_str(),
+                        crate::ui::kit::TipPosition::Top,
                     )
-                    .into()
                 }
             }
             PropValue::BlockChoice {
@@ -1098,9 +1085,9 @@ impl PropertiesPanel {
                     .align_y(iced::Center),
                 )
                 .on_press(Message::PropBlockPickerToggle { key, quick })
-                .style(crate::ui::prop_grid::cell_button_style)
+                .style(crate::ui::kit::cell_button_style)
                 .padding([0.0, crate::ui::style::palette_metrics::CELL_PAD_X]);
-                let caret = crate::ui::prop_grid::on_selected_row(caret);
+                let caret = crate::ui::kit::on_selected_row(caret);
                 let head = container(
                     row![
                         text(shown)
@@ -1111,7 +1098,7 @@ impl PropertiesPanel {
                     ]
                     .align_y(iced::Center),
                 )
-                .style(crate::ui::prop_grid::combo_container_style)
+                .style(crate::ui::kit::combo_container_style)
                 .padding([0.0, crate::ui::style::palette_metrics::CELL_PAD_X])
                 .width(Length::Fill);
                 // A choice cell opens on a click anywhere in it, not only on
@@ -1154,14 +1141,11 @@ impl PropertiesPanel {
                 if description.is_empty() {
                     row
                 } else {
-                    tooltip(
+                    crate::ui::kit::tooltip(
                         row,
-                        text(description)
-                            .size(FONT_SZ)
-                            .line_height(crate::ui::style::text::line()),
-                        tooltip::Position::Top,
+                        description.as_str(),
+                        crate::ui::kit::TipPosition::Top,
                     )
-                    .into()
                 }
             }
             PropValue::ColorChoice(color) => self.render_color_row(label, prop.field, *color, None),
@@ -1189,14 +1173,11 @@ impl PropertiesPanel {
                 if description.is_empty() {
                     row
                 } else {
-                    tooltip(
+                    crate::ui::kit::tooltip(
                         row,
-                        text(description)
-                            .size(FONT_SZ)
-                            .line_height(crate::ui::style::text::line()),
-                        tooltip::Position::Top,
+                        description.as_str(),
+                        crate::ui::kit::TipPosition::Top,
                     )
-                    .into()
                 }
             }
             PropValue::EditChoice { value, options } => {
@@ -1561,9 +1542,9 @@ impl PropertiesPanel {
             .align_y(iced::Center),
         )
         .on_press(Message::PropChoiceToggle { field, quick })
-        .style(crate::ui::prop_grid::cell_button_style)
+        .style(crate::ui::kit::cell_button_style)
         .padding([0.0, crate::ui::style::palette_metrics::CELL_PAD_X]);
-        let caret = crate::ui::prop_grid::on_selected_row(caret);
+        let caret = crate::ui::kit::on_selected_row(caret);
         let label_text = text(shown)
             .size(FONT_SZ)
             .line_height(crate::ui::style::text::line())
@@ -1574,7 +1555,7 @@ impl PropertiesPanel {
             label_text
         };
         let head = container(row![label_text, caret].align_y(iced::Center))
-            .style(crate::ui::prop_grid::combo_container_style)
+            .style(crate::ui::kit::combo_container_style)
             .padding([0.0, crate::ui::style::palette_metrics::CELL_PAD_X])
             .width(Length::Fill);
         // A click anywhere in the cell opens the list, not only on the caret.
@@ -1656,7 +1637,7 @@ impl PropertiesPanel {
             .size(FONT_SZ)
             .line_height(crate::ui::style::text::line())
             .style(text_input_style)
-            .padding(crate::ui::prop_grid::FIELD_PAD)
+            .padding(crate::ui::kit::FIELD_PAD)
             .width(Length::Fill);
 
         prop_row_with_active(label, ti.into(), active)
@@ -1739,7 +1720,7 @@ impl PropertiesPanel {
             left: 3.0,
             right: 4.0,
         });
-        let caret = crate::ui::prop_grid::on_selected_row(caret);
+        let caret = crate::ui::kit::on_selected_row(caret);
         let head = container(row![input, caret].align_y(iced::Center))
             .style(move |theme: &Theme| {
                 let palette = theme.palette();
@@ -1839,7 +1820,7 @@ impl PropertiesPanel {
             .size(FONT_SZ)
             .line_height(crate::ui::style::text::line())
             .style(text_input_style)
-            .padding(crate::ui::prop_grid::FIELD_PAD)
+            .padding(crate::ui::kit::FIELD_PAD)
             .width(Length::Fill);
 
         prop_row_with_active(name, ti.into(), active)
@@ -1865,7 +1846,7 @@ impl PropertiesPanel {
             .size(FONT_SZ)
             .line_height(crate::ui::style::text::line())
             .style(text_input_style)
-            .padding(crate::ui::prop_grid::FIELD_PAD)
+            .padding(crate::ui::kit::FIELD_PAD)
             .width(Length::Fill);
 
         prop_row_with_active(tag, ti.into(), active)
@@ -1908,7 +1889,7 @@ impl PropertiesPanel {
             .size(FONT_SZ)
             .line_height(crate::ui::style::text::line())
             .style(text_input_style)
-            .padding(crate::ui::prop_grid::FIELD_PAD)
+            .padding(crate::ui::kit::FIELD_PAD)
             .width(Length::FillPortion(3));
 
         let formula_key = FieldKey::Param(index, ParamField::Formula);
@@ -1932,7 +1913,7 @@ impl PropertiesPanel {
             .size(FONT_SZ)
             .line_height(crate::ui::style::text::line())
             .style(text_input_style)
-            .padding(crate::ui::prop_grid::FIELD_PAD)
+            .padding(crate::ui::kit::FIELD_PAD)
             .width(Length::FillPortion(3));
 
         let (value_text, is_error) = match resolved {
@@ -2264,27 +2245,27 @@ fn render_group_row(
             } else {
                 crate::ui::icons::themed_arrow_right(crate::ui::style::palette_metrics::CARET)
             },
-            crate::ui::prop_grid::name_text(crate::ui::text_util::elide(base, NAME_CHARS)),
+            crate::ui::kit::name_text(crate::ui::text_util::elide(base, NAME_CHARS)),
         ]
         .spacing(crate::ui::style::palette_metrics::TOOL_GAP)
         .align_y(iced::Center),
     )
     .on_press(toggle)
-    .style(crate::ui::prop_grid::cell_button_style)
+    .style(crate::ui::kit::cell_button_style)
     .padding(0)
     .width(Length::Fill);
     let name = full_label_tooltip(name, base, NAME_CHARS);
     // The field copies the value, so the locally-built `joined` is fine here.
-    let value = crate::ui::prop_grid::read_only_field(&joined);
-    crate::ui::prop_grid::row_view(
+    let value = crate::ui::kit::read_only_field(&joined);
+    crate::ui::kit::row_view(
         name,
         value,
-        crate::ui::prop_grid::row_selected(),
-        crate::ui::prop_grid::row_select(),
+        crate::ui::kit::row_selected(),
+        crate::ui::kit::row_select(),
     )
 }
 fn render_annotative_scale_row<'a>(label: &'a str, value: &'a str) -> Element<'a, Message> {
-    let field = crate::ui::prop_grid::read_only_field(value);
+    let field = crate::ui::kit::read_only_field(value);
 
     let manage = button(
         text("...")
@@ -2292,9 +2273,9 @@ fn render_annotative_scale_row<'a>(label: &'a str, value: &'a str) -> Element<'a
             .line_height(crate::ui::style::text::line()),
     )
     .on_press(Message::AnnoObjectScaleOpen)
-    .style(crate::ui::prop_grid::cell_button_style)
+    .style(crate::ui::kit::cell_button_style)
     .padding([0.0, crate::ui::style::palette_metrics::CELL_PAD_X]);
-    let manage = crate::ui::prop_grid::on_selected_row(manage);
+    let manage = crate::ui::kit::on_selected_row(manage);
 
     let controls = row![field, manage]
         .align_y(iced::Center)
@@ -2303,16 +2284,16 @@ fn render_annotative_scale_row<'a>(label: &'a str, value: &'a str) -> Element<'a
     prop_row_widget(label, controls.into())
 }
 fn render_hyperlink_row<'a>(label: &'a str, value: &'a str) -> Element<'a, Message> {
-    let field = crate::ui::prop_grid::read_only_field(value);
+    let field = crate::ui::kit::read_only_field(value);
     let manage = button(
         text("...")
             .size(FONT_SZ)
             .line_height(crate::ui::style::text::line()),
     )
     .on_press(Message::PropHyperlinkOpen)
-    .style(crate::ui::prop_grid::cell_button_style)
+    .style(crate::ui::kit::cell_button_style)
     .padding([0.0, crate::ui::style::palette_metrics::CELL_PAD_X]);
-    let manage = crate::ui::prop_grid::on_selected_row(manage);
+    let manage = crate::ui::kit::on_selected_row(manage);
     let controls = row![field, manage]
         .align_y(iced::Center)
         .width(Length::Fill);
@@ -2322,7 +2303,7 @@ fn render_ro_row<'a>(label: &'a str, value: &'a str) -> Element<'a, Message> {
     // A read-only value is shown as a non-editable but selectable field: no
     // on_input means the caret never appears, but the text can be selected
     // (carrying the full, un-truncated value) and copied with Ctrl+C.
-    let field = crate::ui::prop_grid::read_only_field(value);
+    let field = crate::ui::kit::read_only_field(value);
     prop_row_widget(label, field)
 }
 
@@ -2331,30 +2312,9 @@ fn render_ro_with_tooltip_row<'a>(
     value: &'a str,
     tooltip_text: &'a str,
 ) -> Element<'a, Message> {
-    let field = crate::ui::prop_grid::read_only_field(value);
-    let wrapped = tooltip(
-        field,
-        text(tooltip_text)
-            .size(FONT_SZ)
-            .line_height(crate::ui::style::text::line()),
-        tooltip::Position::Top,
-    )
-    .gap(4.0)
-    .padding(6.0)
-    .style(|theme: &Theme| {
-        let palette = theme.palette();
-        container::Style {
-            background: Some(Background::Color(palette.background.base.color)),
-            text_color: Some(palette.background.base.text),
-            border: Border {
-                color: palette.background.neutral.color,
-                width: 1.0,
-                radius: 4.0.into(),
-            },
-            ..Default::default()
-        }
-    });
-    prop_row_widget(label, wrapped.into())
+    let field = crate::ui::kit::read_only_field(value);
+    let wrapped = crate::ui::kit::tooltip(field, tooltip_text, crate::ui::kit::TipPosition::Top);
+    prop_row_widget(label, wrapped)
 }
 
 // ── Constraints section row (clickable entity link) ───────────────────────
@@ -2511,29 +2471,7 @@ fn full_label_tooltip<'a>(
     if label.chars().count() <= max {
         return label_col.into();
     }
-    tooltip(
-        label_col,
-        text(label)
-            .size(FONT_SZ)
-            .line_height(crate::ui::style::text::line()),
-        tooltip::Position::Top,
-    )
-    .gap(4.0)
-    .padding(6.0)
-    .style(|theme: &Theme| {
-        let palette = theme.palette();
-        container::Style {
-            background: Some(Background::Color(palette.background.base.color)),
-            text_color: Some(palette.background.base.text),
-            border: Border {
-                color: palette.background.neutral.color,
-                width: 1.0,
-                radius: 4.0.into(),
-            },
-            ..Default::default()
-        }
-    })
-    .into()
+    crate::ui::kit::tooltip(label_col, label, crate::ui::kit::TipPosition::Top)
 }
 
 /// Build a label | widget property row.
@@ -2543,19 +2481,19 @@ fn prop_row_widget<'a>(label: &'a str, widget: Element<'a, Message>) -> Element<
 
 /// Like [`prop_row_widget`], with `active` set while the row's value is
 /// being edited: the row then reads as selected, as it does once its name
-/// is pressed (see [`crate::ui::prop_grid::building_row`]).
+/// is pressed (see [`crate::ui::kit::building_row`]).
 fn prop_row_with_active<'a>(
     label: &'a str,
     widget: Element<'a, Message>,
     active: bool,
 ) -> Element<'a, Message> {
-    let name = crate::ui::prop_grid::name_text(crate::ui::text_util::elide(label, NAME_CHARS));
+    let name = crate::ui::kit::name_text(crate::ui::text_util::elide(label, NAME_CHARS));
     let name = full_label_tooltip(name, label, NAME_CHARS);
-    crate::ui::prop_grid::row_view(
+    crate::ui::kit::row_view(
         name,
         widget,
-        active || crate::ui::prop_grid::row_selected(),
-        crate::ui::prop_grid::row_select(),
+        active || crate::ui::kit::row_selected(),
+        crate::ui::kit::row_select(),
     )
 }
 
@@ -2641,11 +2579,11 @@ fn aci_label(idx: u8) -> &'static str {
 // ── Widget style helpers ──────────────────────────────────────────────────
 
 fn text_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
-    crate::ui::prop_grid::field_style(theme, status)
+    crate::ui::kit::field_style(theme, status)
 }
 
 pub(crate) fn combo_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
-    crate::ui::prop_grid::combo_style(theme, status)
+    crate::ui::kit::combo_style(theme, status)
 }
 
 fn muted_text_style(theme: &Theme) -> iced::widget::text::Style {

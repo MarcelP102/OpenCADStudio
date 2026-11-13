@@ -18,7 +18,7 @@ pub mod node_graph;
 pub mod overlay;
 pub mod palette_menu;
 pub mod popup;
-pub mod prop_grid;
+pub mod kit;
 pub mod properties;
 pub mod read_only;
 pub mod ribbon;
