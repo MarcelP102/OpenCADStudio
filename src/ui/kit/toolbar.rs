@@ -110,7 +110,14 @@ pub fn text_button<'a>(
     .on_press_maybe(message)
     .height(Length::Fixed(pm::TOOL_H))
     .padding([0.0, pm::MENU_PAD_X])
-    .style(move |theme: &Theme, status| {
+    .style(text_button_style(primary))
+    .into()
+}
+
+/// The style of a [`text_button`], for a text button laid out by hand
+/// (a plugin panel's button with its own width).
+pub fn text_button_style(primary: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme: &Theme, status| {
         let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
         let disabled = matches!(status, button::Status::Disabled);
         let background = match (primary, hovered) {
@@ -135,6 +142,5 @@ pub fn text_button<'a>(
             },
             ..Default::default()
         }
-    })
-    .into()
+    }
 }

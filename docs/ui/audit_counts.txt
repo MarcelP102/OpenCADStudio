@@ -14,4 +14,4 @@ src/ui/window/block_palette.rs 0 9
 src/ui/window/xref_manager.rs 0 11
 src/ui/window/layers.rs 0 14
 src/ui/window/sheet_set.rs 2 125
-src/ui/window/plugin_panel.rs 37 71
+src/ui/window/plugin_panel.rs 1 7

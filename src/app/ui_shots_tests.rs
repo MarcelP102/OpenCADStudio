@@ -266,6 +266,88 @@ fn ui_shots() {
                 shot(&mut app, &dir, &format!("family-{name}"), None);
             }
         }
+        if wanted("plugin") {
+            // A plugin panel with one control of each kind, docked under
+            // Properties.
+            use crate::ui::dock::{DockGroup, PanelId};
+            use ocs_plugin_api::dialog::{DialogControl, PanelDef};
+            let mut app = app();
+            let text = |id: &str, label: &str, default: &str| DialogControl::Text {
+                id: id.into(),
+                label: label.into(),
+                default: default.into(),
+            };
+            let panel = PanelDef::new("sample.panel", "Sample Plugin")
+                .with_control(DialogControl::InfoText {
+                    text: "Settings for the sample tool.".into(),
+                    align_h: None,
+                })
+                .with_control(text("name", "Name", "Wall A"))
+                .with_control(DialogControl::Fields {
+                    id: "geometry".into(),
+                    title: Some("Geometry".into()),
+                    controls: vec![
+                        DialogControl::Number {
+                            id: "length".into(),
+                            label: "Length".into(),
+                            default: 1200.0,
+                            min: None,
+                            max: None,
+                            step: None,
+                        },
+                        DialogControl::Checkbox {
+                            id: "closed".into(),
+                            label: "Closed".into(),
+                            default: true,
+                        },
+                        DialogControl::Choice {
+                            id: "kind".into(),
+                            label: "Kind".into(),
+                            options: vec!["Straight".into(), "Arc".into()],
+                            default_index: 0,
+                        },
+                        DialogControl::Color {
+                            id: "color".into(),
+                            label: "Colour".into(),
+                            default: [220, 60, 60],
+                        },
+                        DialogControl::FilePicker {
+                            id: "file".into(),
+                            label: "Profile".into(),
+                            default_path: "profile.dwg".into(),
+                            filter_name: "Drawings".into(),
+                            extensions: vec!["dwg".into()],
+                            save: false,
+                        },
+                    ],
+                    collapsed: false,
+                })
+                .with_control(DialogControl::Table {
+                    id: "layers".into(),
+                    label: Some("Layers".into()),
+                    headers: vec!["Name".into(), "Height".into()],
+                    rows: vec![
+                        vec!["Base".into(), "200".into()],
+                        vec!["Top".into(), "50".into()],
+                    ],
+                    allow_add: true,
+                    allow_delete: true,
+                })
+                .with_control(DialogControl::Button {
+                    id: "apply".into(),
+                    label: "Apply".into(),
+                    action: None,
+                    align_h: None,
+                    width: None,
+                });
+            let mut state = crate::ui::window::plugin_panel::PluginPanelState::from_def(panel);
+            state.visible = true;
+            app.plugin_panels.insert("sample.panel".into(), state);
+            app.plugin_panel_ids.insert("sample.panel".into(), 1);
+            app.plugin_panel_by_num.insert(1, "sample.panel".into());
+            app.dock.left = vec![DockGroup::stack(vec![PanelId::Properties, PanelId::Plugin(1)])];
+            shot(&mut app, &dir, "plugin", None);
+        }
         if wanted("tabs") {
             let mut app = app();
             let _ = app.update(Message::TabNew);
