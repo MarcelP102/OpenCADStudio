@@ -6,6 +6,7 @@
 //! Properties panel's own rows for that entity (built and written back in
 //! `app::node_graph`); operation rows come from the node's spec.
 
+use crate::ui::style::palette_metrics as pm;
 use document::{EntityType, Handle};
 use graph::{Kind, NodeId, Port, Spec};
 use iced::advanced::layout::{self, Layout};
@@ -14,8 +15,8 @@ use iced::advanced::widget::{self, tree, Widget};
 use iced::advanced::{overlay, renderer, Renderer as _, Shell};
 use iced::keyboard;
 use iced::widget::{
-    button, canvas, checkbox, column, container, hover, mouse_area, opaque, pin, row, scrollable,
-    slider, stack, text, text_input, tooltip, Space,
+    button, canvas, checkbox, column, container, hover, mouse_area, opaque, pin, row, slider,
+    stack, text, text_input, tooltip, Space,
 };
 use iced::{
     mouse, Background, Border, Element, Length, Point, Rectangle, Size, Theme, Transformation,
@@ -466,10 +467,13 @@ impl PaletteItem {
 }
 
 /// The tint over the palette entry about to be added.
+/// A node-library entry under the pointer or being dragged: lit like a
+/// palette row.
 fn palette_highlight(theme: &Theme) -> container::Style {
-    let tint = theme.palette().primary.base.color.scale_alpha(0.25);
     container::Style {
-        background: Some(Background::Color(tint)),
+        background: Some(Background::Color(crate::ui::style::chrome::row_selected(
+            theme,
+        ))),
         ..Default::default()
     }
 }
@@ -1216,10 +1220,10 @@ impl Graph {
         let icon: Element<'_, Message> = match item {
             PaletteItem::Object(kind) => crate::modules::registry::command_icon(kind.command())
                 .map_or_else(
-                    || Space::new().width(14.0).into(),
-                    |bytes| crate::ui::icons::semantic(bytes, 14.0),
+                    || Space::new().width(pm::ROW_ICON).into(),
+                    |bytes| crate::ui::icons::semantic(bytes, pm::ROW_ICON),
                 ),
-            PaletteItem::Op(_) => Space::new().width(14.0).into(),
+            PaletteItem::Op(_) => Space::new().width(pm::ROW_ICON).into(),
         };
         let held = match self.drag {
             Some(Drag::Palette(held)) => Some(held),
@@ -1227,11 +1231,16 @@ impl Graph {
         };
         let selected = held.is_some_and(|held| held.same(item));
         let entry = container(
-            row![icon, text(t!(item.label())).size(12)]
-                .spacing(6)
-                .align_y(iced::Center),
+            row![
+                icon,
+                crate::ui::kit::value_text(t!(item.label()).into_owned(), false)
+            ]
+            .spacing(pm::TOOL_GAP)
+            .align_y(iced::Center),
         )
-        .padding([3, 10])
+        .padding([0.0, pm::CELL_PAD_X + pm::INDENT])
+        .height(Length::Fixed(pm::ROW_H))
+        .align_y(iced::Center)
         .width(Length::Fill)
         .style(move |theme: &Theme| {
             if selected {
@@ -1270,30 +1279,33 @@ impl Graph {
     /// clicked or dragged onto the canvas.
     pub fn panel(&self, width: f32, chrome: crate::ui::dock::Chrome) -> Element<'_, Message> {
         use crate::ui::dock::{self, PanelId};
+        use crate::ui::kit;
         let tool = |icon: &'static [u8], tip: &str, message: GraphMsg| {
-            dock::tool_button(
-                crate::ui::icons::themed(icon, dock::TOOL_H - 6.0),
+            kit::tool_button(
+                kit::tool_icon(icon),
                 t!(tip).into_owned(),
-                msg(message),
+                Some(msg(message)),
+                false,
             )
         };
-        let toolbar = row![
-            text_input(&t!("Search nodes…"), &self.search)
-                .on_input(|value| msg(GraphMsg::Search(value)))
-                .padding([4, 8])
-                .size(12),
-            tool(crate::ui::icons::DOC_NEW, "New graph", GraphMsg::New),
-            tool(crate::ui::icons::FOLDER_OPEN, "Open graph", GraphMsg::Open),
-            tool(crate::ui::icons::SAVE, "Save graph", GraphMsg::Save),
-        ]
-        .spacing(4)
-        .align_y(iced::Center);
+        let toolbar = kit::band(
+            row![
+                kit::search_field(&t!("Search nodes…"), &self.search, |value| {
+                    msg(GraphMsg::Search(value))
+                }),
+                tool(crate::ui::icons::DOC_NEW, "New graph", GraphMsg::New),
+                tool(crate::ui::icons::FOLDER_OPEN, "Open graph", GraphMsg::Open),
+                tool(crate::ui::icons::SAVE, "Save graph", GraphMsg::Save),
+            ]
+            .spacing(pm::TOOL_GAP)
+            .align_y(iced::Center),
+        );
 
         let query = self.search.trim().to_lowercase();
         let wanted = |item: PaletteItem| {
             query.is_empty() || t!(item.label()).to_lowercase().contains(&query)
         };
-        let mut tree = column![].spacing(1);
+        let mut tree = column![];
         use crate::app::node_graph::ops;
         let categories = std::iter::once("Objects")
             .chain(ops::CATEGORIES.iter().copied())
@@ -1319,43 +1331,24 @@ impl Graph {
             // A search shows every match, collapsed categories included.
             let open = !query.is_empty()
                 || (category == "Objects") != self.toggled_categories.contains(category);
-            tree = tree.push(
-                button(
-                    row![
-                        crate::ui::icons::themed_arrow_toggle(open, 9.0),
-                        text(t!(category)).size(11)
-                    ]
-                    .spacing(4)
-                    .align_y(iced::Center),
-                )
-                .on_press(msg(GraphMsg::Category(category)))
-                .style(|theme: &Theme, status| {
-                    let mut style = button::text(theme, status);
-                    style.background =
-                        Some(Background::Color(theme.palette().background.weak.color));
-                    style
-                })
-                .width(Length::Fill)
-                .padding([3, 6]),
-            );
+            tree = tree.push(kit::category_bar(
+                t!(category).into_owned(),
+                !open,
+                msg(GraphMsg::Category(category)),
+            ));
             if open {
                 for item in items {
                     tree = tree.push(self.palette_entry(item));
                 }
             }
         }
-        let body = scrollable(container(tree).padding(iced::Padding {
-            top: 0.0,
-            right: 8.0,
-            bottom: 6.0,
-            left: 0.0,
-        }))
-        .width(Length::Fill)
-        .height(Length::Fill);
-
-        dock::frame(
+        kit::palette(
             dock::title_bar(PanelId::NodeGraph, t!("Node Graph").into_owned(), chrome),
-            column![toolbar, body].spacing(6),
+            column![
+                toolbar,
+                Space::new().height(pm::TOOL_GAP),
+                kit::scroll_area(tree)
+            ],
             width,
         )
     }

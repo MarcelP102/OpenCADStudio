@@ -253,6 +253,9 @@ fn ui_shots() {
                 if id == PanelId::GraphicAttributes && !app.dock_panel_visible(id) {
                     let _ = app.update(Message::ToggleGraphicAttributes);
                 }
+                if id == PanelId::NodeGraph {
+                    app.show_node_graph = true;
+                }
                 app.dock.left = vec![DockGroup::stack(vec![PanelId::Properties, id])];
                 shot(&mut app, &dir, &format!("family-{name}"), None);
             }

@@ -14,9 +14,9 @@
 use crate::app::Message;
 use crate::io::xref_model::wildcard_match;
 use crate::t;
+use crate::ui::kit;
 use crate::ui::style::common::muted_style;
-use crate::ui::style::form::field_style_with_radius;
-use crate::ui::ROW_H;
+use crate::ui::style::{chrome, palette_metrics as pm};
 use document::tables::layer::Layer as DocLayer;
 use document::tables::Table;
 use iced::widget::{
@@ -30,19 +30,14 @@ use std::borrow::Cow;
 use std::rc::Rc;
 
 /// Icon size inside a walk row (mirrors the Layer Manager table).
-const ICON_SZ: f32 = ROW_H * 0.62;
+/// Height of a walk row: the palette grid's.
+const ROW_H: f32 = pm::ROW_H;
+const ICON_SZ: f32 = pm::ROW_ICON;
 /// Cell text size (mirrors the Layer Manager table).
 const FONT_SZ: f32 = crate::ui::style::text::UI;
-/// Vertical padding that makes inputs match the row height.
 /// Whole-pixel vertical padding so a combo / input with a `text::UI_LINE`
 /// line height and a 1 px border fills `ROW_H`.
 const COMBO_PAD_V: f32 = ((ROW_H - crate::ui::style::text::UI_LINE - 2.0) / 2.0).floor();
-/// Menu geometry, matching the xref manager's row menus.
-const MENU_ROW_H: f32 = 24.0;
-const MENU_SEP_H: f32 = 5.0;
-const MENU_PADDING: f32 = 4.0;
-const MENU_SPACING: f32 = 1.0;
-const MENU_W: f32 = 250.0;
 
 // ── Messages ─────────────────────────────────────────────────────────────
 
@@ -663,6 +658,8 @@ const COL_STATE: f32 = 36.0;
 /// How much a row the walk hides loses: alpha carries the signal because the
 /// bundled UI font has no italic cut.
 const HIDDEN_ALPHA: f32 = 0.38;
+/// How strongly a row matching the filter is tinted.
+const MATCH_ALPHA: f32 = 0.30;
 /// A row that is off or frozen in the drawing is only muted: the walk keeps it
 /// out of the eye's way, but it cannot switch such a layer on.
 const UNDERLYING_ALPHA: f32 = 0.55;
@@ -695,26 +692,15 @@ pub fn view<'a>(
     ))
     .width(Length::Fixed(width))
     .height(Fill);
-    container(column![
+    kit::palette(
         crate::ui::dock::title_bar(
             crate::ui::dock::PanelId::Laywalk,
             crate::tr!("layer-walk", "title", count = total_layers),
-            chrome
+            chrome,
         ),
-        body
-    ])
-    .width(Length::Fixed(width))
-    .height(Fill)
-    .style(|theme: &Theme| container::Style {
-        background: Some(Background::Color(theme.palette().background.base.color)),
-        border: Border {
-            color: theme.palette().background.neutral.color,
-            width: 1.0,
-            radius: 0.0.into(),
-        },
-        ..Default::default()
-    })
-    .into()
+        body,
+        width,
+    )
 }
 
 fn view_content<'a>(
@@ -732,26 +718,18 @@ fn view_content<'a>(
             .on_press(msg(LayerWalkMsg::SelectObjects))
             .style(button::subtle)
             .padding([3, 5]),
-        text(crate::tr!("layer-walk", "select-objects-tip")).size(10),
+        text(crate::tr!("layer-walk", "select-objects-tip")).size(crate::ui::style::text::UI_SMALL),
         iced::widget::tooltip::Position::Bottom,
     );
     let filter_combo_box: Element<'_, Message> = if saved_filters.is_empty() {
         container(
             text(crate::tr!("layer-walk", "saved-filters"))
-                .size(10)
+                .size(crate::ui::style::text::UI_SMALL)
                 .style(muted_style),
         )
-        .padding([COMBO_PAD_V, 6.0])
-        .width(Length::Fixed(118.0))
-        .style(|theme: &Theme| container::Style {
-            background: Some(Background::Color(theme.palette().background.weak.color)),
-            border: Border {
-                color: theme.palette().background.neutral.color,
-                width: 1.0,
-                radius: 2.0.into(),
-            },
-            ..Default::default()
-        })
+        .padding([COMBO_PAD_V, pm::CELL_PAD_X])
+        .width(Length::Fixed(pm::NAME_COL_W))
+        .style(kit::combo_container_style)
         .into()
     } else {
         combo_box(
@@ -762,9 +740,9 @@ fn view_content<'a>(
         )
         .size(FONT_SZ)
         .line_height(crate::ui::style::text::line())
-        .padding([COMBO_PAD_V, 6.0])
-        .width(Length::Fixed(118.0))
-        .input_style(|theme, status| field_style_with_radius(theme, status, 2.0))
+        .padding([COMBO_PAD_V, pm::CELL_PAD_X])
+        .width(Length::Fixed(pm::NAME_COL_W))
+        .input_style(kit::combo_style)
         .into()
     };
     let filter_box = text_input(
@@ -775,9 +753,9 @@ fn view_content<'a>(
     .on_submit(msg(LayerWalkMsg::FilterApply))
     .size(FONT_SZ)
     .line_height(crate::ui::style::text::line())
-    .padding([COMBO_PAD_V, 6.0])
+    .padding([COMBO_PAD_V, pm::CELL_PAD_X])
     .width(Length::Fill)
-    .style(|theme, status| field_style_with_radius(theme, status, 2.0));
+    .style(kit::combo_style);
     // The Filter checkbox only does something while a pattern is active; with
     // no toggle it renders in the theme's disabled state, which is the mute.
     let filter_toggle: Option<Box<dyn Fn(bool) -> Message>> =
@@ -788,18 +766,18 @@ fn view_content<'a>(
     let filter_check: Element<'_, Message> = checkbox(session.show_only_matching)
         .label(t!("Filter"))
         .on_toggle_maybe(filter_toggle)
-        .size(13)
-        .text_size(10)
+        .size(crate::ui::style::text::UI_TITLE)
+        .text_size(crate::ui::style::text::UI_SMALL)
         .into();
     // An applied filter is the only thing worth clearing: an empty box is
     // already inert, so the ✕ shows up exactly when it does something.
     let clear_filter: Element<'_, Message> = if session.pattern.is_some() {
         tooltip(
-            button(text(t!("×")).size(11))
+            button(text(t!("×")).size(crate::ui::style::text::UI))
                 .on_press(msg(LayerWalkMsg::FilterClear))
                 .style(button::subtle)
                 .padding([2, 4]),
-            text(crate::tr!("layer-walk", "clear-filter")).size(10),
+            text(crate::tr!("layer-walk", "clear-filter")).size(crate::ui::style::text::UI_SMALL),
             iced::widget::tooltip::Position::Bottom,
         )
         .into()
@@ -807,12 +785,17 @@ fn view_content<'a>(
         iced::widget::Space::new().width(Length::Fixed(0.0)).into()
     };
     let tiny = |label: Cow<'static, str>, item: LayerWalkMenuItem| -> Element<'_, Message> {
-        button(text(label).size(10).width(Fill).align_x(iced::Center))
-            .on_press(msg(LayerWalkMsg::MenuItem(item)))
-            .style(button::subtle)
-            .padding([3, 4])
-            .width(Length::Fixed(ACTION_W))
-            .into()
+        button(
+            text(label)
+                .size(crate::ui::style::text::UI_SMALL)
+                .width(Fill)
+                .align_x(iced::Center),
+        )
+        .on_press(msg(LayerWalkMsg::MenuItem(item)))
+        .style(button::subtle)
+        .padding([3, 4])
+        .width(Length::Fixed(ACTION_W))
+        .into()
     };
     // The running total is the one number the walk cannot be read without:
     // how much of the drawing is on screen right now.
@@ -823,7 +806,7 @@ fn view_content<'a>(
         visible = shown,
         total = drawn
     ))
-    .size(10)
+    .size(crate::ui::style::text::UI_SMALL)
     .style(muted_style);
     // Two lines, not eight controls on one: at 420 px the fields had no
     // visible edge and every button was a guess.
@@ -858,10 +841,14 @@ fn view_content<'a>(
         let mut content = if right {
             row![
                 iced::widget::Space::new().width(Fill),
-                text(label).size(10).style(muted_style)
+                text(label)
+                    .size(crate::ui::style::text::UI_SMALL)
+                    .style(muted_style)
             ]
         } else {
-            row![text(label).size(10).style(muted_style)]
+            row![text(label)
+                .size(crate::ui::style::text::UI_SMALL)
+                .style(muted_style)]
         }
         .spacing(3)
         .align_y(iced::Center);
@@ -902,17 +889,14 @@ fn view_content<'a>(
         .spacing(4)
         .align_y(iced::Center),
     )
-    .style(|theme: &Theme| {
-        let palette = theme.palette();
-        container::Style {
-            background: Some(Background::Color(palette.background.weak.color)),
-            border: Border {
-                color: palette.background.neutral.color,
-                width: 1.0,
-                radius: 0.0.into(),
-            },
-            ..Default::default()
-        }
+    .style(|theme: &Theme| container::Style {
+        background: Some(Background::Color(chrome::palette_bar(theme))),
+        border: Border {
+            color: chrome::border(theme),
+            width: 1.0,
+            radius: 0.0.into(),
+        },
+        ..Default::default()
     })
     .padding([4, 8])
     .width(Fill);
@@ -933,7 +917,7 @@ fn view_content<'a>(
             } else {
                 crate::tr!("layer-walk", "no-layers")
             })
-            .size(11)
+            .size(crate::ui::style::text::UI)
             .style(muted_style),
         )
         .padding([6, 8])
@@ -1023,7 +1007,7 @@ fn view_content<'a>(
         container(header)
             .padding([4, 8])
             .style(|theme: &Theme| container::Style {
-                background: Some(Background::Color(theme.palette().background.weak.color)),
+                background: Some(Background::Color(chrome::palette_bar(theme))),
                 ..Default::default()
             })
             .width(Fill),
@@ -1042,7 +1026,7 @@ fn view_content<'a>(
             container(footer)
                 .padding([4, 8])
                 .style(|theme: &Theme| container::Style {
-                    background: Some(Background::Color(theme.palette().background.weak.color)),
+                    background: Some(Background::Color(chrome::palette_bar(theme))),
                     ..Default::default()
                 })
                 .width(Fill),
@@ -1100,7 +1084,8 @@ fn walk_row(
                     .line_height(crate::ui::style::text::line())
                     .width(Length::Fixed(COL_COUNT))
                     .align_x(iced::Right),
-                text(crate::tr!("layer-walk", "count-tip", count = row.count)).size(10),
+                text(crate::tr!("layer-walk", "count-tip", count = row.count))
+                    .size(crate::ui::style::text::UI_SMALL),
                 iced::widget::tooltip::Position::FollowCursor,
             ),
         ]
@@ -1132,17 +1117,10 @@ fn walk_row(
         .height(Length::Fixed(ICON_SZ))
         .align_x(iced::Center)
         .align_y(iced::Center)
-        .style(|theme: &Theme| {
-            let pair = theme.palette().primary.weak;
-            container::Style {
-                background: Some(Background::Color(pair.color)),
-                text_color: Some(pair.text),
-                border: Border {
-                    radius: 3.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
+        .style(|theme: &Theme| container::Style {
+            background: Some(Background::Color(chrome::lit(theme))),
+            text_color: Some(chrome::strong(theme)),
+            ..Default::default()
         })
         .into()
     } else if is_hovered {
@@ -1166,7 +1144,7 @@ fn walk_row(
             } else {
                 crate::tr!("layer-walk", "pin-hold-tip")
             })
-            .size(10),
+            .size(crate::ui::style::text::UI_SMALL),
             iced::widget::tooltip::Position::FollowCursor,
         ))
         .width(Length::Fixed(COL_PIN))
@@ -1194,30 +1172,27 @@ fn walk_row(
     .padding(Padding {
         top: 0.0,
         bottom: 0.0,
-        left: 8.0,
-        right: 8.0,
+        left: pm::GRID_INSET_L,
+        right: pm::GRID_INSET_R,
     })
     .style(move |theme: &Theme| {
-        let palette = theme.palette();
-        let pair = if is_selected {
-            palette.primary.weak
-        } else if position.is_multiple_of(2) {
-            palette.background.base
-        } else {
-            palette.background.weak
-        };
-        // Hover outranks selection outranks the zebra band, the same order the
-        // shared `cell_button_style` uses, so this row reads like the rest of
-        // the app's lists. The filter tint only applies to the zebra band.
-        let (band, text_color) = if is_hovered {
-            let strong = palette.background.strong;
-            (strong.color, strong.text)
+        // Hover outranks selection outranks the zebra band, as in every
+        // palette list. The filter tint only applies to the zebra band.
+        let band = if is_hovered {
+            chrome::hover(theme)
         } else if is_selected {
-            (pair.color, pair.text)
+            chrome::row_selected(theme)
         } else if matches {
-            (palette.primary.weak.color.scale_alpha(0.30), pair.text)
+            chrome::row_selected(theme).scale_alpha(MATCH_ALPHA)
+        } else if position.is_multiple_of(2) {
+            chrome::palette_body(theme)
         } else {
-            (pair.color, pair.text)
+            chrome::palette_bar(theme)
+        };
+        let text_color = if is_hovered || is_selected {
+            chrome::strong(theme)
+        } else {
+            chrome::text(theme)
         };
         container::Style {
             background: Some(Background::Color(band)),
@@ -1252,7 +1227,7 @@ fn state_cells<'a>(row: &LayerWalkRow, is_visible: bool) -> Element<'a, Message>
     };
     let mut state = row![tooltip(
         eye,
-        text(tip).size(10),
+        text(tip).size(crate::ui::style::text::UI_SMALL),
         iced::widget::tooltip::Position::FollowCursor
     )]
     .spacing(2)
@@ -1260,14 +1235,14 @@ fn state_cells<'a>(row: &LayerWalkRow, is_visible: bool) -> Element<'a, Message>
     if row.frozen {
         state = state.push(tooltip(
             crate::ui::icons::themed_disabled(crate::ui::icons::layer_freeze(true), ICON_SZ * 0.55),
-            text(crate::tr!("layer-walk", "frozen-tip")).size(10),
+            text(crate::tr!("layer-walk", "frozen-tip")).size(crate::ui::style::text::UI_SMALL),
             iced::widget::tooltip::Position::FollowCursor,
         ));
     }
     if row.locked {
         state = state.push(tooltip(
             crate::ui::icons::themed_disabled(crate::ui::icons::layer_lock(true), ICON_SZ * 0.55),
-            text(crate::tr!("layer-walk", "locked-tip")).size(10),
+            text(crate::tr!("layer-walk", "locked-tip")).size(crate::ui::style::text::UI_SMALL),
             iced::widget::tooltip::Position::FollowCursor,
         ));
     }
@@ -1280,90 +1255,16 @@ fn state_cells<'a>(row: &LayerWalkRow, is_visible: bool) -> Element<'a, Message>
 /// through an `Rc`, so the list stays cheap on a drawing with thousands of
 /// layers; the entries only clone when a menu actually opens.
 fn row_menu(entries: Vec<MenuEntry>) -> Element<'static, Message> {
-    let mut col = column![].spacing(MENU_SPACING);
-    for entry in entries {
-        col = match entry {
-            MenuEntry::Separator => col.push(menu_separator()),
-            MenuEntry::Item(label, item) => col.push(menu_row(
-                label,
-                Some(msg(LayerWalkMsg::MenuItem(item))),
-                None,
-            )),
-            MenuEntry::Disabled(label, reason) => col.push(menu_row(label, None, Some(reason))),
-        };
-    }
-    container(col.padding(MENU_PADDING))
-        .style(|theme: &Theme| container::Style {
-            background: Some(Background::Color(theme.palette().background.base.color)),
-            border: Border {
-                color: theme.palette().background.neutral.color,
-                width: 1.0,
-                radius: 3.0.into(),
-            },
-            ..Default::default()
+    use crate::ui::palette_menu::Item;
+    let items = entries
+        .into_iter()
+        .map(|entry| match entry {
+            MenuEntry::Separator => Item::Separator,
+            MenuEntry::Item(label, item) => Item::new(label, msg(LayerWalkMsg::MenuItem(item))),
+            MenuEntry::Disabled(label, reason) => Item::disabled(label, reason),
         })
-        .width(Length::Fixed(MENU_W))
-        .into()
-}
-
-/// One menu row, pressed through a `mouse_area`: `iced_aw::ContextMenu` keeps
-/// its overlay element in the widget struct, so `diff` wipes the overlay
-/// subtree on every view pass and a `button` inside it loses its press state
-/// before the release lands (see the xref manager's root-cause pin).
-fn menu_row(
-    label: Cow<'static, str>,
-    on_press: Option<Message>,
-    disabled: Option<Cow<'static, str>>,
-) -> Element<'static, Message> {
-    let greyed = disabled.is_some();
-    let body = container(
-        row![text(label).size(12), iced::widget::Space::new().width(Fill)].align_y(iced::Center),
-    )
-    .padding([4, 12])
-    .height(Length::Fixed(MENU_ROW_H))
-    .width(Fill)
-    .style(move |theme: &Theme| container::Style {
-        text_color: Some(if greyed {
-            theme.palette().background.base.text.scale_alpha(0.4)
-        } else {
-            theme.palette().background.base.text
-        }),
-        ..Default::default()
-    });
-    let mut area = mouse_area(body);
-    if let Some(message) = on_press {
-        area = area.on_press(message);
-    }
-    let area = area.interaction(if greyed {
-        iced::mouse::Interaction::None
-    } else {
-        iced::mouse::Interaction::Pointer
-    });
-    match disabled {
-        Some(reason) => tooltip(
-            area,
-            text(reason).size(10),
-            iced::widget::tooltip::Position::Right,
-        )
-        .gap(4)
-        .into(),
-        None => area.into(),
-    }
-}
-
-fn menu_separator() -> Element<'static, Message> {
-    container(
-        container(iced::widget::Space::new().height(Length::Fixed(1.0)))
-            .style(|theme: &Theme| container::Style {
-                background: Some(Background::Color(theme.palette().background.neutral.color)),
-                ..Default::default()
-            })
-            .width(Fill),
-    )
-    .padding([2, 8])
-    .height(Length::Fixed(MENU_SEP_H))
-    .width(Fill)
-    .into()
+        .collect();
+    crate::ui::palette_menu::menu(items)
 }
 
 // ── Inline dialogs ────────────────────────────────────────────────────────
@@ -1371,7 +1272,8 @@ fn menu_separator() -> Element<'static, Message> {
 /// The purge confirmation the footer's Purge button raises.
 pub fn purge_confirm_card(count: usize) -> Element<'static, Message> {
     card(column![
-        text(crate::tr!("layer-walk", "purge-question", count = count)).size(12),
+        text(crate::tr!("layer-walk", "purge-question", count = count))
+            .size(crate::ui::style::text::UI_LARGE),
         iced::widget::Space::new().height(6),
         row![
             dialog_btn(t!("Yes"), LayerWalkMsg::PurgeConfirm(true)),
@@ -1384,14 +1286,16 @@ pub fn purge_confirm_card(count: usize) -> Element<'static, Message> {
 /// The Inspect dialog: walk totals.
 pub fn inspect_card(total: usize, selected: usize, objects: usize) -> Element<'static, Message> {
     card(column![
-        text(crate::tr!("layer-walk", "inspect-total", count = total)).size(12),
+        text(crate::tr!("layer-walk", "inspect-total", count = total))
+            .size(crate::ui::style::text::UI_LARGE),
         text(crate::tr!(
             "layer-walk",
             "inspect-selected",
             count = selected
         ))
-        .size(12),
-        text(crate::tr!("layer-walk", "inspect-objects", count = objects)).size(12),
+        .size(crate::ui::style::text::UI_LARGE),
+        text(crate::tr!("layer-walk", "inspect-objects", count = objects))
+            .size(crate::ui::style::text::UI_LARGE),
         iced::widget::Space::new().height(6),
         dialog_btn(t!("OK"), LayerWalkMsg::InspectClose),
     ])
@@ -1402,9 +1306,9 @@ fn card(body: iced::widget::Column<'static, Message>) -> Element<'static, Messag
         .padding(10)
         .width(Length::Fixed(300.0))
         .style(|theme: &Theme| container::Style {
-            background: Some(Background::Color(theme.palette().background.base.color)),
+            background: Some(Background::Color(chrome::palette_body(theme))),
             border: Border {
-                color: theme.palette().background.strong.color,
+                color: chrome::hover(theme),
                 width: 1.0,
                 radius: 4.0.into(),
             },
@@ -1414,7 +1318,7 @@ fn card(body: iced::widget::Column<'static, Message>) -> Element<'static, Messag
 }
 
 fn dialog_btn<'a>(label: Cow<'static, str>, message: LayerWalkMsg) -> Element<'a, Message> {
-    button(text(label).size(11))
+    button(text(label).size(crate::ui::style::text::UI))
         .on_press(msg(message))
         .style(button::text)
         .padding([4, 12])
@@ -1432,8 +1336,8 @@ fn footer_check<'a>(
     checkbox(checked)
         .label(label)
         .on_toggle(move |on| msg(m(on)))
-        .size(13)
-        .text_size(10)
+        .size(crate::ui::style::text::UI_TITLE)
+        .text_size(crate::ui::style::text::UI_SMALL)
         .into()
 }
 
@@ -1451,31 +1355,22 @@ fn footer_btn<'a>(
             } else {
                 crate::ui::icons::themed_disabled(icon, 12.0)
             },
-            text(label).size(11),
+            text(label).size(crate::ui::style::text::UI),
         ]
         .spacing(5)
         .align_y(iced::Center),
     )
-    .style(move |theme: &Theme, status| {
-        let palette = theme.palette();
-        let pair = match status {
-            button::Status::Hovered if enabled => palette.background.strong,
-            _ => palette.background.weak,
-        };
-        button::Style {
-            background: Some(Background::Color(pair.color)),
-            border: Border {
-                radius: 3.0.into(),
-                color: palette.background.neutral.color,
-                width: 1.0,
-            },
-            text_color: if enabled {
-                pair.text
-            } else {
-                pair.text.scale_alpha(0.42)
-            },
-            ..Default::default()
-        }
+    .style(move |theme: &Theme, status| button::Style {
+        background: Some(Background::Color(match status {
+            button::Status::Hovered if enabled => chrome::hover(theme),
+            _ => chrome::palette_bar(theme),
+        })),
+        text_color: if enabled {
+            chrome::text(theme)
+        } else {
+            chrome::muted(theme)
+        },
+        ..Default::default()
     })
     .padding([4, 10]);
     if enabled {

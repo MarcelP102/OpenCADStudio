@@ -4,7 +4,7 @@
 
 use crate::app::Message;
 use crate::ui::style::{chrome, palette_metrics as pm, text as ui_text};
-use iced::widget::{button, column, container, row, text, Space};
+use iced::widget::{column, container, mouse_area, row, text, Space};
 use iced::{Background, Border, Element, Length, Theme};
 
 /// The mark before an item's label.
@@ -30,6 +30,8 @@ pub enum Item {
         dirty: bool,
         /// `None` shows the item disabled.
         on_press: Option<Box<Message>>,
+        /// A tooltip beside the item (why a disabled item is disabled).
+        tip: Option<String>,
     },
     Separator,
     /// A muted caption over the items after it ("EXPAND BY").
@@ -45,6 +47,19 @@ impl Item {
             label: label.into(),
             dirty: false,
             on_press: Some(Box::new(on_press)),
+            tip: None,
+        }
+    }
+
+    /// A greyed item that does nothing, with `reason` as its tooltip.
+    pub fn disabled(label: impl Into<String>, reason: impl Into<String>) -> Self {
+        Item::Action {
+            mark: Mark::None,
+            icon: None,
+            label: label.into(),
+            dirty: false,
+            on_press: None,
+            tip: Some(reason.into()),
         }
     }
 
@@ -119,20 +134,6 @@ const RADIO_DOT: f32 = 6.0;
 /// Size of an item's icon.
 const ITEM_ICON: f32 = 16.0;
 
-fn item_style(theme: &Theme, status: button::Status) -> button::Style {
-    button::Style {
-        background: matches!(status, button::Status::Hovered | button::Status::Pressed)
-            .then(|| Background::Color(chrome::hover(theme))),
-        text_color: if matches!(status, button::Status::Disabled) {
-            chrome::muted(theme)
-        } else {
-            chrome::text(theme)
-        },
-        border: Border::default(),
-        ..Default::default()
-    }
-}
-
 /// One item as a row: mark, optional icon, label, optional dirty dot.
 fn item<'a>(it: Item) -> Element<'a, Message> {
     match it {
@@ -165,6 +166,7 @@ fn item<'a>(it: Item) -> Element<'a, Message> {
             label,
             dirty,
             on_press,
+            tip,
         } => {
             let mut content = row![mark_cell(mark)].align_y(iced::Center);
             if let Some(art) = icon {
@@ -183,16 +185,48 @@ fn item<'a>(it: Item) -> Element<'a, Message> {
             if dirty {
                 content = content.push(dot(pm::DIRTY_DOT, chrome::text));
             }
-            button(
+            // Pressed through a `mouse_area`, not a button: an
+            // `iced_aw::ContextMenu` rebuilds its overlay on every view pass,
+            // and a button there loses its press before the release lands.
+            let enabled = on_press.is_some();
+            let lit = move |hovered: bool| {
+                move |theme: &Theme| container::Style {
+                    background: (hovered && enabled)
+                        .then(|| Background::Color(chrome::hover(theme))),
+                    text_color: Some(if enabled {
+                        chrome::text(theme)
+                    } else {
+                        chrome::muted(theme)
+                    }),
+                    ..Default::default()
+                }
+            };
+            let body = |hovered: bool| {
+                container(Space::new())
+                    .width(Length::Fill)
+                    .height(Length::Fixed(pm::MENU_ITEM_H))
+                    .style(lit(hovered))
+            };
+            let face = container(
                 content
                     .height(Length::Fixed(pm::MENU_ITEM_H))
                     .padding(iced::Padding::ZERO.right(pm::MENU_PAD_X)),
             )
-            .on_press_maybe(on_press.map(|m| *m))
-            .padding(0)
             .width(Length::Fill)
-            .style(item_style)
-            .into()
+            .style(lit(false));
+            let mut area = mouse_area(iced::widget::stack![
+                iced::widget::hover(body(false), body(true)),
+                face
+            ]);
+            if let Some(m) = on_press {
+                area = area
+                    .on_press(*m)
+                    .interaction(iced::mouse::Interaction::Pointer);
+            }
+            match tip {
+                Some(tip) => crate::ui::kit::tooltip(area, tip, crate::ui::kit::TipPosition::Right),
+                None => area.into(),
+            }
         }
     }
 }
