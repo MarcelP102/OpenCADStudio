@@ -81,6 +81,49 @@ pub fn box_button_style(
     }
 }
 
+/// A pick list in a palette: the `palette_bar` box, accent edge while
+/// open, 11 px text (use with `.text_size(text::UI)` and [`BOX_PAD`]).
+pub fn pick_list_style(
+    theme: &Theme,
+    status: iced::widget::pick_list::Status,
+) -> iced::widget::pick_list::Style {
+    use iced::widget::pick_list::Status;
+    let (background, edge) = match status {
+        Status::Opened { .. } => (chrome::palette_bar(theme), chrome::accent(theme)),
+        Status::Hovered => (chrome::hover(theme), chrome::hover(theme)),
+        Status::Active | Status::Disabled => {
+            (chrome::palette_bar(theme), chrome::palette_bar(theme))
+        }
+    };
+    iced::widget::pick_list::Style {
+        text_color: chrome::text(theme),
+        placeholder_color: chrome::muted(theme),
+        handle_color: chrome::text(theme),
+        background: Background::Color(background),
+        border: iced::Border {
+            color: edge,
+            width: pm::LINE,
+            radius: 0.0.into(),
+        },
+    }
+}
+
+/// The list a palette pick list opens: the palette menu's look.
+pub fn pick_menu_style(theme: &Theme) -> iced::overlay::menu::Style {
+    iced::overlay::menu::Style {
+        background: Background::Color(chrome::palette_body(theme)),
+        border: iced::Border {
+            color: chrome::edge(theme),
+            width: pm::LINE,
+            radius: 0.0.into(),
+        },
+        text_color: chrome::text(theme),
+        selected_text_color: chrome::strong(theme),
+        selected_background: Background::Color(chrome::row_selected(theme)),
+        shadow: iced::Shadow::default(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

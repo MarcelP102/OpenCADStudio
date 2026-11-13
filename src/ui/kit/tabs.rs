@@ -54,3 +54,33 @@ pub fn tabs<'a>(items: Vec<(String, Message)>, active: usize) -> Element<'a, Mes
             }),
     )
 }
+
+/// One vertical tab along a palette's side (Tool Palettes, Authoring
+/// Palettes): its name in capitals reading upward, the open one on the
+/// palette body and the others on the strip, as the palette strip shows
+/// them.
+pub fn side_tab<'a>(name: &str, selected: bool, message: Message) -> Element<'a, Message> {
+    let height = crate::ui::dock::strip_tab_h(name, crate::ui::dock::StripNames::NamesOnly);
+    button(
+        iced::widget::canvas(crate::ui::dock::VerticalLabel {
+            text: name.to_uppercase(),
+            centered: true,
+        })
+        .width(Length::Fill)
+        .height(height),
+    )
+    .on_press(message)
+    .width(pm::STRIP_BODY_W)
+    .padding(0)
+    .style(move |theme: &Theme, status| button::Style {
+        background: Some(Background::Color(if selected {
+            chrome::palette_body(theme)
+        } else if status == button::Status::Hovered {
+            chrome::hover(theme)
+        } else {
+            chrome::strip(theme)
+        })),
+        ..Default::default()
+    })
+    .into()
+}

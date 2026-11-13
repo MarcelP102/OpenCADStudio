@@ -9,6 +9,9 @@ use iced::Element;
 /// Where a tooltip opens.
 pub use iced::widget::tooltip::Position as TipPosition;
 
+/// How long the pointer rests before a tooltip shows, as on the ribbon.
+const TIP_DELAY_MS: u64 = 400;
+
 /// `content` with `tip` shown beside it at `position`.
 pub fn tooltip<'a>(
     content: impl Into<Element<'a, Message>>,
@@ -22,6 +25,7 @@ pub fn tooltip<'a>(
         position,
     )
     .gap(pm::TOOL_GAP)
+    .delay(std::time::Duration::from_millis(TIP_DELAY_MS))
     .style(crate::ui::ribbon::tooltip_style)
     .into()
 }
