@@ -1058,7 +1058,7 @@ impl XrefManagerPanel {
         // Horizontal split divider between the table and the lower pane:
         // grabs vertically to give the table more (or less) height.
         let split = mouse_area(
-            container(iced::widget::Space::new().height(Length::Fixed(pm::SPLITTER_H)))
+            iced::widget::canvas(crate::ui::dock::SplitterGrip { active: false })
                 .width(Fill)
                 .height(Length::Fixed(pm::SPLITTER_H)),
         )
