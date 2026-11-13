@@ -942,8 +942,7 @@ impl PropertiesPanel {
                 iced::widget::scrollable::Scrollbar::new()
                     .width(crate::ui::style::palette_metrics::SCROLLBAR_W)
                     .scroller_width(crate::ui::style::palette_metrics::SCROLL_THUMB_W)
-                    .margin(0)
-                    .spacing(0),
+                    .margin(0),
             ))
             .style(crate::ui::prop_grid::scroll_style)
             .width(Length::Fill)

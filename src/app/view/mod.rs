@@ -4160,7 +4160,7 @@ fn doc_tab_menu_items(
     for (idx, tab) in drawings {
         items.push(
             Item::new(
-                crate::ui::text_util::elide(&tab.tab_display_name(), DOC_TAB_NAME_CHARS),
+                tab.tab_display_name(),
                 Message::DocTabMenu(false, Some(idx)),
             )
             .mark(Mark::Check(idx == active_tab))
@@ -4207,8 +4207,6 @@ fn doc_tab_layout_items(
         .collect()
 }
 
-/// Characters of a drawing's name shown on its tab.
-const DOC_TAB_NAME_CHARS: usize = 24;
 
 /// A flat square button of the tab bar (+, ☰, a tab's ×): lit by
 /// `chrome::hover` while hovered.
@@ -4226,7 +4224,8 @@ fn tab_bar_button_style(theme: &Theme, status: button::Status) -> button::Style 
 /// tabs filling it — the inactive ones `tab_inactive`, the active one
 /// `palette_body` joined to the 2 px `palette_body` line under the bar —
 /// 1 px apart, a + after the last tab and a ☰ menu at the far right. A tab
-/// shows a dot before its name while unsaved and always its ×. The Start
+/// shows its whole file name, a dot before it while unsaved, and always
+/// the palette's close button. The Start
 /// page lives in the ☰ menu, which a right-click on the empty bar opens at
 /// the pointer too; it also sets whether the bar runs above the palettes
 /// or (by default) between them. Resting on a tab lists its drawing's
@@ -4261,7 +4260,8 @@ pub(super) fn doc_tab_bar<'a>(
         } else {
             chrome::tab_text
         };
-        let name = crate::ui::text_util::elide(&tab.tab_display_name(), DOC_TAB_NAME_CHARS);
+        // The whole file name, always: no shortening, so no tooltip either.
+        let name = tab.tab_display_name();
         let mut title = row![].spacing(pm::TAB_INNER_GAP).align_y(iced::Center);
         if tab.dirty {
             title = title.push(palette_menu::dot(pm::DIRTY_DOT, tab_text));
@@ -4288,22 +4288,11 @@ pub(super) fn doc_tab_bar<'a>(
         } else {
             chrome::muted
         };
-        let close_btn = button(
-            container(
-                text("×")
-                    .size(ui_text::UI)
-                    .line_height(ui_text::line())
-                    .style(move |theme: &Theme| iced::widget::text::Style {
-                        color: Some(close(theme)),
-                    }),
-            )
-            .center(Fill),
-        )
-        .on_press(Message::TabClose(tab.id))
-        .width(iced::Length::Fixed(pm::TAB_CLOSE))
-        .height(iced::Length::Fixed(pm::TAB_CLOSE))
-        .padding(0)
-        .style(tab_bar_button_style);
+        // The same close button as a palette's title bar.
+        let close_btn = crate::ui::dock::title_button(
+            crate::ui::icons::tinted(crate::ui::icons::CLOSE, pm::TITLE_ICON, close),
+            Message::TabClose(tab.id),
+        );
         let tab_container = container(
             row![
                 title_btn,
@@ -4328,8 +4317,8 @@ pub(super) fn doc_tab_bar<'a>(
 
         let has_current_path = tab.current_path.is_some();
         let has_other_drawings = drag_targets.len() > 1;
-        // Resting on the tab lists its layouts; the path shows there as
-        // the list's title would, so the tab carries no tooltip of its own.
+        // Resting on the tab lists its layouts. The tab shows the whole
+        // file name, so it carries no tooltip.
         let tab_target: Element<'_, Message> = if layouts_open == Some(idx) {
             let layouts = doc_tab_layout_items(tab, idx, is_active);
             let layouts_w = palette_menu::width(&layouts);
@@ -4338,20 +4327,6 @@ pub(super) fn doc_tab_bar<'a>(
                 .width(layouts_w)
                 .on_dismiss(Message::DocTabLayoutsClose)
                 .into()
-        } else if let Some(path) = &tab.current_path {
-            iced::widget::tooltip(
-                tab_container,
-                container(
-                    text(path.to_string_lossy().into_owned())
-                        .size(ui_text::UI)
-                        .line_height(ui_text::line()),
-                )
-                .style(palette_menu::frame_style)
-                .padding([pm::TOOL_GAP, pm::MENU_PAD_X]),
-                iced::widget::tooltip::Position::Bottom,
-            )
-            .gap(pm::TOOL_GAP)
-            .into()
         } else {
             tab_container.into()
         };

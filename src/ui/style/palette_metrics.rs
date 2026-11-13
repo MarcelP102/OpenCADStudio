@@ -35,6 +35,9 @@ pub const STRIP_NAME_GAP: f32 = 4.0;
 
 /// Height of a palette's title bar.
 pub const TITLE_H: f32 = 23.0;
+/// Top of the title's 16 px line box in the bar, so its capitals are
+/// centred on the bar (and on its buttons).
+pub const TITLE_TEXT_TOP: f32 = 4.0;
 /// Left padding of the title text.
 pub const TITLE_PAD_X: f32 = 8.0;
 /// Size of a title-bar button (☰, pin, detach, close).
@@ -95,8 +98,6 @@ pub const TAB_PAD_X: f32 = 10.0;
 pub const TAB_INNER_GAP: f32 = 6.0;
 /// Size of the dirty dot.
 pub const DIRTY_DOT: f32 = 6.0;
-/// Size of a tab's close button.
-pub const TAB_CLOSE: f32 = 16.0;
 /// Width of the + and ☰ buttons in the tab bar.
 pub const TAB_BUTTON_W: f32 = 24.0;
 /// Delay before the layouts list of a hovered tab opens, in milliseconds.

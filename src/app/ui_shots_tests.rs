@@ -215,11 +215,23 @@ fn ui_shots() {
             app.dock_title_hover = Some(PanelId::Properties);
             shot(&mut app, &dir, "stack", None);
         }
+        if wanted("props-scroll") {
+            use crate::ui::dock::{DockGroup, PanelId};
+            let mut app = app();
+            app.show_layers = true;
+            app.dock.left = vec![DockGroup::stack(vec![PanelId::Properties, PanelId::Layers])];
+            let _ = app.run_command_line("LINE 0,0 100,50 ");
+            let _ = app.run_command_line("SELECT ALL ");
+            shot(&mut app, &dir, "props-scroll", None);
+        }
         if wanted("tabs") {
             let mut app = app();
             let _ = app.update(Message::TabNew);
             let _ = app.update(Message::TabNew);
             let i = app.active_tab;
+            app.tabs[i].current_path = Some(std::path::PathBuf::from(
+                "C:/Projects/Office building - ground floor plan rev C.dwg",
+            ));
             app.tabs[i].dirty = true;
             shot(&mut app, &dir, "tabs", None);
             app.doc_tab_menu = true;

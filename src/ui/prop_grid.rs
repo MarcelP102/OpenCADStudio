@@ -189,9 +189,10 @@ pub fn category_bar<'a>(
 
 /// The scroll area of a grid: insets `GRID_INSET_L` on the left and
 /// `GRID_INSET_R` on the right, the right one always reserved as the
-/// scrollbar's gutter (the bar draws in it, over nothing), so the grid
-/// keeps its width whether or not the bar shows. A `SCROLLBAR_W` rail with
-/// a `SCROLL_THUMB_W` thumb centred.
+/// scrollbar's gutter. The bar floats in that gutter, over nothing, so the
+/// grid keeps its width whether or not the bar shows (an embedded bar
+/// would take room of its own and push the grid left when it appears). A
+/// `SCROLLBAR_W` rail with a `SCROLL_THUMB_W` thumb centred.
 pub fn scroll_area<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     let content = container(content).padding(Padding {
         left: pm::GRID_INSET_L,
@@ -203,8 +204,7 @@ pub fn scroll_area<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, 
             scrollable::Scrollbar::new()
                 .width(pm::SCROLLBAR_W)
                 .scroller_width(pm::SCROLL_THUMB_W)
-                .margin(0)
-                .spacing(0),
+                .margin(0),
         ))
         .width(Length::Fill)
         .height(Length::Fill)

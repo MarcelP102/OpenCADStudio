@@ -1368,7 +1368,10 @@ pub fn title_bar_with<'a>(
             None => Space::new().width(0).height(0).into(),
         };
     }
-    let mut bar = row![
+    // The title's line box is placed at a whole pixel so its capitals sit
+    // centred on the bar, level with the buttons (centring the 16 px line
+    // in the 23 px bar would land on a half pixel, above the middle).
+    let title = container(
         text(title.to_uppercase())
             .size(ui_text::UI_TITLE)
             .line_height(ui_text::large_line())
@@ -1376,11 +1379,13 @@ pub fn title_bar_with<'a>(
             .style(|theme: &Theme| iced::widget::text::Style {
                 color: Some(tokens::title_text(theme)),
             }),
-        Space::new().width(Length::Fill)
-    ]
+    )
     .height(Length::Fixed(pm::TITLE_H))
-    .padding(iced::Padding::ZERO.left(pm::TITLE_PAD_X).right(TITLE_PAD_R))
-    .align_y(iced::Center);
+    .padding(iced::Padding::ZERO.top(pm::TITLE_TEXT_TOP));
+    let mut bar = row![title, Space::new().width(Length::Fill)]
+        .height(Length::Fixed(pm::TITLE_H))
+        .padding(iced::Padding::ZERO.left(pm::TITLE_PAD_X).right(TITLE_PAD_R))
+        .align_y(iced::Center);
     if chrome.title_hovered {
         #[cfg(not(target_arch = "wasm32"))]
         {
