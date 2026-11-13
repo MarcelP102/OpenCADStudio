@@ -1326,7 +1326,7 @@ pub fn strip_hit(y: f32, layout: &[StripGroup]) -> StripHit {
 
 use crate::app::Message;
 use iced::widget::{button, container, mouse_area, row, text, tooltip, Space};
-use iced::{Background, Border, Color, Element, Length, Theme};
+use iced::{Background, Element, Length, Theme};
 
 /// How a panel is framed where it is shown, passed to its view so the shared
 /// chrome can adapt.
@@ -1551,63 +1551,6 @@ pub fn menu_button<'a>(message: Message, tip: String) -> Element<'a, Message> {
         tip,
         tooltip::Position::Bottom,
     )
-}
-
-/// Side length of a panel toolbar button's icon.
-pub const TOOL_H: f32 = 22.0;
-
-/// A panel toolbar icon button, placed on the row under the title bar.
-pub fn tool_button<'a>(
-    icon: Element<'a, Message>,
-    tip: String,
-    message: Message,
-) -> Element<'a, Message> {
-    let button = button(icon)
-        .on_press(message)
-        .width(Length::Fixed(TOOL_H + 8.0))
-        .height(Length::Fixed(TOOL_H + 8.0))
-        .style(|theme: &Theme, status| button::Style {
-            background: Some(Background::Color(match status {
-                button::Status::Hovered | button::Status::Pressed => {
-                    theme.palette().background.strong.color
-                }
-                _ => Color::TRANSPARENT,
-            })),
-            border: Border {
-                radius: 3.0.into(),
-                ..Default::default()
-            },
-            text_color: crate::ui::window::block_palette::block_icon_button_text_color(
-                theme, status,
-            ),
-            ..Default::default()
-        });
-    tooltip(button, text(tip).size(10), tooltip::Position::Bottom)
-        .gap(4)
-        .into()
-}
-
-/// A docked panel's body: its title bar flush along the top (as on the
-/// Properties panel), then the padded content; fixed width, full height, on
-/// the base background with a neutral edge.
-pub fn frame<'a>(
-    title_bar: Element<'a, Message>,
-    content: impl Into<Element<'a, Message>>,
-    width: f32,
-) -> Element<'a, Message> {
-    container(iced::widget::column![
-        title_bar,
-        container(content).padding(6).height(Length::Fill)
-    ])
-    .width(Length::Fixed(width))
-    .height(Length::Fill)
-    .style(|theme: &Theme| container::Style {
-        background: Some(Background::Color(crate::ui::style::chrome::palette_body(
-            theme,
-        ))),
-        ..Default::default()
-    })
-    .into()
 }
 
 /// The splitter between stacked palettes: a `SPLITTER_H` bar in

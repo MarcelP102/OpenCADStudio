@@ -3,6 +3,8 @@ name: Tests
 # Runs the workspace tests on every push to main and on every pull request,
 # on Linux, Windows and macOS. A separate lint job reports rustfmt and clippy
 # results without blocking merges until the existing tree has been cleaned up.
+# The palette audit job fails when a palette file gains generic colours or
+# literal sizes.
 
 on:
   push:
@@ -81,3 +83,15 @@ jobs:
       - name: cargo clippy
         continue-on-error: true
         run: cargo clippy --workspace --all-targets --locked
+
+  palette-audit:
+    name: palette audit
+    runs-on: ubuntu-22.04
+    # Blocking: a palette file may not gain generic iced colours or literal
+    # sizes (docs/ui/PALETTE_FAMILY_PLAN.md). The counts in
+    # docs/ui/audit_counts.txt only go down.
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Palette tokens
+        run: sh docs/ui/audit_counts.sh --check

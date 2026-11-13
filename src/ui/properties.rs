@@ -11,6 +11,7 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::{fmt, sync::Arc};
 
 use crate::t;
+use crate::ui::style::text as ui_text;
 use document::types::{Color as AcadColor, LineWeight};
 use document::Handle;
 use iced::widget::{
@@ -22,13 +23,8 @@ use iced::{
 };
 
 // ── Row-height-derived constants ─────────────────────────────────────────
-/// Height of a property row: the palette grid's (the other windows keep
-/// `crate::ui::ROW_H` until they move onto the grid).
+/// Height of a property row: the palette grid's.
 const ROW_H: f32 = crate::ui::style::palette_metrics::ROW_H;
-const FONT_SZ: f32 = crate::ui::style::text::UI;
-/// Whole-pixel vertical padding so a combo / input with a `text::UI_LINE`
-/// line height and a 1 px border fills `ROW_H`.
-const COMBO_PAD_V: f32 = ((ROW_H - crate::ui::style::text::UI_LINE - 2.0) / 2.0).floor();
 /// Width of the Quick Properties panel.
 const QUICK_W: f32 = 260.0;
 const PATTERN_CARD_W: f32 = 158.0;
@@ -286,7 +282,7 @@ pub(crate) fn hatch_pattern_picker_content<'a>(
         .id(iced::widget::Id::new(search_id))
         .on_input(on_search)
         .on_submit(on_confirm)
-        .size(FONT_SZ)
+        .size(ui_text::UI)
         .line_height(crate::ui::style::text::line())
         .padding([5, 7])
         .width(Length::Fill);
@@ -306,7 +302,7 @@ pub(crate) fn hatch_pattern_picker_content<'a>(
                     preview,
                     container(
                         text(crate::ui::text_util::elide(&entry.name, 20))
-                            .size(FONT_SZ)
+                            .size(ui_text::UI)
                             .line_height(crate::ui::style::text::line())
                     )
                     .width(Length::Fill)
@@ -350,7 +346,7 @@ pub(crate) fn hatch_pattern_picker_content<'a>(
     let results: Element<'_, Message> = if visible.is_empty() {
         container(
             text(t!("No matching patterns"))
-                .size(FONT_SZ)
+                .size(ui_text::UI)
                 .line_height(crate::ui::style::text::line())
                 .style(hint_text_style),
         )
@@ -830,7 +826,7 @@ impl PropertiesPanel {
         // ── Title bar (entity type / "No Selection") ─────────────────────
         let title_content: Element<'_, Message> = if self.selection_groups.is_empty() {
             text(crate::ui::text_util::elide(&self.title, 34))
-                .size(FONT_SZ)
+                .size(ui_text::UI)
                 .line_height(crate::ui::style::text::line())
                 .style(muted_text_style)
                 .into()
@@ -841,7 +837,7 @@ impl PropertiesPanel {
                 self.selected_group.as_ref(),
                 Message::PropSelectionGroupChanged,
             )
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .padding([2, 6])
             .input_style(combo_input_style)
@@ -901,7 +897,7 @@ impl PropertiesPanel {
         }
         let title = container(
             text(crate::ui::text_util::elide(&self.title, 34))
-                .size(FONT_SZ)
+                .size(ui_text::UI)
                 .line_height(crate::ui::style::text::line())
                 .style(muted_text_style),
         )
@@ -1046,7 +1042,7 @@ impl PropertiesPanel {
                     .id(field.widget_id())
                     .on_input(move |value| Message::PropBlockInput { key, value })
                     .on_submit(Message::PropBlockCommit(key))
-                    .size(FONT_SZ)
+                    .size(ui_text::UI)
                     .line_height(crate::ui::style::text::line())
                     .style(text_input_style)
                     .padding(crate::ui::kit::FIELD_PAD)
@@ -1091,7 +1087,7 @@ impl PropertiesPanel {
                 let head = container(
                     row![
                         text(shown)
-                            .size(FONT_SZ)
+                            .size(ui_text::UI)
                             .line_height(crate::ui::style::text::line())
                             .width(Length::Fill),
                         caret
@@ -1113,7 +1109,7 @@ impl PropertiesPanel {
                     let msg = Message::PropBlockChoice { key, index };
                     let btn = button(
                         text(option.as_str())
-                            .size(FONT_SZ)
+                            .size(ui_text::UI)
                             .line_height(crate::ui::style::text::line()),
                     )
                     .on_press(msg.clone())
@@ -1239,11 +1235,11 @@ impl PropertiesPanel {
             selected.as_ref(),
             Message::PropLayerChanged,
         )
-        .size(FONT_SZ)
+        .size(ui_text::UI)
         .line_height(crate::ui::style::text::line())
         .padding(Padding {
-            top: COMBO_PAD_V,
-            bottom: COMBO_PAD_V,
+            top: crate::ui::kit::FIELD_PAD_Y,
+            bottom: crate::ui::kit::FIELD_PAD_Y,
             left: 6.0,
             right: 6.0,
         })
@@ -1383,11 +1379,11 @@ impl PropertiesPanel {
             Some(&selected),
             |item: LwItem| Message::PropLwChanged(item.0),
         )
-        .size(FONT_SZ)
+        .size(ui_text::UI)
         .line_height(crate::ui::style::text::line())
         .padding(Padding {
-            top: COMBO_PAD_V,
-            bottom: COMBO_PAD_V,
+            top: crate::ui::kit::FIELD_PAD_Y,
+            bottom: crate::ui::kit::FIELD_PAD_Y,
             left: 6.0,
             right: 6.0,
         })
@@ -1414,11 +1410,11 @@ impl PropertiesPanel {
                 value: item.0,
             },
         )
-        .size(FONT_SZ)
+        .size(ui_text::UI)
         .line_height(crate::ui::style::text::line())
         .padding(Padding {
-            top: COMBO_PAD_V,
-            bottom: COMBO_PAD_V,
+            top: crate::ui::kit::FIELD_PAD_Y,
+            bottom: crate::ui::kit::FIELD_PAD_Y,
             left: 6.0,
             right: 6.0,
         })
@@ -1436,11 +1432,11 @@ impl PropertiesPanel {
             None,
             |item: LwItem| Message::PropLwChanged(item.0),
         )
-        .size(FONT_SZ)
+        .size(ui_text::UI)
         .line_height(crate::ui::style::text::line())
         .padding(Padding {
-            top: COMBO_PAD_V,
-            bottom: COMBO_PAD_V,
+            top: crate::ui::kit::FIELD_PAD_Y,
+            bottom: crate::ui::kit::FIELD_PAD_Y,
             left: 6.0,
             right: 6.0,
         })
@@ -1465,11 +1461,11 @@ impl PropertiesPanel {
                 value: item.0,
             },
         )
-        .size(FONT_SZ)
+        .size(ui_text::UI)
         .line_height(crate::ui::style::text::line())
         .padding(Padding {
-            top: COMBO_PAD_V,
-            bottom: COMBO_PAD_V,
+            top: crate::ui::kit::FIELD_PAD_Y,
+            bottom: crate::ui::kit::FIELD_PAD_Y,
             left: 6.0,
             right: 6.0,
         })
@@ -1500,11 +1496,11 @@ impl PropertiesPanel {
             selected.as_ref(),
             |item: LinetypeItem| Message::PropLinetypeChanged(item.name),
         )
-        .size(FONT_SZ)
+        .size(ui_text::UI)
         .line_height(crate::ui::style::text::line())
         .padding(Padding {
-            top: COMBO_PAD_V,
-            bottom: COMBO_PAD_V,
+            top: crate::ui::kit::FIELD_PAD_Y,
+            bottom: crate::ui::kit::FIELD_PAD_Y,
             left: 6.0,
             right: 6.0,
         })
@@ -1546,7 +1542,7 @@ impl PropertiesPanel {
         .padding([0.0, crate::ui::style::palette_metrics::CELL_PAD_X]);
         let caret = crate::ui::kit::on_selected_row(caret);
         let label_text = text(shown)
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fill);
         let label_text = if varies {
@@ -1578,7 +1574,7 @@ impl PropertiesPanel {
             };
             let btn = button(
                 text(label.clone())
-                    .size(FONT_SZ)
+                    .size(ui_text::UI)
                     .line_height(crate::ui::style::text::line()),
             )
             .on_press(msg.clone())
@@ -1634,7 +1630,7 @@ impl PropertiesPanel {
             .id(prop_geom_field_id(field))
             .on_input(move |v| Message::PropGeomInput { field, value: v })
             .on_submit(Message::PropGeomCommit(field))
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .style(text_input_style)
             .padding(crate::ui::kit::FIELD_PAD)
@@ -1664,7 +1660,7 @@ impl PropertiesPanel {
             .id(prop_geom_field_id(field))
             .on_input(move |v| Message::PropGeomInput { field, value: v })
             .on_submit(Message::PropGeomCommit(field))
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .style(|theme: &Theme, status| text_input::Style {
                 // The wrapping container draws the border and background; keep
@@ -1679,8 +1675,8 @@ impl PropertiesPanel {
                 ..text_input_style(theme, status)
             })
             .padding(Padding {
-                top: COMBO_PAD_V,
-                bottom: COMBO_PAD_V,
+                top: crate::ui::kit::FIELD_PAD_Y,
+                bottom: crate::ui::kit::FIELD_PAD_Y,
                 left: 6.0,
                 right: 2.0,
             })
@@ -1715,8 +1711,8 @@ impl PropertiesPanel {
             }
         })
         .padding(Padding {
-            top: COMBO_PAD_V,
-            bottom: COMBO_PAD_V,
+            top: crate::ui::kit::FIELD_PAD_Y,
+            bottom: crate::ui::kit::FIELD_PAD_Y,
             left: 3.0,
             right: 4.0,
         });
@@ -1762,7 +1758,7 @@ impl PropertiesPanel {
             };
             let btn = button(
                 text(opt.as_str())
-                    .size(FONT_SZ)
+                    .size(ui_text::UI)
                     .line_height(crate::ui::style::text::line()),
             )
             .on_press(msg.clone())
@@ -1817,7 +1813,7 @@ impl PropertiesPanel {
                 value: v,
             })
             .on_submit(Message::PropPluginParamCommit(name.to_string()))
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .style(text_input_style)
             .padding(crate::ui::kit::FIELD_PAD)
@@ -1843,7 +1839,7 @@ impl PropertiesPanel {
                 value: v,
             })
             .on_submit(Message::PropAttrCommit(tag.to_string()))
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .style(text_input_style)
             .padding(crate::ui::kit::FIELD_PAD)
@@ -1886,7 +1882,7 @@ impl PropertiesPanel {
                 index,
                 field: ParamField::Name,
             })
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .style(text_input_style)
             .padding(crate::ui::kit::FIELD_PAD)
@@ -1910,7 +1906,7 @@ impl PropertiesPanel {
                 index,
                 field: ParamField::Formula,
             })
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .style(text_input_style)
             .padding(crate::ui::kit::FIELD_PAD)
@@ -1922,7 +1918,7 @@ impl PropertiesPanel {
         };
         let value_label = container(
             text(value_text)
-                .size(FONT_SZ)
+                .size(ui_text::UI)
                 .line_height(crate::ui::style::text::line())
                 .style(move |theme: &Theme| iced::widget::text::Style {
                     color: is_error.then_some(theme.palette().danger.base.color),
@@ -1933,7 +1929,7 @@ impl PropertiesPanel {
 
         let delete_btn = button(
             text("\u{2715}")
-                .size(FONT_SZ)
+                .size(ui_text::UI)
                 .line_height(crate::ui::style::text::line()),
         )
         .on_press(Message::PropParamDelete(index))
@@ -1964,7 +1960,7 @@ impl PropertiesPanel {
             tooltip(
                 content,
                 text(err.as_str())
-                    .size(FONT_SZ)
+                    .size(ui_text::UI)
                     .line_height(crate::ui::style::text::line()),
                 tooltip::Position::Top,
             )
@@ -1997,13 +1993,13 @@ impl PropertiesPanel {
         let head = button(
             row![
                 text(crate::ui::text_util::elide(current, 16))
-                    .size(FONT_SZ)
+                    .size(ui_text::UI)
                     .line_height(crate::ui::style::text::line())
                     .width(Length::Fill),
                 if self.hatch_pattern_picker_open && self.picker_here() {
-                    crate::ui::icons::themed_arrow_up(FONT_SZ)
+                    crate::ui::icons::themed_arrow_up(ui_text::UI)
                 } else {
-                    crate::ui::icons::themed_arrow_down(FONT_SZ)
+                    crate::ui::icons::themed_arrow_down(ui_text::UI)
                 },
             ]
             .align_y(iced::Center),
@@ -2031,7 +2027,7 @@ impl PropertiesPanel {
                 ..Default::default()
             }
         })
-        .padding([COMBO_PAD_V, 6.0])
+        .padding([crate::ui::kit::FIELD_PAD_Y, 6.0])
         .width(Length::Fill);
 
         if !(self.hatch_pattern_picker_open && self.picker_here()) {
@@ -2071,7 +2067,7 @@ fn render_stepper_row<'a>(label: &'a str, display: &'a str) -> Element<'a, Messa
     let arrow = |glyph: &'static str, delta: i8| {
         button(
             text(glyph)
-                .size(FONT_SZ)
+                .size(ui_text::UI)
                 .line_height(crate::ui::style::text::line()),
         )
         .on_press(Message::PropVertexStep(delta))
@@ -2097,7 +2093,7 @@ fn render_stepper_row<'a>(label: &'a str, display: &'a str) -> Element<'a, Messa
     let widget = iced::widget::row![
         arrow("◀", -1),
         text(display)
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fill)
             .align_x(iced::Center),
@@ -2116,7 +2112,7 @@ fn render_bool_row<'a>(label: &'a str, field: &'static str, value: bool) -> Elem
     };
     let btn = button(
         text(btn_label)
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .style(move |theme: &Theme| iced::widget::text::Style {
                 color: value.then_some(theme.palette().warning.base.color),
@@ -2269,7 +2265,7 @@ fn render_annotative_scale_row<'a>(label: &'a str, value: &'a str) -> Element<'a
 
     let manage = button(
         text("...")
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line()),
     )
     .on_press(Message::AnnoObjectScaleOpen)
@@ -2287,7 +2283,7 @@ fn render_hyperlink_row<'a>(label: &'a str, value: &'a str) -> Element<'a, Messa
     let field = crate::ui::kit::read_only_field(value);
     let manage = button(
         text("...")
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line()),
     )
     .on_press(Message::PropHyperlinkOpen)
@@ -2334,7 +2330,7 @@ fn render_entity_link_row<'a>(
 ) -> Element<'a, Message> {
     let link = button(
         text(label)
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fill),
     )
@@ -2364,7 +2360,7 @@ fn render_entity_link_row<'a>(
     .width(Length::Fill);
     let delete = button(
         text("\u{2715}")
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line()),
     )
     .on_press(Message::PropConstraintDelete(id))
@@ -2385,10 +2381,10 @@ fn render_param_add_row<'a>() -> Element<'a, Message> {
     let btn = button(
         row![
             text("+")
-                .size(FONT_SZ)
+                .size(ui_text::UI)
                 .line_height(crate::ui::style::text::line()),
             text(t!("Add parameter").into_owned())
-                .size(FONT_SZ)
+                .size(ui_text::UI)
                 .line_height(crate::ui::style::text::line())
         ]
         .spacing(6)
@@ -2413,7 +2409,7 @@ fn render_params_visibility_toggle_row<'a>(value: bool) -> Element<'a, Message> 
         row![
             crate::ui::icons::semantic(crate::ui::icons::layer_visible(value), 13.0),
             text(btn_label)
-                .size(FONT_SZ)
+                .size(ui_text::UI)
                 .line_height(crate::ui::style::text::line()),
         ]
         .spacing(6)
@@ -2444,7 +2440,7 @@ fn render_params_visibility_toggle_row<'a>(value: bool) -> Element<'a, Message> 
     container(
         row![
             text(t!("Values").into_owned())
-                .size(FONT_SZ)
+                .size(ui_text::UI)
                 .line_height(crate::ui::style::text::line())
                 .width(Length::Fill),
             btn

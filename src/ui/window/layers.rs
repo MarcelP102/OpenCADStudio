@@ -5,6 +5,7 @@ use crate::t;
 use crate::ui::kit;
 use crate::ui::properties::{lw_options, LinetypeItem, LwItem};
 use crate::ui::style::common::muted_style;
+use crate::ui::style::text as ui_text;
 use crate::ui::style::{chrome, palette_metrics as pm};
 use document::tables::layer::Layer as DocLayer;
 use document::tables::Table;
@@ -341,11 +342,10 @@ pub fn layer_is_protected(name: &str, current: &str) -> bool {
 // ── Row-height-derived constants ─────────────────────────────────────────
 use crate::ui::style::text::line as ui_line;
 /// SVG icon size inside a layer-table cell.
-/// Height of a layer-table row, the grid's row.
-const ROW_H: f32 = pm::ROW_H;
+/// Height of a layer-table row, the grid's row (also the step that
+/// scrolls a new layer into view).
+pub const ROW_H: f32 = pm::ROW_H;
 const ICON_SZ: f32 = pm::ROW_ICON;
-/// Font size for cell text.
-const FONT_SZ: f32 = crate::ui::style::text::UI;
 const LINETYPE_MENU_W: f32 = 220.0;
 /// Width of the toolbar's search field, wide and compact.
 const SEARCH_W: f32 = 170.0;
@@ -663,9 +663,7 @@ impl LayerPanel {
                 .name
                 .split_once('|')
                 .is_some_and(|(owner, _)| owner.eq_ignore_ascii_case(xref)),
-            TreeNode::ViewportOverrides => {
-                layer.vp_overridden.iter().any(|overridden| *overridden)
-            }
+            TreeNode::ViewportOverrides => layer.vp_overridden.iter().any(|overridden| *overridden),
             TreeNode::Group(group) => self
                 .groups
                 .iter()
@@ -848,12 +846,12 @@ impl LayerPanel {
                 && self.selected_object_layers.is_empty();
             let count: Element<'_, Message> = match count {
                 _ if no_selection => text("—")
-                    .size(FONT_SZ)
+                    .size(ui_text::UI)
                     .line_height(ui_line())
                     .style(muted_style)
                     .into(),
                 Some(n) => text(n.to_string())
-                    .size(FONT_SZ)
+                    .size(ui_text::UI)
                     .line_height(ui_line())
                     .style(move |theme: &Theme| text::Style {
                         color: Some(if chosen {
@@ -866,7 +864,7 @@ impl LayerPanel {
                 None => iced::widget::Space::new().width(0).into(),
             };
             let label = text(label)
-                .size(FONT_SZ)
+                .size(ui_text::UI)
                 .line_height(ui_line())
                 .wrapping(iced::widget::text::Wrapping::None)
                 .width(Fill);
@@ -896,7 +894,7 @@ impl LayerPanel {
                         .id(tree_rename_input_id())
                         .on_input(Message::LayerTreeRenameEdit)
                         .on_submit(Message::LayerTreeRenameCommit)
-                        .size(FONT_SZ)
+                        .size(ui_text::UI)
                         .line_height(ui_line())
                         .padding(kit::FIELD_PAD)
                         .width(Fill)
@@ -1024,7 +1022,7 @@ impl LayerPanel {
                     self.highlighted,
                     self.eye_layers.join(", ")
                 ))
-                .size(FONT_SZ)
+                .size(ui_text::UI)
                 .line_height(ui_line()),
             ]
             .spacing(pm::TOOL_GAP)
@@ -1035,22 +1033,27 @@ impl LayerPanel {
             row![
                 checkbox(self.invert)
                     .label(t!("Invert filter"))
-                    .text_size(FONT_SZ)
+                    .text_size(ui_text::UI)
                     .size(pm::CHECK)
                     .on_toggle(Message::LayerInvert),
                 lit,
                 iced::widget::Space::new().width(Length::Fill),
                 checkbox(ribbon_follows)
                     .label(t!("Ribbon list follows the tree"))
-                    .text_size(FONT_SZ)
+                    .text_size(ui_text::UI)
                     .size(pm::CHECK)
                     .on_toggle(Message::LayerRibbonFollows),
                 text(format!("{}:", t!("Current layer")))
-                    .size(FONT_SZ)
+                    .size(ui_text::UI)
                     .line_height(ui_line())
                     .style(muted_style),
-                text(self.current_layer.as_str()).size(FONT_SZ).line_height(ui_line()),
-                text(summary).size(FONT_SZ).line_height(ui_line()).style(muted_style),
+                text(self.current_layer.as_str())
+                    .size(ui_text::UI)
+                    .line_height(ui_line()),
+                text(summary)
+                    .size(ui_text::UI)
+                    .line_height(ui_line())
+                    .style(muted_style),
             ]
             .spacing(pm::GRID_INSET_L)
             .align_y(iced::Center),
@@ -1358,7 +1361,7 @@ impl LayerPanel {
                 .collect();
             crate::ui::dropdown_list::pick_list(Some(self.view.clone()), nodes, TreeNode::label)
                 .on_select(Message::LayerShow)
-                .text_size(FONT_SZ)
+                .text_size(ui_text::UI)
                 .padding(kit::BOX_PAD)
                 .width(Length::Fixed(NODE_PICKER_W))
                 .into()
@@ -1390,7 +1393,7 @@ impl LayerPanel {
         let sa = self.sort_asc;
         let mut header_row = row![
             text(t!("Status"))
-                .size(FONT_SZ)
+                .size(ui_text::UI)
                 .line_height(ui_line())
                 .font(kit::SEMIBOLD)
                 .wrapping(iced::widget::text::Wrapping::None)
@@ -1433,7 +1436,7 @@ impl LayerPanel {
         {
             header_row = header_row.push(
                 text(vp.label.as_str())
-                    .size(FONT_SZ)
+                    .size(ui_text::UI)
                     .line_height(ui_line())
                     .font(kit::SEMIBOLD)
                     .wrapping(iced::widget::text::Wrapping::None)
@@ -1758,7 +1761,7 @@ impl LayerPanel {
             },
         )
         .on_select(Message::LayerShow)
-        .text_size(FONT_SZ)
+        .text_size(ui_text::UI)
         .padding(kit::BOX_PAD)
         .width(Length::Fill);
         let mut top = column![tools, picker].spacing(pm::TOOL_GAP);
@@ -1788,11 +1791,11 @@ impl LayerPanel {
         kit::footer(
             row![
                 text(format!("{}:", t!("Current layer")))
-                    .size(FONT_SZ)
+                    .size(ui_text::UI)
                     .line_height(ui_line())
                     .style(muted_style),
                 text(self.current_layer.as_str())
-                    .size(FONT_SZ)
+                    .size(ui_text::UI)
                     .line_height(ui_line())
                     .wrapping(iced::widget::text::Wrapping::None),
                 text(format!(
@@ -1803,7 +1806,7 @@ impl LayerPanel {
                         self.layers.len()
                     )
                 ))
-                .size(FONT_SZ)
+                .size(ui_text::UI)
                 .line_height(ui_line())
                 .style(muted_style)
                 .wrapping(iced::widget::text::Wrapping::None),
@@ -1853,7 +1856,7 @@ fn column_chooser<'a>() -> Element<'a, Message> {
             row![
                 checkbox(shown)
                     .label(col.label())
-                    .text_size(FONT_SZ)
+                    .text_size(ui_text::UI)
                     .size(pm::CHECK)
                     .on_toggle(move |_| Message::LayerColumnToggle(col))
                     .width(Length::Fill),
@@ -1896,7 +1899,7 @@ fn sortable_header<'a>(
     asc: bool,
 ) -> Element<'a, Message> {
     let mut content = row![text(label)
-        .size(FONT_SZ)
+        .size(ui_text::UI)
         .line_height(ui_line())
         .font(kit::SEMIBOLD)
         .wrapping(iced::widget::text::Wrapping::None)]
@@ -2033,7 +2036,7 @@ fn toolbar_btn_cond<'a>(
 
 /// Hover popup showing a layer's full name when the cell truncates it.
 fn name_tip<'a>(name: &'a str) -> Element<'a, Message> {
-    container(text(name).size(FONT_SZ).line_height(ui_line()))
+    container(text(name).size(ui_text::UI).line_height(ui_line()))
         .padding(TIP_PAD)
         .style(crate::ui::palette_menu::frame_style)
         .into()
@@ -2041,7 +2044,7 @@ fn name_tip<'a>(name: &'a str) -> Element<'a, Message> {
 
 /// A tooltip with owned text, for the toolbar's icon-only buttons.
 fn name_tip_owned<'a>(label: Cow<'static, str>) -> Element<'a, Message> {
-    container(text(label).size(FONT_SZ).line_height(ui_line()))
+    container(text(label).size(ui_text::UI).line_height(ui_line()))
         .padding(TIP_PAD)
         .style(crate::ui::palette_menu::frame_style)
         .into()
@@ -2146,7 +2149,7 @@ fn layer_row<'a>(
             .id(rename_input_id())
             .on_input(Message::LayerRenameEdit)
             .on_submit(Message::LayerRenameCommit)
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(ui_line())
             .padding(kit::FIELD_PAD)
             .style(kit::field_style)
@@ -2162,7 +2165,7 @@ fn layer_row<'a>(
         let name_btn = mouse_area(
             container(
                 text(crate::ui::text_util::elide(&layer.name, name_budget))
-                    .size(FONT_SZ)
+                    .size(ui_text::UI)
                     .line_height(ui_line())
                     .wrapping(iced::widget::text::Wrapping::None),
             )
@@ -2224,7 +2227,7 @@ fn layer_row<'a>(
                 Some(&cur_lt_item),
                 |item: LinetypeItem| Message::LayerLinetypeSet(item.name),
             )
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(ui_line())
             .padding(kit::FIELD_PAD)
             .width(Length::Fixed(COL_LT))
@@ -2233,7 +2236,7 @@ fn layer_row<'a>(
         )
     } else {
         text(layer.linetype.as_str())
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(ui_line())
             .style(muted_style)
             .width(Length::Fixed(COL_LT))
@@ -2249,7 +2252,7 @@ fn layer_row<'a>(
             Some(&cur_lw_item),
             |item: LwItem| Message::LayerLineweightSet(item.0),
         )
-        .size(FONT_SZ)
+        .size(ui_text::UI)
         .line_height(ui_line())
         .padding(kit::FIELD_PAD)
         .width(Length::Fixed(COL_LW))
@@ -2257,7 +2260,7 @@ fn layer_row<'a>(
         .into()
     } else {
         text(cur_lw_item.to_string())
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(ui_line())
             .style(muted_style)
             .width(Length::Fixed(COL_LW))
@@ -2271,7 +2274,7 @@ fn layer_row<'a>(
     let mut trans_cell = text_input("0", &trans_str)
         .on_input(move |s| Message::LayerTransparencyEdit(lname_trans.clone(), s))
         .on_submit(Message::LayerTransparencyCommit)
-        .size(FONT_SZ)
+        .size(ui_text::UI)
         .line_height(ui_line())
         .padding(kit::FIELD_PAD)
         .style(cell_field_style)
@@ -2286,7 +2289,7 @@ fn layer_row<'a>(
     let mut desc_cell = text_input("—", desc_str)
         .on_input(move |s| Message::LayerDescriptionEdit(lname_desc.clone(), s))
         .on_submit(Message::LayerDescriptionCommit)
-        .size(FONT_SZ)
+        .size(ui_text::UI)
         .line_height(ui_line())
         .padding(kit::FIELD_PAD)
         .style(cell_field_style)
@@ -2297,7 +2300,7 @@ fn layer_row<'a>(
 
     // Objects: the count, and how many sit inside blocks when some do.
     let objects_text = text(layer.objects.to_string())
-        .size(FONT_SZ)
+        .size(ui_text::UI)
         .line_height(ui_line())
         .width(Length::Fixed(COL_OBJECTS))
         .align_x(iced::alignment::Horizontal::Right);
@@ -2506,14 +2509,14 @@ fn menu_item(
         }
         content = content.push(
             text(label.clone())
-                .size(FONT_SZ)
+                .size(ui_text::UI)
                 .line_height(ui_line())
                 .width(Fill),
         );
         if let Some(key) = key {
             content = content.push(
                 text(key)
-                    .size(FONT_SZ)
+                    .size(ui_text::UI)
                     .line_height(ui_line())
                     .style(muted_style),
             );
@@ -2654,7 +2657,7 @@ fn row_menu(name: &str, groups: &[(String, bool)], in_group: bool) -> Element<'s
         container(
             row![
                 text(crate::tr!("layer-groups", "add-to"))
-                    .size(FONT_SZ)
+                    .size(ui_text::UI)
                     .line_height(ui_line())
                     .width(Fill),
                 crate::ui::icons::themed_arrow_down(pm::CARET),

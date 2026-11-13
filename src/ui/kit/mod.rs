@@ -16,7 +16,7 @@
 //! | Scroll area | [`scroll_area`] |
 //! | Empty state | [`empty_state`] |
 //! | Footer | [`footer`] |
-//! | Frame | [`crate::ui::dock::frame`], [`crate::ui::dock::SplitterGrip`] |
+//! | Frame | [`palette`], [`band`], [`crate::ui::dock::SplitterGrip`] |
 //! | Menus, tooltips | [`crate::ui::palette_menu`], [`tooltip`] |
 //!
 //! Colours come from [`crate::ui::style::chrome`], text sizes from

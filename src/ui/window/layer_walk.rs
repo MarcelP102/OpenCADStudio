@@ -16,6 +16,7 @@ use crate::io::xref_model::wildcard_match;
 use crate::t;
 use crate::ui::kit;
 use crate::ui::style::common::muted_style;
+use crate::ui::style::text as ui_text;
 use crate::ui::style::{chrome, palette_metrics as pm};
 use document::tables::layer::Layer as DocLayer;
 use document::tables::Table;
@@ -33,11 +34,6 @@ use std::rc::Rc;
 /// Height of a walk row: the palette grid's.
 const ROW_H: f32 = pm::ROW_H;
 const ICON_SZ: f32 = pm::ROW_ICON;
-/// Cell text size (mirrors the Layer Manager table).
-const FONT_SZ: f32 = crate::ui::style::text::UI;
-/// Whole-pixel vertical padding so a combo / input with a `text::UI_LINE`
-/// line height and a 1 px border fills `ROW_H`.
-const COMBO_PAD_V: f32 = ((ROW_H - crate::ui::style::text::UI_LINE - 2.0) / 2.0).floor();
 
 // ── Messages ─────────────────────────────────────────────────────────────
 
@@ -727,7 +723,7 @@ fn view_content<'a>(
                 .size(crate::ui::style::text::UI_SMALL)
                 .style(muted_style),
         )
-        .padding([COMBO_PAD_V, pm::CELL_PAD_X])
+        .padding([crate::ui::kit::FIELD_PAD_Y, pm::CELL_PAD_X])
         .width(Length::Fixed(pm::NAME_COL_W))
         .style(kit::combo_container_style)
         .into()
@@ -738,9 +734,9 @@ fn view_content<'a>(
             session.saved_active.as_ref(),
             |name: String| msg(LayerWalkMsg::SavedFilterPick(name)),
         )
-        .size(FONT_SZ)
+        .size(ui_text::UI)
         .line_height(crate::ui::style::text::line())
-        .padding([COMBO_PAD_V, pm::CELL_PAD_X])
+        .padding([crate::ui::kit::FIELD_PAD_Y, pm::CELL_PAD_X])
         .width(Length::Fixed(pm::NAME_COL_W))
         .input_style(kit::combo_style)
         .into()
@@ -751,9 +747,9 @@ fn view_content<'a>(
     )
     .on_input(|s| msg(LayerWalkMsg::FilterEdit(s)))
     .on_submit(msg(LayerWalkMsg::FilterApply))
-    .size(FONT_SZ)
+    .size(ui_text::UI)
     .line_height(crate::ui::style::text::line())
-    .padding([COMBO_PAD_V, pm::CELL_PAD_X])
+    .padding([crate::ui::kit::FIELD_PAD_Y, pm::CELL_PAD_X])
     .width(Length::Fill)
     .style(kit::combo_style);
     // The Filter checkbox only does something while a pattern is active; with
@@ -1061,7 +1057,7 @@ fn walk_row(
         UNDERLYING_ALPHA
     };
     let mut label = text(crate::ui::text_util::elide(&row.name, 48))
-        .size(FONT_SZ)
+        .size(ui_text::UI)
         .line_height(crate::ui::style::text::line());
     if matches && !is_selected {
         label = label.font(iced::Font::DEFAULT.weight(iced::font::Weight::Semibold));
@@ -1080,7 +1076,7 @@ fn walk_row(
             .align_x(iced::Center),
             tooltip(
                 text(row.count.to_string())
-                    .size(FONT_SZ)
+                    .size(ui_text::UI)
                     .line_height(crate::ui::style::text::line())
                     .width(Length::Fixed(COL_COUNT))
                     .align_x(iced::Right),

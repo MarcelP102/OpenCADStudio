@@ -13,6 +13,7 @@ use crate::io::xref_model::{
 use crate::ui::kit;
 use crate::ui::palette_menu::{self, Item};
 use crate::ui::style::common::muted_style;
+use crate::ui::style::text as ui_text;
 use crate::ui::style::{chrome, palette_metrics as pm};
 use document::Document;
 use iced::widget::{button, column, container, mouse_area, row, scrollable, text};
@@ -27,8 +28,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// read-only list renders everywhere.
 const IS_WASM: bool = cfg!(target_arch = "wasm32");
 
-/// Font size for table cells (mirrors `layers.rs`).
-const FONT_SZ: f32 = crate::ui::style::text::UI;
 /// Fixed table height so the details pane below keeps stable space.
 const TABLE_H: f32 = 480.0;
 /// Minimum table area height under split dragging.
@@ -71,7 +70,7 @@ fn tree_indent(depth: u32) -> iced::widget::Row<'static, crate::app::Message> {
     }
     row
 }
-const TREE_FONT_SZ: f32 = FONT_SZ;
+const TREE_FONT_SZ: f32 = ui_text::UI;
 /// A row's side padding, the grid's inset.
 const ROW_PAD: Padding = Padding {
     top: 0.0,
@@ -799,7 +798,7 @@ impl XrefManagerPanel {
         let table_title: Element<'_, Message> = kit::band(
             row![
                 text(crate::t!("File References"))
-                    .size(FONT_SZ)
+                    .size(ui_text::UI)
                     .line_height(crate::ui::style::text::line())
                     .font(kit::SEMIBOLD)
                     .width(Fill),
@@ -824,7 +823,7 @@ impl XrefManagerPanel {
         for (i, label) in headers.into_iter().enumerate() {
             header_row = header_row.push(
                 text(label)
-                    .size(FONT_SZ)
+                    .size(ui_text::UI)
                     .line_height(crate::ui::style::text::line())
                     .font(kit::SEMIBOLD)
                     .wrapping(iced::widget::text::Wrapping::None)
@@ -1491,7 +1490,7 @@ fn menu_face(
 
 fn menu_label(label: String) -> iced::widget::Text<'static> {
     text(label)
-        .size(FONT_SZ)
+        .size(ui_text::UI)
         .line_height(crate::ui::style::text::line())
         .wrapping(iced::widget::text::Wrapping::None)
 }
@@ -1683,7 +1682,7 @@ fn xref_row<'a>(
         name_cell = name_cell.push(arrow);
     }
     let name_text: Element<'_, Message> = text(name)
-        .size(FONT_SZ)
+        .size(ui_text::UI)
         .line_height(crate::ui::style::text::line())
         .into();
     name_cell = name_cell.push(name_text);
@@ -1691,7 +1690,7 @@ fn xref_row<'a>(
     let status_cell: Element<'_, Message> = row![
         container(status_icon(entry.status)).align_y(iced::Center),
         text(status_text(entry.status))
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Fill),
     ]
@@ -1705,22 +1704,22 @@ fn xref_row<'a>(
         status_cell,
         gutter(),
         text(format_size(entry.size_bytes))
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[2])),
         gutter(),
         text(type_text(entry))
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[3])),
         gutter(),
         text(format_date(entry.modified))
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[4])),
         gutter(),
         text(entry.saved_path.clone())
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[5])),
     ]
@@ -1852,7 +1851,7 @@ fn host_row<'a>(
     }
     name_cell = name_cell.push({
         let name_text: Element<'_, Message> = text(name)
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .into();
         name_text
@@ -1862,27 +1861,27 @@ fn host_row<'a>(
         name_cell.width(Length::Fixed(cw[0])),
         gutter(),
         text(crate::t!("Opened"))
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[1])),
         gutter(),
         text("—")
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[2])),
         gutter(),
         text(crate::t!("Current"))
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[3])),
         gutter(),
         text("—")
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[4])),
         gutter(),
         text(saved)
-            .size(FONT_SZ)
+            .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[5])),
     ]
