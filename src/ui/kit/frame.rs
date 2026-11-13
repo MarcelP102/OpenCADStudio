@@ -1,0 +1,40 @@
+//! A palette's frame and its bands: the body every palette sits in, and
+//! the inset strip a toolbar, search field or selector stands in.
+
+use crate::app::Message;
+use crate::ui::style::{chrome, palette_metrics as pm};
+use iced::widget::{column, container};
+use iced::{Background, Element, Length, Padding, Theme};
+
+/// A palette: its title bar flush along the top and its bands below, on
+/// the palette body, `width` wide and full height. The bands set their own
+/// insets ([`band`], [`crate::ui::kit::scroll_area`]).
+pub fn palette<'a>(
+    title_bar: Element<'a, Message>,
+    bands: impl Into<Element<'a, Message>>,
+    width: f32,
+) -> Element<'a, Message> {
+    container(column![title_bar, container(bands).height(Length::Fill)])
+        .width(Length::Fixed(width))
+        .height(Length::Fill)
+        .style(|theme: &Theme| container::Style {
+            background: Some(Background::Color(chrome::palette_body(theme))),
+            text_color: Some(chrome::text(theme)),
+            ..Default::default()
+        })
+        .into()
+}
+
+/// A band of a palette (toolbar, search field, selector, tabs): `content`
+/// inset as the grid is, 8 px left and 10 px right, with a 4 px gap above.
+pub fn band<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(content)
+        .width(Length::Fill)
+        .padding(Padding {
+            top: pm::TOOL_GAP,
+            bottom: 0.0,
+            left: pm::GRID_INSET_L,
+            right: pm::GRID_INSET_R,
+        })
+        .into()
+}

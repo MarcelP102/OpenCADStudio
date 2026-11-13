@@ -234,6 +234,24 @@ fn ui_shots() {
             let _ = app.on_dock(DockMsg::TitleHover(PanelId::Layers));
             shot(&mut app, &dir, "float-hover", None);
         }
+        if wanted("family") {
+            // One shot per palette of the family, docked on the left.
+            use crate::ui::dock::{DockGroup, PanelId};
+            let palettes: Vec<(&str, PanelId, &str)> = std::env::var("UI_SHOTS_PALETTES")
+                .ok()
+                .map(|v| {
+                    v.split(',')
+                        .filter_map(|name| family_palette(name))
+                        .collect()
+                })
+                .unwrap_or_default();
+            for (name, id, command) in palettes {
+                let mut app = app();
+                let _ = app.dispatch_command(command);
+                app.dock.left = vec![DockGroup::stack(vec![PanelId::Properties, id])];
+                shot(&mut app, &dir, &format!("family-{name}"), None);
+            }
+        }
         if wanted("tabs") {
             let mut app = app();
             let _ = app.update(Message::TabNew);
@@ -256,4 +274,28 @@ fn ui_shots() {
             shot(&mut app, &dir, "tabs-above", None);
         }
     });
+}
+
+/// A palette of the family by short name: its id and the command that
+/// opens it.
+fn family_palette(name: &str) -> Option<(&'static str, crate::ui::dock::PanelId, &'static str)> {
+    use crate::ui::dock::PanelId;
+    Some(match name {
+        "browser" => ("browser", PanelId::Browser, "BROWSER"),
+        "pcm" => ("pcm", PanelId::PointCloudManager, "POINTCLOUDMANAGER"),
+        "history" => ("history", PanelId::CommandHistory, "COMMANDHISTORY"),
+        "count" => ("count", PanelId::Count, "COUNT"),
+        "ga" => ("ga", PanelId::GraphicAttributes, "GRAPHICATTRIBUTES"),
+        "qc" => ("qc", PanelId::QuickCalc, "QUICKCALC"),
+        "tools" => ("tools", PanelId::ToolPalettes, "TOOLPALETTES"),
+        "authoring" => ("authoring", PanelId::AuthoringPalettes, "BAUTHORPALETTE"),
+        "params" => ("params", PanelId::ParametersManager, "PARAMETERS"),
+        "laywalk" => ("laywalk", PanelId::Laywalk, "LAYWALK"),
+        "graph" => ("graph", PanelId::NodeGraph, "NODEGRAPH"),
+        "blocks" => ("blocks", PanelId::BlockPalette, "BLOCKSPALETTE"),
+        "layers" => ("layers", PanelId::Layers, "LAYER"),
+        "xref" => ("xref", PanelId::ExternalReferences, "XREF"),
+        "sheets" => ("sheets", PanelId::SheetSetManager, "SHEETSET"),
+        _ => return None,
+    })
 }

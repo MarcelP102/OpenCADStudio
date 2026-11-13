@@ -23,10 +23,20 @@
 //! [`crate::ui::style::text`], sizes from
 //! [`crate::ui::style::palette_metrics`].
 
+mod field;
+mod frame;
 mod grid;
 mod status;
+mod tabs;
+mod toolbar;
 mod tooltip;
+mod tree;
 
+pub use field::*;
+pub use frame::*;
 pub use grid::*;
 pub use status::*;
+pub use tabs::*;
+pub use toolbar::*;
 pub use tooltip::*;
+pub use tree::*;

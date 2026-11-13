@@ -156,15 +156,35 @@ pub fn category_bar<'a>(
     } else {
         crate::ui::icons::themed_arrow_down(pm::CARET)
     };
-    let bar = container(
+    let bar = mouse_area(bar_box(title.into(), caret))
+        .on_press(on_toggle)
+        .interaction(iced::mouse::Interaction::Pointer);
+    with_gap(bar)
+}
+
+/// A section bar: a [`category_bar`] that does not fold, with `trailing`
+/// controls (small [`crate::ui::kit::bar_button`]s) at its end.
+pub fn section_bar<'a>(
+    title: impl Into<String>,
+    trailing: Vec<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    with_gap(bar_box(
+        title.into(),
+        row(trailing).spacing(pm::LINE).align_y(iced::Center),
+    ))
+}
+
+/// The bar of a category or section: title and `end` on `palette_bar`.
+fn bar_box<'a>(title: String, end: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(
         row![
-            label(title.into())
+            label(title)
                 .size(text::UI)
                 .line_height(text::line())
                 .font(SEMIBOLD)
                 .wrapping(iced::widget::text::Wrapping::None)
                 .width(Length::Fill),
-            caret,
+            end.into(),
         ]
         .align_y(iced::Center),
     )
@@ -176,15 +196,14 @@ pub fn category_bar<'a>(
         background: Some(Background::Color(chrome::palette_bar(theme))),
         text_color: Some(chrome::text(theme)),
         ..Default::default()
-    });
-    // A gap of palette body above the bar parts it from the rows before.
-    column![
-        Space::new().height(pm::CATEGORY_GAP),
-        mouse_area(bar)
-            .on_press(on_toggle)
-            .interaction(iced::mouse::Interaction::Pointer),
-    ]
+    })
     .into()
+}
+
+/// `bar` with a gap of palette body above it, parting it from the rows
+/// before.
+fn with_gap<'a>(bar: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    column![Space::new().height(pm::CATEGORY_GAP), bar.into()].into()
 }
 
 /// The scroll area of a grid: insets `GRID_INSET_L` on the left and

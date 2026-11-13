@@ -88,6 +88,14 @@ pub const CARET: f32 = 10.0;
 pub const TOOL_GAP: f32 = 4.0;
 /// Height of the object list combo and the toolbar buttons above the grid.
 pub const TOOL_H: f32 = 22.0;
+/// Icon size in a toolbar button and in a list or tree row.
+pub const ROW_ICON: f32 = 16.0;
+/// Side of a small square button on a category bar (fold all, add, ...).
+pub const BAR_BUTTON: f32 = 18.0;
+/// Icon size in such a button.
+pub const BAR_ICON: f32 = 12.0;
+/// Size of a check box in a row.
+pub const CHECK: f32 = 14.0;
 
 // ── Drawing-tab bar ───────────────────────────────────────────────────────
 
