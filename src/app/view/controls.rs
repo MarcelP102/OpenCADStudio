@@ -51,9 +51,9 @@ const VP_PICKER_PAD_X: f32 = 6.0;
 /// Gap between the picker's text and its arrow.
 const VP_PICKER_GAP: f32 = 6.0;
 /// Text size of the picker and its flyout (whole pixels).
-const VP_TEXT: f32 = 11.0;
+const VP_TEXT: f32 = crate::ui::style::text::UI;
 /// Line height of that text, in whole pixels.
-const VP_TEXT_LINE: f32 = 14.0;
+const VP_TEXT_LINE: f32 = crate::ui::style::text::UI_LINE;
 /// The flyout: row height, the check-mark column, the right padding, the
 /// vertical padding of the frame and how far below the head it opens.
 const VP_MENU_ROW_H: f32 = 22.0;
@@ -63,9 +63,6 @@ const VP_MENU_PAD_Y: f32 = 3.0;
 const VP_MENU_OFFSET: f32 = 3.0;
 /// Narrowest flyout.
 const VP_MENU_MIN_W: f32 = 180.0;
-/// How far the accent tints the highlighted flyout row (the `row_selected`
-/// mix of the palette tokens).
-const VP_ROW_SELECTED: f32 = 0.38;
 /// How far the danger colour tints the close button's hover.
 const VP_DANGER_TINT: f32 = 0.25;
 /// Distance of the bar from the drawing area's top-left corner.
@@ -82,10 +79,10 @@ fn vp_menu_width<'a>(labels: impl Iterator<Item = &'a str>) -> f32 {
     )
 }
 
-/// Background of a highlighted flyout row: the accent over the panel.
+/// Background of a highlighted flyout row: the palette's `row_selected`
+/// (the accent at 38 % over the panel).
 pub(crate) fn vp_row_selected(theme: &Theme) -> iced::Color {
-    use crate::ui::style::chrome;
-    chrome::mix(chrome::panel(theme), chrome::accent(theme), VP_ROW_SELECTED)
+    crate::ui::style::chrome::row_selected(theme)
 }
 
 /// Background of the bar: the theme background, faintly showing the
@@ -389,7 +386,7 @@ pub(super) fn viewport_controls<'a>(
         .style(|theme: &Theme| container::Style {
             background: Some(Background::Color(vp_bar_background(theme))),
             border: Border {
-                color: chrome::hover(theme),
+                color: chrome::strip_divider(theme),
                 width: VP_BORDER,
                 radius: VP_BAR_RADIUS.into(),
             },
