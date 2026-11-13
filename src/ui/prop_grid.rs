@@ -144,7 +144,8 @@ pub fn value_cell<'a>(value: impl Into<String>, muted: bool) -> Element<'a, Mess
 }
 
 /// A category bar: `title` in 11 px semibold on `palette_bar`, the caret
-/// at the right, the whole bar toggling `collapsed` on press.
+/// at the right, the whole bar toggling `collapsed` on press, with a
+/// `CATEGORY_GAP` of palette body above it.
 pub fn category_bar<'a>(
     title: impl Into<String>,
     collapsed: bool,
@@ -176,10 +177,14 @@ pub fn category_bar<'a>(
         text_color: Some(chrome::text(theme)),
         ..Default::default()
     });
-    mouse_area(bar)
-        .on_press(on_toggle)
-        .interaction(iced::mouse::Interaction::Pointer)
-        .into()
+    // A gap of palette body above the bar parts it from the rows before.
+    column![
+        Space::new().height(pm::CATEGORY_GAP),
+        mouse_area(bar)
+            .on_press(on_toggle)
+            .interaction(iced::mouse::Interaction::Pointer),
+    ]
+    .into()
 }
 
 /// The scroll area of a grid: insets `GRID_INSET_L` on the left and

@@ -3343,22 +3343,7 @@ bg={bg_ms:.1}ms n={view_count}"
             // ribbon vs status-bar construction separately (both gated on
             // PERF; zero cost otherwise).
             mark("ribbon");
-            // The 1 px edge under the ribbon runs across the docks too.
-            if !self.clean_screen {
-                col = col.push(
-                    container(
-                        iced::widget::Space::new()
-                            .width(Fill)
-                            .height(crate::ui::style::palette_metrics::LINE),
-                    )
-                    .style(|theme: &Theme| container::Style {
-                        background: Some(Background::Color(crate::ui::style::chrome::edge(
-                            theme,
-                        ))),
-                        ..Default::default()
-                    }),
-                );
-            }
+            // The ribbon's own 1 px bottom line runs across the docks too.
             if self.show_file_tabs && self.file_tabs_above_docks {
                 col = col.push(doc_tab_bar(
                     &self.tabs,
@@ -4123,7 +4108,7 @@ fn doc_tab_context_menu(
             .enabled(has_current_path),
         );
     }
-    crate::ui::palette_menu::menu(items, crate::ui::style::palette_metrics::MENU_W)
+    crate::ui::palette_menu::menu(items)
 }
 
 impl OpenCADStudio {
@@ -4239,7 +4224,7 @@ fn tab_bar_button_style(theme: &Theme, status: button::Status) -> button::Style 
 
 /// The drawing-tab bar (variant C of the prototype): 24 px on `strip`,
 /// tabs filling it — the inactive ones `tab_inactive`, the active one
-/// `palette_body` joined to the 1 px `palette_body` line under the bar —
+/// `palette_body` joined to the 2 px `palette_body` line under the bar —
 /// 1 px apart, a + after the last tab and a ☰ menu at the far right. A tab
 /// shows a dot before its name while unsaved and always its ×. The Start
 /// page lives in the ☰ menu, which a right-click on the empty bar opens at
@@ -4287,7 +4272,8 @@ pub(super) fn doc_tab_bar<'a>(
                 .line_height(ui_text::line())
                 .wrapping(iced::widget::text::Wrapping::None),
         );
-        let title_btn = button(title)
+        // The row fills the tab's height so the name sits centred in it.
+        let title_btn = button(title.height(Fill))
             .on_press(Message::TabSwitch(idx))
             .height(Fill)
             .padding(iced::Padding::ZERO.left(pm::TAB_PAD_X))
@@ -4345,15 +4331,13 @@ pub(super) fn doc_tab_bar<'a>(
         // Resting on the tab lists its layouts; the path shows there as
         // the list's title would, so the tab carries no tooltip of its own.
         let tab_target: Element<'_, Message> = if layouts_open == Some(idx) {
-            iced_aw::DropDown::new(
-                tab_container,
-                palette_menu::menu(doc_tab_layout_items(tab, idx, is_active), pm::MENU_W),
-                true,
-            )
-            .alignment(iced_aw::drop_down::Alignment::Bottom)
-            .width(pm::MENU_W)
-            .on_dismiss(Message::DocTabLayoutsClose)
-            .into()
+            let layouts = doc_tab_layout_items(tab, idx, is_active);
+            let layouts_w = palette_menu::width(&layouts);
+            iced_aw::DropDown::new(tab_container, palette_menu::menu(layouts), true)
+                .alignment(iced_aw::drop_down::Alignment::Bottom)
+                .width(layouts_w)
+                .on_dismiss(Message::DocTabLayoutsClose)
+                .into()
         } else if let Some(path) = &tab.current_path {
             iced::widget::tooltip(
                 tab_container,
@@ -4414,14 +4398,12 @@ pub(super) fn doc_tab_bar<'a>(
     .height(iced::Length::Fixed(pm::TAB_H))
     .padding(0)
     .style(tab_bar_button_style);
-    let menu_btn = iced_aw::DropDown::new(
-        menu_btn,
-        palette_menu::menu(doc_tab_menu_items(tabs, active_tab, above_docks), pm::MENU_W),
-        menu_open,
-    )
-    .alignment(iced_aw::drop_down::Alignment::Bottom)
-    .width(pm::MENU_W)
-    .on_dismiss(Message::DocTabMenu(false, None));
+    let menu_items = doc_tab_menu_items(tabs, active_tab, above_docks);
+    let menu_w = palette_menu::width(&menu_items);
+    let menu_btn = iced_aw::DropDown::new(menu_btn, palette_menu::menu(menu_items), menu_open)
+        .alignment(iced_aw::drop_down::Alignment::Bottom)
+        .width(menu_w)
+        .on_dismiss(Message::DocTabMenu(false, None));
 
     let tabs_row = Row::with_children(items)
         .spacing(pm::TAB_GAP)
@@ -4435,7 +4417,7 @@ pub(super) fn doc_tab_bar<'a>(
         container(Space::new())
             .width(Fill)
             .height(iced::Length::Fixed(pm::TAB_H)),
-        move || palette_menu::menu(doc_tab_menu_items(tabs, active_tab, above_docks), pm::MENU_W),
+        move || palette_menu::menu(doc_tab_menu_items(tabs, active_tab, above_docks)),
     );
     let bar = row![tabs_row, empty, menu_btn].align_y(iced::alignment::Vertical::Top);
     column![
@@ -4445,7 +4427,7 @@ pub(super) fn doc_tab_bar<'a>(
                 background: Some(Background::Color(chrome::strip(theme))),
                 ..Default::default()
             }),
-        container(Space::new().width(Fill).height(pm::LINE)).style(|theme: &Theme| {
+        container(Space::new().width(Fill).height(pm::TAB_LINE)).style(|theme: &Theme| {
             container::Style {
                 background: Some(Background::Color(chrome::palette_body(theme))),
                 ..Default::default()

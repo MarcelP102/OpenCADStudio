@@ -81,12 +81,14 @@ impl OpenCADStudio {
                     })
                     .collect();
                 let (_, plus_top) = self.dock_strip_layout(side);
+                let items = dock_edge_menu_items(side, &checked, self.dock.strip_names);
+                let menu_w = crate::ui::palette_menu::width(&items);
                 let strip = crate::ui::dock::DOCK_STRIP_W;
                 let gap = crate::ui::style::palette_metrics::TOOL_GAP;
                 let x = match side {
                     crate::app::config::DockSide::Left => strip + gap,
                     crate::app::config::DockSide::Right => {
-                        self.dock_workspace_size().0 - strip - DOCK_MENU_W - gap
+                        self.dock_workspace_size().0 - strip - menu_w - gap
                     }
                 };
                 layers.push(
@@ -95,7 +97,6 @@ impl OpenCADStudio {
                         .on_right_press(Message::Dock(crate::ui::dock::DockMsg::EdgeMenu(None)))
                         .into(),
                 );
-                let items = dock_edge_menu_items(side, &checked, self.dock.strip_names);
                 let menu_h = crate::ui::palette_menu::height(&items);
                 let y = crate::ui::dock::strip_menu_top(
                     self.dock_edge_menu_y.unwrap_or(plus_top),
@@ -103,7 +104,7 @@ impl OpenCADStudio {
                     self.dock_workspace_size().1,
                 );
                 layers.push(place_at(
-                    crate::ui::palette_menu::menu(items, DOCK_MENU_W),
+                    crate::ui::palette_menu::menu(items),
                     x.max(0.0),
                     y,
                 ));
@@ -654,7 +655,7 @@ impl OpenCADStudio {
         tab: &'a DocumentTab,
     ) -> Element<'a, Message> {
         let panel = self.panel_body(id, width, false, tab);
-        let divider = dock_divider(id);
+        let divider = dock_divider(id, side);
         match side {
             crate::app::config::DockSide::Left => row![panel, divider].height(Fill).into(),
             crate::app::config::DockSide::Right => row![divider, panel].height(Fill).into(),
@@ -1224,14 +1225,31 @@ fn float_resize_handles(id: crate::ui::dock::PanelId, hidden: bool) -> Element<'
 
 /// Grabbable separator between a docked pallet and the viewport: drag to
 /// size its group, double-click to reset the width.
-fn dock_divider(id: crate::ui::dock::PanelId) -> Element<'static, Message> {
-    let line = container(Space::new())
-        .width(Length::Fixed(DOCK_DIVIDER_W))
+fn dock_divider(
+    id: crate::ui::dock::PanelId,
+    side: crate::app::config::DockSide,
+) -> Element<'static, Message> {
+    use crate::ui::style::{chrome, palette_metrics as pm};
+    // The grab band reads as part of the palette: its body colour, with the
+    // 1 px edge line against the drawing.
+    let body = container(Space::new())
+        .width(Length::Fixed(DOCK_DIVIDER_W - pm::LINE))
         .height(Fill)
         .style(|theme: &Theme| container::Style {
-            background: Some(Background::Color(theme.palette().background.neutral.color)),
+            background: Some(Background::Color(chrome::palette_body(theme))),
             ..Default::default()
         });
+    let edge = container(Space::new())
+        .width(Length::Fixed(pm::LINE))
+        .height(Fill)
+        .style(|theme: &Theme| container::Style {
+            background: Some(Background::Color(chrome::edge(theme))),
+            ..Default::default()
+        });
+    let line: Element<'static, Message> = match side {
+        crate::app::config::DockSide::Left => row![body, edge].into(),
+        crate::app::config::DockSide::Right => row![edge, body].into(),
+    };
     let grab = Message::Dock(crate::ui::dock::DockMsg::ResizeGrab(id));
     let reset = Message::Dock(crate::ui::dock::DockMsg::WidthReset(id));
     mouse_area(line)

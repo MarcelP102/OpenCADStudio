@@ -183,13 +183,44 @@ fn item<'a>(it: Item) -> Element<'a, Message> {
     }
 }
 
-/// The menu: its items in a raised frame `width` wide.
-pub fn menu<'a>(items: Vec<Item>, width: f32) -> Element<'a, Message> {
+/// The menu: its items in a raised frame as wide as its longest item
+/// (see [`width`]).
+pub fn menu<'a>(items: Vec<Item>) -> Element<'a, Message> {
+    let width = width(&items);
     container(column(items.into_iter().map(item)).width(Length::Fill))
         .width(Length::Fixed(width))
         .padding([pm::MENU_PAD_Y, 0.0])
         .style(frame_style)
         .into()
+}
+
+/// Width of a menu holding `items`: its longest item — the mark column,
+/// the icon, the label as the UI font measures it, a dirty dot — plus the
+/// right padding and the frame's border.
+pub fn width(items: &[Item]) -> f32 {
+    let widest = items
+        .iter()
+        .filter_map(|it| match it {
+            Item::Separator => None,
+            Item::Action {
+                icon, label, dirty, ..
+            } => {
+                let icon = if icon.is_some() {
+                    ITEM_ICON + pm::TOOL_GAP
+                } else {
+                    0.0
+                };
+                let dot = if *dirty {
+                    pm::TAB_INNER_GAP + pm::DIRTY_DOT
+                } else {
+                    0.0
+                };
+                let text = crate::ui::style::text_metrics::width(label, ui_text::UI, false).ceil();
+                Some(pm::MENU_CHECK_W + icon + text + dot)
+            }
+        })
+        .fold(0.0_f32, f32::max);
+    (widest + pm::MENU_PAD_X + 2.0 * pm::LINE).ceil()
 }
 
 /// Height of a menu holding `items`, for keeping it on screen.
@@ -244,5 +275,28 @@ mod tests {
             height(&items),
             2.0 * pm::MENU_PAD_Y + 2.0 * pm::LINE + 2.0 * pm::MENU_ITEM_H + pm::MENU_SEPARATOR_H
         );
+    }
+
+    #[test]
+    fn a_menu_is_as_wide_as_its_longest_item() {
+        let short = vec![Item::new("Start", Message::Noop)];
+        let long = vec![
+            Item::new("Start", Message::Noop),
+            Item::Separator,
+            Item::new("Tabs above the palettes", Message::Noop),
+        ];
+        let label =
+            crate::ui::style::text_metrics::width("Tabs above the palettes", ui_text::UI, false)
+                .ceil();
+        assert!(width(&long) > width(&short));
+        assert_eq!(
+            width(&long),
+            (pm::MENU_CHECK_W + label + pm::MENU_PAD_X + 2.0 * pm::LINE).ceil()
+        );
+        // An icon and a dirty dot add their room.
+        let more = vec![Item::new("Tabs above the palettes", Message::Noop)
+            .icon(crate::ui::icons::PLUS)
+            .dirty(true)];
+        assert!(width(&more) > width(&long));
     }
 }

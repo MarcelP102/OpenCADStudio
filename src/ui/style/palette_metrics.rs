@@ -52,6 +52,8 @@ pub const SPLITTER_DOT_GAP: f32 = 2.0;
 
 /// Height of a property row.
 pub const ROW_H: f32 = 18.0;
+/// Room above a category bar, parting it from the rows before.
+pub const CATEGORY_GAP: f32 = 3.0;
 /// Height of a category bar.
 pub const CATEGORY_H: f32 = 18.0;
 /// Fixed width of the name column (the value column takes the rest).
@@ -79,10 +81,12 @@ pub const TOOL_H: f32 = 22.0;
 
 // ── Drawing-tab bar ───────────────────────────────────────────────────────
 
-/// The tab bar: 23 px of tabs and the 1 px `palette_body` line under them.
-pub const TAB_BAR_H: f32 = 24.0;
 /// Height of a tab (it fills the bar above the line).
-pub const TAB_H: f32 = TAB_BAR_H - LINE;
+pub const TAB_H: f32 = 23.0;
+/// The `palette_body` line under the tabs, joined to the active tab.
+pub const TAB_LINE: f32 = 2.0;
+/// The tab bar: 23 px of tabs and the 2 px line under them.
+pub const TAB_BAR_H: f32 = TAB_H + TAB_LINE;
 /// Gap between tabs.
 pub const TAB_GAP: f32 = 1.0;
 /// Horizontal padding inside a tab.
@@ -120,7 +124,7 @@ mod tests {
     #[test]
     fn the_board_measurements() {
         assert_eq!(STRIP_W, 31.0);
-        assert_eq!(TAB_H + LINE, TAB_BAR_H);
+        assert_eq!(TAB_H + TAB_LINE, TAB_BAR_H);
         const {
             assert!(STRIP_ICON < STRIP_CELL_H);
             assert!(TITLE_BUTTON <= TITLE_H);
