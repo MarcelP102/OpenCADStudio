@@ -716,7 +716,7 @@ fn plain_row<'a>(
     }
     let area = item.view();
     if menu.is_empty() {
-        return area.into();
+        return area;
     }
     iced_aw::ContextMenu::new(area, move || menu_panel(&menu, open_sub.as_deref())).into()
 }
