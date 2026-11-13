@@ -135,7 +135,9 @@ const RADIO_DOT: f32 = 6.0;
 const ITEM_ICON: f32 = 16.0;
 
 /// One item as a row: mark, optional icon, label, optional dirty dot.
-fn item<'a>(it: Item) -> Element<'a, Message> {
+/// For a menu built by hand (one with rows of its own between the items);
+/// [`menu`] builds the usual one.
+pub fn entry<'a>(it: Item) -> Element<'a, Message> {
     match it {
         Item::Separator => container(
             container(Space::new().width(Length::Fill).height(pm::LINE)).style(|theme: &Theme| {
@@ -235,7 +237,7 @@ fn item<'a>(it: Item) -> Element<'a, Message> {
 /// (see [`width`]).
 pub fn menu<'a>(items: Vec<Item>) -> Element<'a, Message> {
     let width = width(&items);
-    container(column(items.into_iter().map(item)).width(Length::Fill))
+    container(column(items.into_iter().map(entry)).width(Length::Fill))
         .width(Length::Fixed(width))
         .padding([pm::MENU_PAD_Y, 0.0])
         .style(frame_style)
