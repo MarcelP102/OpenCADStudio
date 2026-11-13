@@ -39,7 +39,9 @@ count() {
     grep -v '^[[:space:]]*//' "$2" | grep -cE "$1" || true
 }
 COLOURS='theme\.palette\(\)|\b(palette|p|pal)\.(background|primary)\.|Color::from_rgb'
-LITERALS='\.(size|padding|spacing|width|height)\([[:space:]]*\[?-?[0-9]|Length::Fixed\([[:space:]]*[0-9]'
+# A zero is not a size: `.padding(0)`, `[0.0, pm::CELL_PAD_X]`, `width(0)`.
+NUM='-?([1-9]|0\.[0-9]*[1-9])'
+LITERALS="\.(size|padding|spacing|width|height)\([[:space:]]*\[?$NUM|Length::Fixed\([[:space:]]*$NUM"
 report() {
     for f in $FILES; do
         [ -f "$f" ] || continue
