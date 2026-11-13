@@ -224,6 +224,16 @@ fn ui_shots() {
             let _ = app.run_command_line("SELECT ALL ");
             shot(&mut app, &dir, "props-scroll", None);
         }
+        if wanted("float") {
+            use crate::ui::dock::{DockMsg, FloatPanel, PanelId};
+            let mut app = app();
+            app.show_layers = true;
+            app.dock
+                .float(FloatPanel::new(PanelId::Layers, 500.0, 200.0, 520.0, 420.0));
+            shot(&mut app, &dir, "float", None);
+            let _ = app.on_dock(DockMsg::TitleHover(PanelId::Layers));
+            shot(&mut app, &dir, "float-hover", None);
+        }
         if wanted("tabs") {
             let mut app = app();
             let _ = app.update(Message::TabNew);

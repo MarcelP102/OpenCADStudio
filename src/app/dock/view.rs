@@ -693,13 +693,17 @@ impl OpenCADStudio {
         };
         // Clipped, so a panel squeezed below its content's height never
         // draws outside its frame.
+        // The content sits inside the 1 px contour: iced draws a border
+        // under the content, which would otherwise cover it.
         let framed = container(content)
             .height(Length::Fixed(f.h))
+            .padding(crate::ui::style::palette_metrics::LINE)
             .clip(true)
             .style(|theme: &Theme| container::Style {
+                // The ribbon's dark 1 px contour, all the way round.
                 border: Border {
-                    color: theme.palette().background.strong.color,
-                    width: 1.0,
+                    color: crate::ui::style::chrome::page(theme),
+                    width: crate::ui::style::palette_metrics::LINE,
                     radius: 0.0.into(),
                 },
                 shadow: iced::Shadow {
@@ -1115,6 +1119,7 @@ fn floating_title_bar(
     hovered: bool,
 ) -> Element<'static, Message> {
     use crate::ui::dock::DockMsg;
+    use crate::ui::style::{chrome, palette_metrics as pm};
     let tip = if on_left {
         iced::widget::tooltip::Position::Left
     } else {
@@ -1128,39 +1133,70 @@ fn floating_title_bar(
     .height(Fill);
     // Close and pin only show while the pointer is over the bar, as on a
     // docked title bar.
-    let mut bar = column![].spacing(2);
+    let mut bar = column![].spacing(pm::LINE);
     if hovered {
         bar = bar
-            .push(crate::ui::dock::close_button(id, tip))
-            .push(crate::ui::dock::pin_button(id, auto_collapse, tip));
+            .push(crate::ui::dock::close_button_sized(id, tip, pm::FLOAT_ICON))
+            .push(crate::ui::dock::pin_button_sized(
+                id,
+                auto_collapse,
+                tip,
+                pm::FLOAT_ICON,
+            ));
     }
     let bar = bar
-        .push(container(title).width(Fill).height(Fill).padding([6, 0]))
-        .push(container(crate::ui::icons::themed(id.icon(), 16.0)).center_x(Fill))
-        .padding([4, 0])
+        .push(
+            container(title)
+                .width(Fill)
+                .height(Fill)
+                .padding([pm::STRIP_NAME_PAD, 0.0]),
+        )
+        .push(
+            container(crate::ui::icons::tinted(
+                id.icon(),
+                pm::FLOAT_ICON,
+                chrome::title_text,
+            ))
+            .center_x(Fill),
+        )
+        .padding([pm::TOOL_GAP, 0.0])
         .align_x(iced::Center)
-        .width(Length::Fixed(DOCK_FLOAT_BAR_W))
+        .width(Length::Fixed(pm::FLOAT_BAR_W))
         .height(Fill);
-    mouse_area(container(bar).style(|theme: &Theme| container::Style {
-        background: Some(Background::Color(theme.palette().background.weak.color)),
+    // The ribbon's title strip: its colour, and a 1 px dark line against
+    // the panel.
+    let bar = container(bar).style(|theme: &Theme| container::Style {
+        background: Some(Background::Color(chrome::title_bar(theme))),
         ..Default::default()
-    }))
-    .on_press(Message::Dock(DockMsg::DockGrab(id)))
-    .on_right_press(Message::Dock(DockMsg::FloatMenu(Some(id))))
-    .on_enter(Message::Dock(DockMsg::TitleHover(id)))
-    .on_move(|p| Message::Dock(DockMsg::FloatBarPointer(p)))
-    .on_exit(Message::Dock(DockMsg::TitleHoverEnd(id)))
-    // Double-click docks it against the edge its title bar faces.
-    .on_double_click(Message::Dock(DockMsg::DockTo(
-        id,
-        if on_left {
-            crate::app::config::DockSide::Left
-        } else {
-            crate::app::config::DockSide::Right
-        },
-    )))
-    .interaction(iced::mouse::Interaction::Grab)
-    .into()
+    });
+    let line = container(Space::new().width(pm::LINE).height(Fill)).style(|theme: &Theme| {
+        container::Style {
+            background: Some(Background::Color(chrome::page(theme))),
+            ..Default::default()
+        }
+    });
+    let bar: Element<'static, Message> = if on_left {
+        row![bar, line].into()
+    } else {
+        row![line, bar].into()
+    };
+    mouse_area(bar)
+        .on_press(Message::Dock(DockMsg::DockGrab(id)))
+        .on_right_press(Message::Dock(DockMsg::FloatMenu(Some(id))))
+        .on_enter(Message::Dock(DockMsg::TitleHover(id)))
+        .on_move(|p| Message::Dock(DockMsg::FloatBarPointer(p)))
+        .on_exit(Message::Dock(DockMsg::TitleHoverEnd(id)))
+        // Double-click docks it against the edge its title bar faces.
+        .on_double_click(Message::Dock(DockMsg::DockTo(
+            id,
+            if on_left {
+                crate::app::config::DockSide::Left
+            } else {
+                crate::app::config::DockSide::Right
+            },
+        )))
+        .interaction(iced::mouse::Interaction::Grab)
+        .into()
 }
 
 /// Thickness of the band along a floating panel's sides that resizes it.

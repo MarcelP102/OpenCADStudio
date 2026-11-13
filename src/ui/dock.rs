@@ -1171,8 +1171,10 @@ pub const DOCK_MAX_W: f32 = 600.0;
 pub const DOCK_EDGE_ZONE: f32 = 48.0;
 /// Width of the grabbable divider between a docked group and the viewport.
 pub const DOCK_DIVIDER_W: f32 = 5.0;
-/// Width of a floating panel's vertical title bar.
-pub const DOCK_FLOAT_BAR_W: f32 = 28.0;
+/// Width of a floating panel's vertical title bar: the ribbon's title
+/// strip (20 px) and the 1 px dark line parting it from the panel.
+pub const DOCK_FLOAT_BAR_W: f32 =
+    crate::ui::style::palette_metrics::FLOAT_BAR_W + crate::ui::style::palette_metrics::LINE;
 /// Width of an edge's vertical icon strip: its light part and the 1 px
 /// edge line on the palette side.
 pub const DOCK_STRIP_W: f32 = crate::ui::style::palette_metrics::STRIP_W;
@@ -1442,8 +1444,12 @@ pub fn title_button<'a>(
 
 /// A title-bar icon in the title-bar tint.
 fn title_icon<'a>(art: &'static [u8]) -> Element<'a, Message> {
-    use crate::ui::style::{chrome as tokens, palette_metrics as pm};
-    crate::ui::icons::tinted(art, pm::TITLE_ICON, tokens::title_text)
+    title_icon_sized(art, crate::ui::style::palette_metrics::TITLE_ICON)
+}
+
+/// [`title_icon`] at `size`.
+fn title_icon_sized<'a>(art: &'static [u8], size: f32) -> Element<'a, Message> {
+    crate::ui::icons::tinted(art, size, crate::ui::style::chrome::title_text)
 }
 
 /// A tooltip on a title-bar button.
@@ -1471,6 +1477,21 @@ pub fn pin_button<'a>(
     auto_collapse: bool,
     tip: tooltip::Position,
 ) -> Element<'a, Message> {
+    pin_button_sized(
+        id,
+        auto_collapse,
+        tip,
+        crate::ui::style::palette_metrics::TITLE_ICON,
+    )
+}
+
+/// [`pin_button`] with an `icon`-sized pin (a floating palette's bar).
+pub fn pin_button_sized<'a>(
+    id: PanelId,
+    auto_collapse: bool,
+    tip: tooltip::Position,
+    icon: f32,
+) -> Element<'a, Message> {
     let art = if auto_collapse {
         crate::ui::icons::PIN_SIDE
     } else {
@@ -1478,7 +1499,7 @@ pub fn pin_button<'a>(
     };
     title_tip(
         title_button(
-            title_icon(art),
+            title_icon_sized(art, icon),
             Message::Dock(DockMsg::AutoCollapseToggle(id)),
         ),
         crate::t!("Auto-hide").into_owned(),
@@ -1503,9 +1524,18 @@ pub fn detach_button<'a>(id: PanelId, tip: tooltip::Position) -> Element<'a, Mes
 
 /// The close button of a panel's title bar.
 pub fn close_button<'a>(id: PanelId, tip: tooltip::Position) -> Element<'a, Message> {
+    close_button_sized(id, tip, crate::ui::style::palette_metrics::TITLE_ICON)
+}
+
+/// [`close_button`] with an `icon`-sized cross (a floating palette's bar).
+pub fn close_button_sized<'a>(
+    id: PanelId,
+    tip: tooltip::Position,
+    icon: f32,
+) -> Element<'a, Message> {
     title_tip(
         title_button(
-            title_icon(crate::ui::icons::CLOSE),
+            title_icon_sized(crate::ui::icons::CLOSE, icon),
             Message::Dock(DockMsg::Close(id)),
         ),
         crate::t!("Close").into_owned(),
