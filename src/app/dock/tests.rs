@@ -2976,3 +2976,29 @@ fn file_tabs_above_docks_is_saved_and_off_by_default() {
         serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
     assert!(back.file_tabs_above_docks);
 }
+
+/// A strip cell stays lit only while hovered: after a drag (which rebuilds
+/// the strip without the cell hearing the pointer leave) the mark goes;
+/// after a plain click it stays, as the pointer is still on the cell.
+#[test]
+fn docking_by_drag_leaves_no_strip_cell_lit() {
+    use crate::ui::dock::{DockMsg, PanelId};
+    let mut app = dock_app();
+    let _ = app.on_dock(DockMsg::Hover(PanelId::Properties));
+    let _ = app.on_dock(DockMsg::IconPress(PanelId::Properties));
+    let _ = app.on_dock(DockMsg::DragRelease);
+    assert_eq!(app.dock_icon_hover, Some(PanelId::Properties), "a click");
+
+    let _ = app.on_dock(DockMsg::IconPress(PanelId::Properties));
+    let _ = app.on_dock(DockMsg::DragMove(iced::Point::new(20.0, 100.0)));
+    let _ = app.on_dock(DockMsg::DragMove(iced::Point::new(1580.0, 120.0)));
+    let _ = app.on_dock(DockMsg::DragRelease);
+    assert_eq!(app.dock_icon_hover, None, "a drag");
+
+    let _ = app.on_dock(DockMsg::Hover(PanelId::BlockPalette));
+    let _ = app.on_dock(DockMsg::DockTo(
+        PanelId::BlockPalette,
+        crate::app::config::DockSide::Left,
+    ));
+    assert_eq!(app.dock_icon_hover, None, "docked by double-click");
+}

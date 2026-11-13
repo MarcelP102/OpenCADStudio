@@ -120,6 +120,7 @@ impl OpenCADStudio {
             DockMsg::DockTo(id, side) => {
                 self.dock_drag = None;
                 self.dock_float_menu = None;
+                self.dock_clear_hover();
                 if self.dock.dock(id, side, usize::MAX) {
                     self.save_config();
                 }
@@ -265,9 +266,26 @@ impl OpenCADStudio {
         iced::Task::none()
     }
 
+    /// Forget which strip cell and group grip are hovered, after the strips
+    /// were rebuilt without the pointer leaving them.
+    fn dock_clear_hover(&mut self) {
+        self.dock_icon_hover = None;
+        self.dock_grip_hover = None;
+    }
+
     /// Pointer released: land what was dragged and save a changed layout.
     fn dock_drag_release(&mut self) {
         use crate::ui::dock::{DockDrag, DropTarget, FloatPanel};
+        // A real drag rebuilds the strips under the drag's capture layer,
+        // so no cell ever hears the pointer leave: drop the hover marks,
+        // or a cell stays lit as if hovered. A plain click keeps them.
+        let dragged = self
+            .dock_drag
+            .and_then(|d| d.movement())
+            .is_some_and(|(_, _, target)| target.is_some());
+        if dragged {
+            self.dock_clear_hover();
+        }
         let mut changed = false;
         match self.dock_drag.take() {
             Some(DockDrag::Move {
