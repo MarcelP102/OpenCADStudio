@@ -112,17 +112,17 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
-/// Resolves once the pointer has rested on a drawing tab long enough to
-/// list its layouts (a sleeping helper thread; the web build has none and
-/// resolves at once).
-fn doc_tab_rest() -> impl std::future::Future<Output = ()> {
+/// Resolves once `delay` has passed, for hover delays (the dock's, a drawing
+/// tab's layouts list): a sleeping helper thread; the web build has none and
+/// resolves at once.
+pub(in crate::app) fn rest(
+    #[cfg_attr(target_arch = "wasm32", allow(unused_variables))] delay: std::time::Duration,
+) -> impl std::future::Future<Output = ()> {
     #[cfg(not(target_arch = "wasm32"))]
     let rx = {
         let (tx, rx) = iced::futures::channel::oneshot::channel::<()>();
         std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(
-                crate::ui::style::palette_metrics::TAB_HOVER_MS,
-            ));
+            std::thread::sleep(delay);
             let _ = tx.send(());
         });
         rx
@@ -3911,7 +3911,10 @@ impl OpenCADStudio {
                     // Not while a menu is open.
                     Some(idx) if !self.doc_tab_menu => {
                         let gen = self.doc_tab_hover_gen;
-                        Task::perform(doc_tab_rest(), move |_| {
+                        let delay = std::time::Duration::from_millis(
+                            crate::ui::style::palette_metrics::TAB_HOVER_MS,
+                        );
+                        Task::perform(rest(delay), move |_| {
                             Message::DocTabLayoutsSettled(idx, gen)
                         })
                     }
@@ -3971,6 +3974,8 @@ impl OpenCADStudio {
             }
 
             Message::TabReorder { from, to, after } => {
+                // The layouts list belongs to a tab index the move shifts.
+                self.doc_tab_layouts = None;
                 let Some(insertion) = reorder_insertion_index(from, to, after, self.tabs.len())
                 else {
                     return Task::none();
@@ -4006,6 +4011,7 @@ impl OpenCADStudio {
                     self.close_table_cell_editor();
                 }
                 self.hovered_doc_tab = None;
+                self.doc_tab_layouts = None;
                 // Resolve the stable id when the message is handled, not when
                 // it was built: an earlier close in the same batch may have
                 // shifted or removed the tab a captured index referred to.
@@ -16466,5 +16472,42 @@ mod point_style_dialog_tests {
                 .point_display_size,
             -5.0
         );
+    }
+}
+
+#[cfg(test)]
+mod doc_tab_layouts_tests {
+    use super::Message;
+    use crate::app::OpenCADStudio;
+
+    fn app_with_three_tabs() -> OpenCADStudio {
+        let mut app = OpenCADStudio::new_for_test();
+        for _ in 0..3 {
+            let _ = app.update(Message::TabNew);
+        }
+        app
+    }
+
+    #[test]
+    fn closing_a_tab_closes_its_layouts_list() {
+        let mut app = app_with_three_tabs();
+        let last = app.tabs.len() - 1;
+        app.doc_tab_layouts = Some(last);
+        let id = app.tabs[last - 1].id;
+        let _ = app.update(Message::TabClose(id));
+        assert_eq!(app.doc_tab_layouts, None);
+    }
+
+    #[test]
+    fn moving_a_tab_closes_the_layouts_list() {
+        let mut app = app_with_three_tabs();
+        let last = app.tabs.len() - 1;
+        app.doc_tab_layouts = Some(last);
+        let _ = app.update(Message::TabReorder {
+            from: last,
+            to: last - 1,
+            after: false,
+        });
+        assert_eq!(app.doc_tab_layouts, None);
     }
 }

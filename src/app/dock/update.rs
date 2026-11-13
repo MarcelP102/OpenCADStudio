@@ -7,24 +7,6 @@ use crate::app::{Message, OpenCADStudio};
 /// so a plain click never moves anything.
 const DOCK_DRAG_THRESHOLD: f32 = 5.0;
 
-/// Resolves once the dock hover delay has passed (a sleeping helper thread;
-/// the web build has none and resolves at once).
-fn hover_delay() -> impl std::future::Future<Output = ()> {
-    #[cfg(not(target_arch = "wasm32"))]
-    let rx = {
-        let (tx, rx) = iced::futures::channel::oneshot::channel::<()>();
-        std::thread::spawn(move || {
-            std::thread::sleep(crate::ui::dock::DOCK_HOVER_DELAY);
-            let _ = tx.send(());
-        });
-        rx
-    };
-    async move {
-        #[cfg(not(target_arch = "wasm32"))]
-        let _ = rx.await;
-    }
-}
-
 impl OpenCADStudio {
     /// Dock chrome interaction (grab / pin / resize / hover / move) applied to
     /// whichever panel the message names.
@@ -506,9 +488,10 @@ impl OpenCADStudio {
         self.dock_hover_gen = self.dock_hover_gen.wrapping_add(1);
         self.dock_hover_pending = Some(target);
         let gen = self.dock_hover_gen;
-        iced::Task::perform(hover_delay(), move |()| {
-            Message::Dock(crate::ui::dock::DockMsg::HoverSettled(gen))
-        })
+        iced::Task::perform(
+            crate::app::update::rest(crate::ui::dock::DOCK_HOVER_DELAY),
+            move |()| Message::Dock(crate::ui::dock::DockMsg::HoverSettled(gen)),
+        )
     }
 
     /// Whether a popup a pallet opened is showing: a colour dropdown in the

@@ -28,12 +28,17 @@ pub fn empty_state<'a>(message: impl Into<String>) -> Element<'a, Message> {
 }
 
 /// A palette's status line at its bottom ("Current layer: 0 · 1 of 1
-/// layers shown"): one row high, on the category-bar colour.
+/// layers shown"): one row high per line, on the category-bar colour.
 pub fn footer<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    // One line fills a grid row; a wrapped note grows the footer.
     container(content)
-        .height(Length::Fixed(pm::ROW_H))
         .width(Length::Fill)
-        .padding(Padding::ZERO.left(pm::GRID_INSET_L).right(pm::GRID_INSET_R))
+        .padding(Padding {
+            top: FOOTER_PAD_Y,
+            bottom: FOOTER_PAD_Y,
+            left: pm::GRID_INSET_L,
+            right: pm::GRID_INSET_R,
+        })
         .align_y(iced::Center)
         .style(|theme: &Theme| container::Style {
             background: Some(Background::Color(chrome::palette_bar(theme))),
@@ -48,6 +53,9 @@ pub fn footer_text<'a>(value: impl Into<String>) -> Element<'a, Message> {
     label(value.into())
         .size(text::UI)
         .line_height(text::line())
-        .wrapping(iced::widget::text::Wrapping::None)
+        .wrapping(iced::widget::text::Wrapping::Word)
         .into()
 }
+
+/// Room above and below a footer's line, so one line is a grid row high.
+const FOOTER_PAD_Y: f32 = (pm::ROW_H - text::UI_LINE) / 2.0;

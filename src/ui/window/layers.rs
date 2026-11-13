@@ -855,7 +855,7 @@ impl LayerPanel {
                     .line_height(ui_line())
                     .style(move |theme: &Theme| text::Style {
                         color: Some(if chosen {
-                            selection_colors(theme).1
+                            chrome::text(theme)
                         } else {
                             crate::ui::style::readable::muted_text(theme)
                         }),
@@ -2454,13 +2454,6 @@ fn cell_field_style(theme: &Theme, status: text_input::Status) -> text_input::St
     style
 }
 
-/// The selection colour of the rows and the tree: the accent mixed into
-/// the background, quiet in a dark theme as in the mockup, with the
-/// background's text colour.
-pub fn selection_colors(theme: &Theme) -> (Color, Color) {
-    (chrome::row_selected(theme), chrome::text(theme))
-}
-
 /// The tree's rename field, focused when a rename starts.
 pub fn tree_rename_input_id() -> iced::widget::Id {
     iced::widget::Id::new("layer-tree-rename")
@@ -2470,7 +2463,7 @@ pub fn tree_rename_input_id() -> iced::widget::Id {
 /// hover.
 fn tree_line_style(theme: &Theme, status: button::Status, chosen: bool) -> button::Style {
     let pair = if chosen {
-        Some(selection_colors(theme))
+        Some((chrome::row_selected(theme), chrome::text(theme)))
     } else if matches!(status, button::Status::Hovered) {
         Some((chrome::hover(theme), chrome::text(theme)))
     } else {
