@@ -1125,8 +1125,9 @@ fn floating_title_bar(
     } else {
         iced::widget::tooltip::Position::Right
     };
+    // In capitals, as on the palette strip.
     let title = canvas(crate::ui::dock::VerticalLabel {
-        text: t!(id.title()).into_owned(),
+        text: t!(id.title()).to_uppercase(),
         centered: false,
     })
     .width(Fill)
@@ -1163,7 +1164,7 @@ fn floating_title_bar(
         .align_x(iced::Center)
         .width(Length::Fixed(pm::FLOAT_BAR_W))
         .height(Fill);
-    // The ribbon's title strip: its colour, and a 1 px dark line against
+    // In the ribbon's title-strip colour, with a 1 px dark line against
     // the panel.
     let bar = container(bar).style(|theme: &Theme| container::Style {
         background: Some(Background::Color(chrome::title_bar(theme))),

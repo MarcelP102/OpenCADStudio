@@ -1171,8 +1171,8 @@ pub const DOCK_MAX_W: f32 = 600.0;
 pub const DOCK_EDGE_ZONE: f32 = 48.0;
 /// Width of the grabbable divider between a docked group and the viewport.
 pub const DOCK_DIVIDER_W: f32 = 5.0;
-/// Width of a floating panel's vertical title bar: the ribbon's title
-/// strip (20 px) and the 1 px dark line parting it from the panel.
+/// Width of a floating panel's vertical title bar: 22 px and the 1 px dark
+/// line parting it from the panel.
 pub const DOCK_FLOAT_BAR_W: f32 =
     crate::ui::style::palette_metrics::FLOAT_BAR_W + crate::ui::style::palette_metrics::LINE;
 /// Width of an edge's vertical icon strip: its light part and the 1 px

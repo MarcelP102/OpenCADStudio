@@ -33,9 +33,8 @@ pub const STRIP_NAME_GAP: f32 = 4.0;
 
 // ── Floating palette ──────────────────────────────────────────────────────
 
-/// Width of a floating palette's vertical title bar: as high as a ribbon
-/// panel's title strip.
-pub const FLOAT_BAR_W: f32 = super::ribbon_metrics::TITLE_STRIP_H;
+/// Width of a floating palette's vertical title bar.
+pub const FLOAT_BAR_W: f32 = 22.0;
 /// Size of the icons on that bar (its palette's icon, close, pin).
 pub const FLOAT_ICON: f32 = 16.0;
 
