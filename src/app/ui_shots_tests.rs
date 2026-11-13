@@ -256,6 +256,12 @@ fn ui_shots() {
                 if id == PanelId::NodeGraph {
                     app.show_node_graph = true;
                 }
+                match id {
+                    PanelId::Layers => app.show_layers = true,
+                    PanelId::ExternalReferences => app.show_external_references = true,
+                    PanelId::SheetSetManager => app.sheet_set.show = true,
+                    _ => {}
+                }
                 app.dock.left = vec![DockGroup::stack(vec![PanelId::Properties, id])];
                 shot(&mut app, &dir, &format!("family-{name}"), None);
             }

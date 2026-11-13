@@ -2,11 +2,10 @@
 
 use crate::app::Message;
 use crate::t;
+use crate::ui::kit;
 use crate::ui::properties::{lw_options, LinetypeItem, LwItem};
 use crate::ui::style::common::muted_style;
-use crate::ui::style::form::field_style_with_radius;
-use crate::ui::style::row_button::{cell_button_style, header_button_style};
-use crate::ui::ROW_H;
+use crate::ui::style::{chrome, palette_metrics as pm};
 use document::tables::layer::Layer as DocLayer;
 use document::tables::Table;
 use document::types::{Color as AcadColor, LineWeight};
@@ -342,13 +341,22 @@ pub fn layer_is_protected(name: &str, current: &str) -> bool {
 // ── Row-height-derived constants ─────────────────────────────────────────
 use crate::ui::style::text::line as ui_line;
 /// SVG icon size inside a layer-table cell.
-const ICON_SZ: f32 = ROW_H * 0.62; // ≈16 px at ROW_H=26
+/// Height of a layer-table row, the grid's row.
+const ROW_H: f32 = pm::ROW_H;
+const ICON_SZ: f32 = pm::ROW_ICON;
 /// Font size for cell text.
 const FONT_SZ: f32 = crate::ui::style::text::UI;
-/// Whole-pixel vertical padding so a combo / input with a `text::UI_LINE`
-/// line height and a 1 px border fills `ROW_H`.
-const COMBO_PAD_V: f32 = ((ROW_H - crate::ui::style::text::UI_LINE - 2.0) / 2.0).floor();
 const LINETYPE_MENU_W: f32 = 220.0;
+/// Width of the toolbar's search field, wide and compact.
+const SEARCH_W: f32 = 170.0;
+const SEARCH_W_COMPACT: f32 = 120.0;
+/// The toolbar band: the palette's insets, a tool gap above and below.
+const TOOLBAR_PAD: Padding = Padding {
+    top: pm::TOOL_GAP,
+    bottom: pm::TOOL_GAP,
+    left: pm::GRID_INSET_L,
+    right: pm::GRID_INSET_R,
+};
 /// Widget id for the layer-table scrollable, so a freshly created layer can be
 /// scrolled into view after it is added (#271).
 pub const LAYER_TABLE_SCROLL_ID: &str = "layer-manager-table-scroll";
@@ -814,21 +822,25 @@ impl LayerPanel {
             // The open/close arrow, a button of its own: on "All" the label
             // shows the node.
             let arrow: Element<'_, Message> = match toggle {
-                Some(section) => button(if self.section_open(section) {
-                    crate::ui::icons::themed_arrow_down(8.0)
-                } else {
-                    crate::ui::icons::themed_arrow_right(8.0)
-                })
+                Some(section) => button(
+                    container(if self.section_open(section) {
+                        crate::ui::icons::themed_arrow_down(pm::CARET)
+                    } else {
+                        crate::ui::icons::themed_arrow_right(pm::CARET)
+                    })
+                    .center(Length::Fill),
+                )
                 .on_press(Message::LayerTreeSection(section))
                 .style(button::text)
                 .padding(0)
-                .width(12)
+                .width(pm::INDENT)
+                .height(pm::ROW_H)
                 .into(),
-                None => iced::widget::Space::new().width(12).into(),
+                None => iced::widget::Space::new().width(pm::INDENT).into(),
             };
             let icon: Element<'_, Message> = match icon {
-                Some(bytes) => container(crate::ui::icons::themed_secondary(bytes, 12.0))
-                    .width(16)
+                Some(bytes) => container(crate::ui::icons::themed_secondary(bytes, pm::ROW_ICON))
+                    .padding(Padding::ZERO.right(pm::TOOL_GAP))
                     .into(),
                 None => iced::widget::Space::new().width(0).into(),
             };
@@ -863,11 +875,17 @@ impl LayerPanel {
             } else {
                 label
             };
-            let entry = button(row![label, count].spacing(4).align_y(iced::Center))
-                .on_press(on_press)
-                .style(move |theme: &Theme, status| tree_line_style(theme, status, chosen))
-                .padding([3, 4])
-                .width(Fill);
+            let entry = button(
+                row![label, count]
+                    .spacing(pm::TOOL_GAP)
+                    .align_y(iced::Center)
+                    .height(Length::Fill),
+            )
+            .on_press(on_press)
+            .style(move |theme: &Theme, status| tree_line_style(theme, status, chosen))
+            .padding(Padding::ZERO.left(pm::CELL_PAD_X).right(pm::CELL_PAD_X))
+            .height(pm::ROW_H)
+            .width(Fill);
             let entry: Element<'_, Message> = match &line {
                 // Renaming in place: a field instead of the line.
                 TreeRow::Node(node, _)
@@ -880,9 +898,9 @@ impl LayerPanel {
                         .on_submit(Message::LayerTreeRenameCommit)
                         .size(FONT_SZ)
                         .line_height(ui_line())
-                        .padding([2, 4])
+                        .padding(kit::FIELD_PAD)
                         .width(Fill)
-                        .style(|theme, status| field_style_with_radius(theme, status, 2.0))
+                        .style(kit::field_style)
                         .into()
                 }
                 TreeRow::Node(node, _) => {
@@ -908,12 +926,12 @@ impl LayerPanel {
                         .style(move |theme: &Theme| container::Style {
                             border: Border {
                                 color: if dropping {
-                                    theme.palette().primary.base.color
+                                    chrome::accent(theme)
                                 } else {
                                     Color::TRANSPARENT
                                 },
-                                width: 1.0,
-                                radius: 3.0.into(),
+                                width: pm::LINE,
+                                radius: 0.0.into(),
                             },
                             ..Default::default()
                         })
@@ -927,43 +945,48 @@ impl LayerPanel {
                     let members = self.node_layers(node);
                     let on = !members.is_empty() && members.iter().all(|m| self.eye_on(m));
                     let eye = button(if on {
-                        crate::ui::icons::themed_primary(crate::ui::icons::EYE, 11.0)
+                        crate::ui::icons::themed_primary(crate::ui::icons::EYE, pm::BAR_ICON)
                     } else {
-                        crate::ui::icons::themed_secondary(crate::ui::icons::EYE, 11.0)
+                        crate::ui::icons::themed_secondary(crate::ui::icons::EYE, pm::BAR_ICON)
                     })
                     .on_press(Message::LayerNodeEye(node.clone()))
                     .style(button::text)
-                    .padding([2, 2]);
+                    .padding((pm::BAR_BUTTON - pm::BAR_ICON) / 2.0);
                     // Shown while on, or under the pointer: the tree stays
                     // quiet as in the mockup.
                     if on {
                         eye.into()
                     } else {
-                        iced::widget::hover(iced::widget::Space::new().width(15).height(15), eye)
+                        iced::widget::hover(
+                            iced::widget::Space::new()
+                                .width(pm::BAR_BUTTON)
+                                .height(pm::BAR_BUTTON),
+                            eye,
+                        )
                     }
                 }
-                _ => iced::widget::Space::new().width(15).into(),
+                _ => iced::widget::Space::new().width(pm::BAR_BUTTON).into(),
             };
             list = list.push(
                 row![
-                    iced::widget::Space::new().width(f32::from(depth) * 14.0),
+                    iced::widget::Space::new().width(f32::from(depth) * pm::INDENT),
                     arrow,
                     icon,
                     entry,
                     eye
                 ]
-                .spacing(2)
+                .height(pm::ROW_H)
                 .align_y(iced::Center),
             );
         }
-        container(scrollable(list).height(Length::Fill))
+        container(kit::scroll_area(list))
             .width(Length::Fixed(TREE_W))
             .height(Length::Fill)
-            .padding([6, 4])
+            .padding(Padding::ZERO.left(pm::GRID_INSET_L).top(pm::TOOL_GAP))
             .style(|theme: &Theme| container::Style {
                 border: Border {
-                    color: theme.palette().background.neutral.color,
-                    width: 1.0,
+                    color: chrome::border(theme),
+                    width: pm::LINE,
                     radius: 0.0.into(),
                 },
                 ..Default::default()
@@ -995,7 +1018,7 @@ impl LayerPanel {
             iced::widget::Space::new().width(0).into()
         } else {
             row![
-                crate::ui::icons::themed(crate::ui::icons::EYE, 12.0),
+                crate::ui::icons::themed(crate::ui::icons::EYE, pm::BAR_ICON),
                 text(crate::tf!(
                     "Highlighting {} objects of {}. Selection unchanged.",
                     self.highlighted,
@@ -1004,23 +1027,23 @@ impl LayerPanel {
                 .size(FONT_SZ)
                 .line_height(ui_line()),
             ]
-            .spacing(6)
+            .spacing(pm::TOOL_GAP)
             .align_y(iced::Center)
             .into()
         };
-        container(
+        kit::footer(
             row![
                 checkbox(self.invert)
                     .label(t!("Invert filter"))
                     .text_size(FONT_SZ)
-                    .size(13)
+                    .size(pm::CHECK)
                     .on_toggle(Message::LayerInvert),
                 lit,
                 iced::widget::Space::new().width(Length::Fill),
                 checkbox(ribbon_follows)
                     .label(t!("Ribbon list follows the tree"))
                     .text_size(FONT_SZ)
-                    .size(13)
+                    .size(pm::CHECK)
                     .on_toggle(Message::LayerRibbonFollows),
                 text(format!("{}:", t!("Current layer")))
                     .size(FONT_SZ)
@@ -1029,12 +1052,9 @@ impl LayerPanel {
                 text(self.current_layer.as_str()).size(FONT_SZ).line_height(ui_line()),
                 text(summary).size(FONT_SZ).line_height(ui_line()).style(muted_style),
             ]
-            .spacing(8)
+            .spacing(pm::GRID_INSET_L)
             .align_y(iced::Center),
         )
-        .padding([3, 8])
-        .width(Length::Fill)
-        .into()
     }
 
     /// The selected rows' layer names.
@@ -1273,15 +1293,15 @@ impl LayerPanel {
             chrome,
         );
         // Inside the pallet's 1 px border on either side.
-        let body = self.view_content(name_col_w, (width - 2.0).max(0.0), active_vp);
+        let body = self.view_content(name_col_w, (width - 2.0 * pm::LINE).max(0.0), active_vp);
         container(column![title_bar, body])
             .width(Length::Fixed(width))
             .height(Length::Fill)
             .style(|theme: &Theme| container::Style {
-                background: Some(Background::Color(theme.palette().background.base.color)),
+                background: Some(Background::Color(chrome::palette_body(theme))),
                 border: Border {
-                    color: theme.palette().background.neutral.color,
-                    width: 1.0,
+                    color: chrome::edge(theme),
+                    width: pm::LINE,
                     radius: 0.0.into(),
                 },
                 ..Default::default()
@@ -1339,8 +1359,8 @@ impl LayerPanel {
             crate::ui::dropdown_list::pick_list(Some(self.view.clone()), nodes, TreeNode::label)
                 .on_select(Message::LayerShow)
                 .text_size(FONT_SZ)
-                .padding([3, 6])
-                .width(Length::Fixed(130.0))
+                .padding(kit::BOX_PAD)
+                .width(Length::Fixed(NODE_PICKER_W))
                 .into()
         };
 
@@ -1360,7 +1380,7 @@ impl LayerPanel {
 
         // The room the table has: beside the tree on a wide pallet.
         let table_w = if band == WidthBand::Wide && !self.columns_menu {
-            (inner_w - TREE_W - 2.0).max(0.0)
+            (inner_w - TREE_W - 2.0 * pm::LINE).max(0.0)
         } else {
             inner_w
         };
@@ -1370,8 +1390,10 @@ impl LayerPanel {
         let sa = self.sort_asc;
         let mut header_row = row![
             text(t!("Status"))
-                .size(10)
-                .style(muted_style)
+                .size(FONT_SZ)
+                .line_height(ui_line())
+                .font(kit::SEMIBOLD)
+                .wrapping(iced::widget::text::Wrapping::None)
                 .width(COL_STATUS),
             sortable_header(
                 t!("Name"),
@@ -1382,19 +1404,17 @@ impl LayerPanel {
             ),
             // Draggable divider: adjusts the Name column width (#359).
             iced::widget::mouse_area(
-                container(iced::widget::Space::new().width(2).height(14)).style(|theme: &Theme| {
-                    container::Style {
-                        background: Some(Background::Color(
-                            theme.palette().background.neutral.color,
-                        )),
+                container(iced::widget::Space::new().width(pm::LINE).height(pm::ROW_H))
+                    .padding(Padding::ZERO.left(pm::LINE).right(pm::LINE))
+                    .style(|theme: &Theme| container::Style {
+                        background: Some(Background::Color(chrome::border(theme))),
                         ..Default::default()
-                    }
-                },),
+                    }),
             )
             .on_press(Message::LayerNameColGrab)
             .interaction(iced::mouse::Interaction::ResizingHorizontally),
         ]
-        .spacing(4)
+        .spacing(pm::TOOL_GAP)
         .align_y(iced::Center);
         for col in &columns {
             header_row = header_row.push(sortable_header(
@@ -1413,9 +1433,11 @@ impl LayerPanel {
         {
             header_row = header_row.push(
                 text(vp.label.as_str())
-                    .size(10)
-                    .style(muted_style)
-                    .width(Length::Fixed(COL_ICON * 2.0 + 4.0)),
+                    .size(FONT_SZ)
+                    .line_height(ui_line())
+                    .font(kit::SEMIBOLD)
+                    .wrapping(iced::widget::text::Wrapping::None)
+                    .width(Length::Fixed(COL_ICON * 2.0 + pm::TOOL_GAP)),
             );
         }
         // Over the rows' eye buttons, after the same filler the rows have.
@@ -1425,19 +1447,17 @@ impl LayerPanel {
             .push(iced::widget::Space::new().width(COL_EYE));
 
         let col_header = container(header_row)
-            .style(|theme: &Theme| {
-                let palette = theme.palette();
-                container::Style {
-                    background: Some(Background::Color(palette.background.weak.color)),
-                    border: Border {
-                        color: palette.background.neutral.color,
-                        width: 1.0,
-                        radius: 0.0.into(),
-                    },
-                    ..Default::default()
-                }
+            .style(|theme: &Theme| container::Style {
+                background: Some(Background::Color(chrome::palette_bar(theme))),
+                border: Border {
+                    color: chrome::border(theme),
+                    width: pm::LINE,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
             })
-            .padding([4, 8])
+            .height(pm::ROW_H + 2.0 * pm::LINE)
+            .padding(Padding::ZERO.left(pm::GRID_INSET_L).right(pm::GRID_INSET_L))
             .width(Length::Fill);
         // A right-click on the header chooses the columns.
         let col_header =
@@ -1472,7 +1492,6 @@ impl LayerPanel {
             };
 
             let row = layer_row(
-                i,
                 layer,
                 is_sel,
                 is_current,
@@ -1623,13 +1642,16 @@ impl LayerPanel {
                 node_picker,
                 iced::widget::Space::new().width(Length::Fill),
                 // Search box: filters rows by name as the user types (#343).
-                text_input(t!("Search…").as_ref(), &self.filter)
-                    .on_input(Message::LayerManagerFilterChanged)
-                    .size(FONT_SZ)
-                    .line_height(ui_line())
-                    .padding([3, 6])
-                    .width(Length::Fixed(if compact { 120.0 } else { 170.0 }))
-                    .style(|theme, status| field_style_with_radius(theme, status, 2.0)),
+                kit::search_field(
+                    t!("Search…").as_ref(),
+                    &self.filter,
+                    Message::LayerManagerFilterChanged
+                )
+                .width(Length::Fixed(if compact {
+                    SEARCH_W_COMPACT
+                } else {
+                    SEARCH_W
+                })),
                 // The search text as a filter, edited with FILTER's rows.
                 toolbar_text_btn(t!("Advanced…"), Message::LayerFilterEdit(None)),
                 // The search text kept as a property filter (LM-22a).
@@ -1639,15 +1661,11 @@ impl LayerPanel {
                     toolbar_text_btn(t!("Save as filter"), Message::LayerSaveSearch)
                 },
             ]
-            .spacing(4)
+            .spacing(pm::TOOL_GAP)
             .align_y(iced::Center),
         )
-        .style(|theme: &Theme| container::Style {
-            background: Some(Background::Color(theme.palette().background.weak.color)),
-            ..Default::default()
-        })
         .width(Length::Fill)
-        .padding([4, 8])
+        .padding(TOOLBAR_PAD)
         .into()
     }
 
@@ -1672,27 +1690,31 @@ impl LayerPanel {
             ),
             more_item(t!("Advanced…"), Message::LayerFilterEdit(None)),
         ];
-        let more_head = button(crate::ui::icons::themed(crate::ui::icons::MORE, 12.0))
+        let more_head = button(kit::tool_icon(crate::ui::icons::MORE))
             .on_press(Message::LayerMoreMenu(!self.more_menu))
-            .style(crate::ui::style::form::button_style(self.more_menu))
-            .padding([4, 6]);
+            .style(kit::flat_button_style(self.more_menu))
+            .width(pm::TOOL_H)
+            .height(pm::TOOL_H)
+            .padding((pm::TOOL_H - pm::ROW_ICON) / 2.0);
         // The overlay takes the "…" button's width unless it is given one,
         // and iced_aw's BottomStart opens it beside the button, not below.
         let more = iced_aw::DropDown::new(
             more_head,
             container(iced::widget::Column::with_children(more_items).width(Length::Fill))
-                .padding([4, 0])
-                .style(crate::ui::color_select::popup_panel_style),
+                .padding([pm::MENU_PAD_Y, 0.0])
+                .style(crate::ui::palette_menu::frame_style),
             self.more_menu,
         )
         .width(Length::Fixed(MORE_MENU_W))
         .alignment(iced_aw::drop_down::Alignment::Bottom)
         .offset(2.0)
         .on_dismiss(Message::LayerMoreMenu(false));
-        let search_btn = button(crate::ui::icons::themed(crate::ui::icons::SEARCH, 12.0))
+        let search_btn = button(kit::tool_icon(crate::ui::icons::SEARCH))
             .on_press(Message::LayerSearchOpen(!self.search_open))
-            .style(crate::ui::style::form::button_style(self.search_open))
-            .padding([4, 6]);
+            .style(kit::flat_button_style(self.search_open))
+            .width(pm::TOOL_H)
+            .height(pm::TOOL_H)
+            .padding((pm::TOOL_H - pm::ROW_ICON) / 2.0);
         let tools = row![
             toolbar_btn(crate::ui::icons::PLUS, t!("New"), Message::LayerNew, true),
             toolbar_btn_cond(
@@ -1719,7 +1741,7 @@ impl LayerPanel {
             iced::widget::Space::new().width(Length::Fill),
             with_tip(search_btn, t!("Search…"), true),
         ]
-        .spacing(3)
+        .spacing(pm::TOOL_GAP)
         .align_y(iced::Center);
         // The tree's nodes as a list opening below, each with its count.
         let nodes: Vec<TreeNode> = self.tree_nodes().into_iter().map(|(n, _)| n).collect();
@@ -1737,39 +1759,33 @@ impl LayerPanel {
         )
         .on_select(Message::LayerShow)
         .text_size(FONT_SZ)
-        .padding([3, 6])
+        .padding(kit::BOX_PAD)
         .width(Length::Fill);
-        let mut top = column![tools, picker].spacing(4);
+        let mut top = column![tools, picker].spacing(pm::TOOL_GAP);
         if self.search_open || !self.filter.is_empty() {
             top = top.push(
                 row![
-                    text_input(t!("Search…").as_ref(), &self.filter)
-                        .on_input(Message::LayerManagerFilterChanged)
-                        .size(FONT_SZ)
-                        .line_height(ui_line())
-                        .padding([3, 6])
-                        .width(Length::Fill)
-                        .style(|theme, status| field_style_with_radius(theme, status, 2.0)),
+                    kit::search_field(
+                        t!("Search…").as_ref(),
+                        &self.filter,
+                        Message::LayerManagerFilterChanged
+                    ),
                     toolbar_text_btn(t!("Advanced…"), Message::LayerFilterEdit(None)),
                 ]
-                .spacing(4)
+                .spacing(pm::TOOL_GAP)
                 .align_y(iced::Center),
             );
         }
         container(top)
-            .style(|theme: &Theme| container::Style {
-                background: Some(Background::Color(theme.palette().background.weak.color)),
-                ..Default::default()
-            })
             .width(Length::Fill)
-            .padding([4, 6])
+            .padding(TOOLBAR_PAD)
             .into()
     }
 
     /// A compact pallet's footer, one line: the current layer and how many
     /// layers the node shows.
     fn compact_footer(&self) -> Element<'_, Message> {
-        container(
+        kit::footer(
             row![
                 text(format!("{}:", t!("Current layer")))
                     .size(FONT_SZ)
@@ -1792,13 +1808,10 @@ impl LayerPanel {
                 .style(muted_style)
                 .wrapping(iced::widget::text::Wrapping::None),
             ]
-            .spacing(4)
-            .align_y(iced::Center),
+            .spacing(pm::TOOL_GAP)
+            .align_y(iced::Center)
+            .clip(true),
         )
-        .clip(true)
-        .padding([4, 8])
-        .width(Length::Fill)
-        .into()
     }
 }
 
@@ -1816,46 +1829,51 @@ fn more_item<'a>(label: Cow<'static, str>, msg: Message) -> Element<'a, Message>
 /// Every movable column with a tick to show it and arrows to move it; it
 /// stays open while several are changed.
 fn column_chooser<'a>() -> Element<'a, Message> {
-    let mut list = column![].spacing(2);
+    let mut list = column![];
     let layout = column_layout();
     let last = layout.len().saturating_sub(1);
     for (n, (col, shown)) in layout.into_iter().enumerate() {
         let arrow = |up: bool| {
             let icon = if up {
-                crate::ui::icons::themed_arrow_up(9.0)
+                crate::ui::icons::themed_arrow_up(pm::CARET)
             } else {
-                crate::ui::icons::themed_arrow_down(9.0)
+                crate::ui::icons::themed_arrow_down(pm::CARET)
             };
             let enabled = if up { n > 0 } else { n < last };
             button(icon)
                 .on_press_maybe(
                     enabled.then_some(Message::LayerColumnMove(col, if up { -1 } else { 1 })),
                 )
-                .style(button::text)
-                .padding([2, 6])
+                .style(kit::flat_button_style(false))
+                .width(pm::BAR_BUTTON)
+                .height(pm::BAR_BUTTON)
+                .padding((pm::BAR_BUTTON - pm::CARET) / 2.0)
         };
         list = list.push(
             row![
                 checkbox(shown)
                     .label(col.label())
                     .text_size(FONT_SZ)
-                    .size(13)
+                    .size(pm::CHECK)
                     .on_toggle(move |_| Message::LayerColumnToggle(col))
                     .width(Length::Fill),
                 arrow(true),
                 arrow(false),
             ]
+            .height(pm::ROW_H)
             .align_y(iced::Center),
         );
     }
-    let close = button(text(t!("Close")).size(FONT_SZ).line_height(ui_line()))
-        .on_press(Message::LayerColumnsMenu(false))
-        .padding([2, 10])
-        .style(button::secondary);
-    container(column![list, close].spacing(6))
-        .style(container::bordered_box)
-        .padding(6)
-        .width(Length::Fixed(220.0))
+    let close = kit::text_button(t!("Close"), Some(Message::LayerColumnsMenu(false)), false);
+    container(column![list, close].spacing(pm::TOOL_GAP))
+        .style(crate::ui::palette_menu::frame_style)
+        .padding(Padding {
+            top: pm::TOOL_GAP,
+            bottom: pm::TOOL_GAP,
+            left: pm::GRID_INSET_L,
+            right: pm::GRID_INSET_L,
+        })
+        .width(Length::Fixed(COLUMN_CHOOSER_W))
         .into()
 }
 
@@ -1878,28 +1896,26 @@ fn sortable_header<'a>(
     asc: bool,
 ) -> Element<'a, Message> {
     let mut content = row![text(label)
-        .size(10)
-        .style(muted_style)
+        .size(FONT_SZ)
+        .line_height(ui_line())
+        .font(kit::SEMIBOLD)
         .wrapping(iced::widget::text::Wrapping::None)]
-    .spacing(3)
+    .spacing(pm::TOOL_GAP)
     .align_y(iced::Center);
     if active == Some(col) {
-        content = content.push(if asc {
-            crate::ui::icons::themed_arrow_up(8.0)
-        } else {
-            crate::ui::icons::themed_arrow_down(8.0)
-        });
+        content = content.push(crate::ui::icons::themed_arrow_toggle(asc, pm::CARET));
     }
     // Cut at the column: a long translated label ran into the next one.
     button(container(content).clip(true))
         .on_press(Message::LayerSort(col))
-        .style(header_button_style)
-        .padding(Padding {
-            top: 0.0,
-            bottom: 0.0,
-            left: 2.0,
-            right: 2.0,
+        .style(|theme: &Theme, status| button::Style {
+            background: matches!(status, button::Status::Hovered | button::Status::Pressed)
+                .then(|| Background::Color(chrome::hover(theme))),
+            text_color: chrome::text(theme),
+            ..Default::default()
         })
+        .padding(Padding::ZERO.left(pm::CELL_PAD_X).right(pm::CELL_PAD_X))
+        .height(pm::ROW_H)
         .width(width)
         .into()
 }
@@ -1926,71 +1942,48 @@ fn toolbar_btn<'a>(
     msg: Message,
     compact: bool,
 ) -> Element<'a, Message> {
-    let mut content = row![crate::ui::icons::themed(icon, 12.0)]
-        .spacing(5)
+    let mut content = row![crate::ui::icons::themed(icon, pm::ROW_ICON)]
+        .spacing(pm::TOOL_GAP)
         .align_y(iced::Center);
     if !compact {
-        content = content.push(text(label.clone()).size(11));
+        content = content.push(text(label.clone()).size(crate::ui::style::text::UI));
     }
     let b = button(content)
         .on_press(msg)
-        .style(|theme: &Theme, status| {
-            let palette = theme.palette();
-            let pair = match status {
-                button::Status::Hovered | button::Status::Pressed => palette.background.strong,
-                _ => palette.background.weak,
-            };
-            button::Style {
-                background: Some(Background::Color(pair.color)),
-                border: Border {
-                    radius: 3.0.into(),
-                    color: palette.background.neutral.color,
-                    width: 1.0,
-                },
-                text_color: pair.text,
-                ..Default::default()
-            }
-        })
-        .padding(if compact { [4, 6] } else { [4, 10] });
+        .style(kit::flat_button_style(false))
+        .height(pm::TOOL_H)
+        .padding([
+            0.0,
+            if compact {
+                pm::LINE * 3.0
+            } else {
+                pm::CELL_PAD_X
+            },
+        ]);
     with_tip(b, label, compact)
 }
 
 /// A thin upright line between toolbar groups.
 fn toolbar_divider<'a>() -> Element<'a, Message> {
     container(
-        container(iced::widget::Space::new().width(1).height(18)).style(|theme: &Theme| {
-            container::Style {
-                background: Some(Background::Color(theme.palette().background.neutral.color)),
+        container(iced::widget::Space::new().width(pm::LINE).height(pm::ROW_H)).style(
+            |theme: &Theme| container::Style {
+                background: Some(Background::Color(chrome::border(theme))),
                 ..Default::default()
-            }
-        }),
+            },
+        ),
     )
-    .padding([0, 3])
+    .padding([0.0, pm::LINE * 3.0])
     .into()
 }
 
 /// A toolbar button with only a label.
 fn toolbar_text_btn<'a>(label: Cow<'static, str>, msg: Message) -> Element<'a, Message> {
-    button(text(label).size(11))
+    button(text(label).size(crate::ui::style::text::UI))
         .on_press(msg)
-        .style(|theme: &Theme, status| {
-            let palette = theme.palette();
-            let pair = match status {
-                button::Status::Hovered | button::Status::Pressed => palette.background.strong,
-                _ => palette.background.weak,
-            };
-            button::Style {
-                background: Some(Background::Color(pair.color)),
-                border: Border {
-                    radius: 3.0.into(),
-                    color: palette.background.neutral.color,
-                    width: 1.0,
-                },
-                text_color: pair.text,
-                ..Default::default()
-            }
-        })
-        .padding([4, 10])
+        .style(kit::flat_button_style(false))
+        .height(pm::TOOL_H)
+        .padding([0.0, pm::CELL_PAD_X])
         .into()
 }
 
@@ -2002,46 +1995,34 @@ fn toolbar_btn_cond<'a>(
     compact: bool,
 ) -> Element<'a, Message> {
     let mut content = row![if enabled {
-        crate::ui::icons::themed(icon, 12.0)
+        crate::ui::icons::themed(icon, pm::ROW_ICON)
     } else {
-        crate::ui::icons::themed_disabled(icon, 12.0)
+        crate::ui::icons::themed_disabled(icon, pm::ROW_ICON)
     }]
-    .spacing(5)
+    .spacing(pm::TOOL_GAP)
     .align_y(iced::Center);
     if !compact {
         content = content.push(if enabled {
-            text(label.clone()).size(11)
+            text(label.clone()).size(crate::ui::style::text::UI)
         } else {
             text(label.clone())
-                .size(11)
+                .size(crate::ui::style::text::UI)
                 .style(|theme: &Theme| iced::widget::text::Style {
-                    color: Some(theme.palette().background.base.text.scale_alpha(0.42)),
+                    color: Some(chrome::muted(theme)),
                 })
         });
     }
     let mut b = button(content)
-        .style(move |theme: &Theme, status| {
-            let palette = theme.palette();
-            let pair = match status {
-                button::Status::Hovered if enabled => palette.background.strong,
-                _ => palette.background.weak,
-            };
-            button::Style {
-                background: Some(Background::Color(pair.color)),
-                border: Border {
-                    radius: 3.0.into(),
-                    color: palette.background.neutral.color,
-                    width: 1.0,
-                },
-                text_color: if enabled {
-                    pair.text
-                } else {
-                    pair.text.scale_alpha(0.42)
-                },
-                ..Default::default()
-            }
-        })
-        .padding(if compact { [4, 6] } else { [4, 10] });
+        .style(kit::flat_button_style(false))
+        .height(pm::TOOL_H)
+        .padding([
+            0.0,
+            if compact {
+                pm::LINE * 3.0
+            } else {
+                pm::CELL_PAD_X
+            },
+        ]);
     if enabled {
         b = b.on_press(msg);
     }
@@ -2053,45 +2034,16 @@ fn toolbar_btn_cond<'a>(
 /// Hover popup showing a layer's full name when the cell truncates it.
 fn name_tip<'a>(name: &'a str) -> Element<'a, Message> {
     container(text(name).size(FONT_SZ).line_height(ui_line()))
-        .padding(Padding {
-            top: 3.0,
-            bottom: 3.0,
-            left: 7.0,
-            right: 7.0,
-        })
-        .style(|theme: &Theme| {
-            let palette = theme.palette();
-            container::Style {
-                background: Some(Background::Color(palette.background.strong.color)),
-                border: Border {
-                    color: palette.background.neutral.color,
-                    width: 1.0,
-                    radius: 3.0.into(),
-                },
-                text_color: Some(palette.background.strong.text),
-                ..Default::default()
-            }
-        })
+        .padding(TIP_PAD)
+        .style(crate::ui::palette_menu::frame_style)
         .into()
 }
 
 /// A tooltip with owned text, for the toolbar's icon-only buttons.
 fn name_tip_owned<'a>(label: Cow<'static, str>) -> Element<'a, Message> {
     container(text(label).size(FONT_SZ).line_height(ui_line()))
-        .padding([3, 7])
-        .style(|theme: &Theme| {
-            let palette = theme.palette();
-            container::Style {
-                background: Some(Background::Color(palette.background.strong.color)),
-                border: Border {
-                    color: palette.background.neutral.color,
-                    width: 1.0,
-                    radius: 3.0.into(),
-                },
-                text_color: Some(palette.background.strong.text),
-                ..Default::default()
-            }
-        })
+        .padding(TIP_PAD)
+        .style(crate::ui::palette_menu::frame_style)
         .into()
 }
 
@@ -2113,7 +2065,6 @@ pub fn transparency_input_id() -> iced::widget::Id {
 
 #[allow(clippy::too_many_arguments)]
 fn layer_row<'a>(
-    index: usize,
     layer: &'a Layer,
     is_selected: bool,
     is_current: bool,
@@ -2136,13 +2087,8 @@ fn layer_row<'a>(
     let svg_btn = |bytes: &'static [u8], on_press: Message| -> Element<'a, Message> {
         button(crate::ui::icons::semantic(bytes, ICON_SZ))
             .on_press(on_press)
-            .style(cell_button_style(is_selected, index))
-            .padding(Padding {
-                top: COMBO_PAD_V,
-                bottom: COMBO_PAD_V,
-                left: 4.0,
-                right: 4.0,
-            })
+            .style(kit::cell_button_style)
+            .padding(Padding::ZERO.left(pm::CELL_PAD_X).right(pm::CELL_PAD_X))
             .height(Length::Fixed(ROW_H))
             .into()
     };
@@ -2164,35 +2110,34 @@ fn layer_row<'a>(
 
     let plot_btn: Element<'_, Message> = button(plot_icon)
         .on_press(Message::LayerTogglePlot(lname.clone()))
-        .style(cell_button_style(is_selected, index))
-        .padding(Padding {
-            top: COMBO_PAD_V,
-            bottom: COMBO_PAD_V,
-            left: 4.0,
-            right: 4.0,
-        })
+        .style(kit::cell_button_style)
+        .padding(Padding::ZERO.left(pm::CELL_PAD_X).right(pm::CELL_PAD_X))
         .height(Length::Fixed(ROW_H))
         .into();
 
     // Current: a tick; with objects: a dot; empty: a ring (#2610).
     let status_dot: Element<'_, Message> = if is_current {
-        crate::ui::icons::themed(crate::ui::icons::CHECK, 13.0)
+        crate::ui::icons::themed(crate::ui::icons::CHECK, pm::BAR_ICON)
     } else {
         let filled = layer.objects > 0;
-        container(iced::widget::Space::new().width(7).height(7))
-            .style(move |theme: &Theme| {
-                let ink = theme.palette().background.base.text.scale_alpha(0.7);
-                container::Style {
-                    background: filled.then_some(Background::Color(ink)),
-                    border: Border {
-                        color: ink,
-                        width: 1.5,
-                        radius: 4.0.into(),
-                    },
-                    ..Default::default()
-                }
-            })
-            .into()
+        container(
+            iced::widget::Space::new()
+                .width(pm::DIRTY_DOT)
+                .height(pm::DIRTY_DOT),
+        )
+        .style(move |theme: &Theme| {
+            let ink = chrome::muted(theme);
+            container::Style {
+                background: filled.then_some(Background::Color(ink)),
+                border: Border {
+                    color: ink,
+                    width: pm::LINE,
+                    radius: (pm::DIRTY_DOT / 2.0).into(),
+                },
+                ..Default::default()
+            }
+        })
+        .into()
     };
 
     // Name cell
@@ -2203,13 +2148,8 @@ fn layer_row<'a>(
             .on_submit(Message::LayerRenameCommit)
             .size(FONT_SZ)
             .line_height(ui_line())
-            .padding(Padding {
-                top: COMBO_PAD_V,
-                bottom: COMBO_PAD_V,
-                left: 4.0,
-                right: 4.0,
-            })
-            .style(|theme, status| field_style_with_radius(theme, status, 2.0))
+            .padding(kit::FIELD_PAD)
+            .style(kit::field_style)
             .width(Length::Fixed(name_col_w))
             .into()
     } else {
@@ -2227,12 +2167,7 @@ fn layer_row<'a>(
                     .wrapping(iced::widget::text::Wrapping::None),
             )
             .clip(true)
-            .padding(Padding {
-                top: COMBO_PAD_V,
-                bottom: COMBO_PAD_V,
-                left: 4.0,
-                right: 4.0,
-            })
+            .padding(kit::FIELD_PAD)
             .height(Length::Fixed(ROW_H))
             .width(Length::Fixed(name_col_w)),
         )
@@ -2291,12 +2226,7 @@ fn layer_row<'a>(
             )
             .size(FONT_SZ)
             .line_height(ui_line())
-            .padding(Padding {
-                top: COMBO_PAD_V,
-                bottom: COMBO_PAD_V,
-                left: 4.0,
-                right: 4.0,
-            })
+            .padding(kit::FIELD_PAD)
             .width(Length::Fixed(COL_LT))
             .input_style(cell_field_style),
             LINETYPE_MENU_W,
@@ -2321,12 +2251,7 @@ fn layer_row<'a>(
         )
         .size(FONT_SZ)
         .line_height(ui_line())
-        .padding(Padding {
-            top: COMBO_PAD_V,
-            bottom: COMBO_PAD_V,
-            left: 4.0,
-            right: 4.0,
-        })
+        .padding(kit::FIELD_PAD)
         .width(Length::Fixed(COL_LW))
         .input_style(cell_field_style)
         .into()
@@ -2348,12 +2273,7 @@ fn layer_row<'a>(
         .on_submit(Message::LayerTransparencyCommit)
         .size(FONT_SZ)
         .line_height(ui_line())
-        .padding(Padding {
-            top: COMBO_PAD_V,
-            bottom: COMBO_PAD_V,
-            left: 4.0,
-            right: 4.0,
-        })
+        .padding(kit::FIELD_PAD)
         .style(cell_field_style)
         .width(Length::Fixed(COL_TRANS));
     if trans_buf.is_some() {
@@ -2368,12 +2288,7 @@ fn layer_row<'a>(
         .on_submit(Message::LayerDescriptionCommit)
         .size(FONT_SZ)
         .line_height(ui_line())
-        .padding(Padding {
-            top: COMBO_PAD_V,
-            bottom: COMBO_PAD_V,
-            left: 4.0,
-            right: 4.0,
-        })
+        .padding(kit::FIELD_PAD)
         .style(cell_field_style)
         .width(Length::Fixed(COL_DESC));
     if desc_buf.is_some() {
@@ -2408,9 +2323,9 @@ fn layer_row<'a>(
         )
         .on_double_click(Message::LayerSetCurrent),
         name_cell,
-        iced::widget::Space::new().width(2),
+        iced::widget::Space::new().width(pm::LINE),
     ]
-    .spacing(4)
+    .spacing(pm::TOOL_GAP)
     .width(Fill)
     .align_y(iced::Center);
     // The movable columns, in the chosen order.
@@ -2474,7 +2389,7 @@ fn layer_row<'a>(
             crate::app::ColorPickTarget::LayerViewport(lname.clone(), vp_col.handle),
             shown,
         ))
-        .padding(2)
+        .padding(pm::LINE * 2.0)
         .style(button::text);
         row_content = row_content.push(
             row![
@@ -2488,61 +2403,32 @@ fn layer_row<'a>(
                     .width(Length::Fixed(COL_ICON))
                     .align_x(iced::Center),
             ]
-            .spacing(4),
+            .spacing(pm::TOOL_GAP),
         );
     }
 
     // The eye: this layer's objects lit in the drawing, the selection kept.
     let eye = button(if eye_on {
-        crate::ui::icons::themed_primary(crate::ui::icons::EYE, 13.0)
+        crate::ui::icons::themed_primary(crate::ui::icons::EYE, pm::BAR_ICON)
     } else {
-        crate::ui::icons::themed_disabled(crate::ui::icons::EYE, 13.0)
+        crate::ui::icons::themed_disabled(crate::ui::icons::EYE, pm::BAR_ICON)
     })
     .on_press(Message::LayerEye(lname.clone()))
-    .padding([3, 4])
-    .style(move |theme: &Theme, status| {
-        let palette = theme.palette();
-        button::Style {
-            background: matches!(status, button::Status::Hovered)
-                .then(|| Background::Color(palette.background.strong.color)),
-            border: Border {
-                color: if eye_on {
-                    palette.primary.base.color
-                } else {
-                    Color::TRANSPARENT
-                },
-                width: 1.0,
-                radius: 3.0.into(),
-            },
-            ..Default::default()
-        }
-    });
+    .width(pm::BAR_BUTTON)
+    .height(pm::BAR_BUTTON)
+    .padding((pm::BAR_BUTTON - pm::BAR_ICON) / 2.0)
+    .style(kit::flat_button_style(eye_on));
     row_content = row_content.push(iced::widget::Space::new().width(Fill));
     row_content = row_content.push(container(eye).width(COL_EYE).align_x(iced::Center));
 
     mouse_area(
         container(row_content)
-            .style(move |theme: &Theme| {
-                let palette = theme.palette();
-                let (color, text_color) = if is_selected {
-                    selection_colors(theme)
-                } else if index.is_multiple_of(2) {
-                    (palette.background.base.color, palette.background.base.text)
-                } else {
-                    (palette.background.weak.color, palette.background.weak.text)
-                };
-                container::Style {
-                    background: Some(Background::Color(color)),
-                    text_color: Some(text_color),
-                    ..Default::default()
-                }
+            .style(move |theme: &Theme| container::Style {
+                background: is_selected.then(|| Background::Color(chrome::row_selected(theme))),
+                text_color: Some(chrome::text(theme)),
+                ..Default::default()
             })
-            .padding(Padding {
-                top: 0.0,
-                bottom: 0.0,
-                left: 8.0,
-                right: 8.0,
-            })
+            .padding(Padding::ZERO.left(pm::GRID_INSET_L).right(pm::GRID_INSET_L))
             .height(Length::Fixed(ROW_H))
             .width(Fill),
     )
@@ -2554,7 +2440,7 @@ fn layer_row<'a>(
 /// A table cell's field: plain text until hovered or typed in (#2610
 /// mockup), then a field.
 fn cell_field_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
-    let mut style = field_style_with_radius(theme, status, 2.0);
+    let mut style = kit::field_style(theme, status);
     style.background = Background::Color(Color::TRANSPARENT);
     if matches!(
         status,
@@ -2569,20 +2455,7 @@ fn cell_field_style(theme: &Theme, status: text_input::Status) -> text_input::St
 /// the background, quiet in a dark theme as in the mockup, with the
 /// background's text colour.
 pub fn selection_colors(theme: &Theme) -> (Color, Color) {
-    let palette = theme.palette();
-    let bg = palette.background.base.color;
-    let accent = palette.primary.base.color;
-    let dark = bg.r * 0.299 + bg.g * 0.587 + bg.b * 0.114 < 0.5;
-    let t = if dark { 0.32 } else { 0.18 };
-    let mix = |a: f32, b: f32| a + (b - a) * t;
-    (
-        Color::from_rgb(
-            mix(bg.r, accent.r),
-            mix(bg.g, accent.g),
-            mix(bg.b, accent.b),
-        ),
-        palette.background.base.text,
-    )
+    (chrome::row_selected(theme), chrome::text(theme))
 }
 
 /// The tree's rename field, focused when a rename starts.
@@ -2593,21 +2466,16 @@ pub fn tree_rename_input_id() -> iced::widget::Id {
 /// A tree line: flat, the chosen one in the selection colour, a light
 /// hover.
 fn tree_line_style(theme: &Theme, status: button::Status, chosen: bool) -> button::Style {
-    let palette = theme.palette();
     let pair = if chosen {
         Some(selection_colors(theme))
     } else if matches!(status, button::Status::Hovered) {
-        Some((palette.background.weak.color, palette.background.weak.text))
+        Some((chrome::hover(theme), chrome::text(theme)))
     } else {
         None
     };
     button::Style {
         background: pair.map(|p| Background::Color(p.0)),
-        text_color: pair.map_or(palette.background.base.text, |p| p.1),
-        border: Border {
-            radius: 3.0.into(),
-            ..Default::default()
-        },
+        text_color: pair.map_or(chrome::text(theme), |p| p.1),
         ..Default::default()
     }
 }
@@ -2624,16 +2492,16 @@ fn menu_item(
     ticked: bool,
 ) -> Element<'static, Message> {
     let line = move |hot: bool| {
-        let mut content = row![].spacing(6).align_y(iced::Center);
+        let mut content = row![].spacing(pm::TOOL_GAP).align_y(iced::Center);
         // The tick column, as in the mockup: groups the row is in.
         if indent > 0.0 {
             content = content.push(
                 container(if ticked {
-                    crate::ui::icons::themed(crate::ui::icons::CHECK, 11.0)
+                    crate::ui::icons::themed(crate::ui::icons::CHECK, pm::BAR_ICON)
                 } else {
-                    iced::widget::Space::new().width(11).into()
+                    iced::widget::Space::new().width(pm::BAR_ICON).into()
                 })
-                .width(12),
+                .width(pm::BAR_ICON),
             );
         }
         content = content.push(
@@ -2652,19 +2520,17 @@ fn menu_item(
         }
         container(content)
             .width(Fill)
-            .padding(Padding {
-                top: 4.0,
-                bottom: 4.0,
-                left: 12.0 + indent,
-                right: 12.0,
-            })
-            .style(move |theme: &Theme| {
-                let palette = theme.palette();
-                container::Style {
-                    background: hot.then_some(Background::Color(palette.background.strong.color)),
-                    text_color: Some(palette.background.base.text),
-                    ..Default::default()
-                }
+            .height(pm::MENU_ITEM_H)
+            .align_y(iced::Center)
+            .padding(
+                Padding::ZERO
+                    .left(pm::MENU_CHECK_W + indent)
+                    .right(pm::MENU_PAD_X),
+            )
+            .style(move |theme: &Theme| container::Style {
+                background: hot.then_some(Background::Color(chrome::hover(theme))),
+                text_color: Some(chrome::text(theme)),
+                ..Default::default()
             })
     };
     mouse_area(iced::widget::hover(line(false), line(true)))
@@ -2674,15 +2540,17 @@ fn menu_item(
 }
 
 fn menu_separator() -> Element<'static, Message> {
-    container(iced::widget::Space::new())
-        .height(1)
-        .width(Fill)
-        .padding([4, 0])
-        .style(|theme: &Theme| container::Style {
-            background: Some(Background::Color(theme.palette().background.neutral.color)),
-            ..Default::default()
-        })
-        .into()
+    container(
+        container(iced::widget::Space::new().width(Fill).height(pm::LINE)).style(
+            |theme: &Theme| container::Style {
+                background: Some(Background::Color(chrome::border(theme))),
+                ..Default::default()
+            },
+        ),
+    )
+    .center_y(Length::Fixed(pm::MENU_SEPARATOR_H))
+    .width(Fill)
+    .into()
 }
 
 fn menu_frame(items: Vec<Element<'static, Message>>, width: f32) -> Element<'static, Message> {
@@ -2691,16 +2559,8 @@ fn menu_frame(items: Vec<Element<'static, Message>>, width: f32) -> Element<'sta
             .spacing(0)
             .width(Length::Fixed(width)),
     )
-    .padding([4, 0])
-    .style(|theme: &Theme| container::Style {
-        background: Some(Background::Color(theme.palette().background.base.color)),
-        border: Border {
-            color: theme.palette().background.neutral.color,
-            width: 1.0,
-            radius: 4.0.into(),
-        },
-        ..Default::default()
-    })
+    .padding([pm::MENU_PAD_Y, 0.0])
+    .style(crate::ui::palette_menu::frame_style)
     .into()
 }
 
@@ -2757,7 +2617,7 @@ fn tree_menu(node: &TreeNode) -> Element<'static, Message> {
         entry(t!("Lock all"), TreeAction::Lock),
         entry(t!("Unlock all"), TreeAction::Unlock),
     ]);
-    menu_frame(items, 200.0)
+    menu_frame(items, TREE_MENU_W)
 }
 
 /// A layer row's right-click menu, as in the mockup. One level: the groups
@@ -2797,18 +2657,20 @@ fn row_menu(name: &str, groups: &[(String, bool)], in_group: bool) -> Element<'s
                     .size(FONT_SZ)
                     .line_height(ui_line())
                     .width(Fill),
-                crate::ui::icons::themed_arrow_down(8.0),
+                crate::ui::icons::themed_arrow_down(pm::CARET),
             ]
             .align_y(iced::Center),
         )
-        .padding([4, 12])
+        .height(pm::MENU_ITEM_H)
+        .align_y(iced::Center)
+        .padding(Padding::ZERO.left(pm::MENU_CHECK_W).right(pm::MENU_PAD_X))
         .into(),
     ];
     for (group, ticked) in groups {
         items.push(menu_item(
             Cow::Owned(group.clone()),
             Message::LayerMenu(name.to_string(), LayerMenuAction::AddToGroup(group.clone())),
-            14.0,
+            pm::INDENT,
             None,
             *ticked,
         ));
@@ -2816,7 +2678,7 @@ fn row_menu(name: &str, groups: &[(String, bool)], in_group: bool) -> Element<'s
     items.push(menu_item(
         crate::tr!("layer-groups", "new-group").into(),
         Message::LayerMenu(name.to_string(), LayerMenuAction::NewGroup),
-        14.0,
+        pm::INDENT,
         None,
         false,
     ));
@@ -2827,7 +2689,7 @@ fn row_menu(name: &str, groups: &[(String, bool)], in_group: bool) -> Element<'s
             None,
         ));
     }
-    menu_frame(items, 230.0)
+    menu_frame(items, ROW_MENU_W)
 }
 
 // ── Display helpers ───────────────────────────────────────────────────────
@@ -2860,6 +2722,20 @@ const COL_STATUS: f32 = 36.0;
 const COL_EYE: f32 = 30.0;
 /// The compact toolbar's "…" menu.
 const MORE_MENU_W: f32 = 190.0;
+/// Width of the tree's node list on a medium pallet's toolbar.
+const NODE_PICKER_W: f32 = 130.0;
+/// Widths of the tree's and the rows' right-click menus.
+const TREE_MENU_W: f32 = 200.0;
+const ROW_MENU_W: f32 = 230.0;
+/// Width of the column chooser.
+const COLUMN_CHOOSER_W: f32 = 220.0;
+/// Room around a name tooltip's text.
+const TIP_PAD: Padding = Padding {
+    top: pm::LINE * 2.0,
+    bottom: pm::LINE * 2.0,
+    left: pm::CELL_PAD_X * 2.0,
+    right: pm::CELL_PAD_X * 2.0,
+};
 
 #[cfg(test)]
 mod column_layout_tests {
