@@ -472,62 +472,68 @@ fn test_block_palette_contrast() {
     };
     use iced::widget::button::Status as BtnStatus;
 
+    use crate::ui::style::chrome;
     for theme in Theme::ALL {
-        let p = theme.palette();
-
         // ── 1. Card label pairs resolve to the theme's own text colors ──
         // Regression guard for the light-theme bug where labels were hardcoded
         // to `Color::WHITE` (unreadable white-on-light). If anyone reintroduces
         // a hardcoded foreground, these equality checks fail on every theme
         // whose surface text is not pure white.
         let (normal_bg, normal_fg) = block_card_colors(theme, false, BtnStatus::Active);
-        // Cards sit on the dock's base surface, so they take the weak pair
-        // to read as cards.
+        // Cards sit on the palette body, so they take the palette bar to
+        // read as cards, with the palette's text.
         assert_eq!(
-            normal_bg, p.background.weak.color,
-            "Theme {:?} block card normal background drifted from weak pair",
+            normal_bg,
+            chrome::palette_bar(theme),
+            "Theme {:?} block card normal background drifted from the palette bar",
             theme
         );
         assert_eq!(
-            normal_fg, p.background.weak.text,
-            "Theme {:?} block card normal label must use weak text (was hardcoded WHITE)",
+            normal_fg,
+            chrome::text(theme),
+            "Theme {:?} block card normal label must use the palette text (was hardcoded WHITE)",
             theme
         );
 
         let (_, hover_fg) = block_card_colors(theme, false, BtnStatus::Hovered);
         assert_eq!(
-            hover_fg, p.background.strong.text,
+            hover_fg,
+            chrome::strong(theme),
             "Theme {:?} block card hover label must use strong text (was hardcoded WHITE)",
             theme
         );
 
         let (_, pressed_fg) = block_card_colors(theme, false, BtnStatus::Pressed);
         assert_eq!(
-            pressed_fg, p.background.strong.text,
+            pressed_fg,
+            chrome::strong(theme),
             "Theme {:?} block card pressed label must use strong text (was hardcoded WHITE)",
             theme
         );
 
-        // Default-branch statuses (Active/Disabled/Focused/...) share the weak pair.
+        // Default-branch statuses (Active/Disabled/Focused/...) share the rest look.
         let (_, disabled_fg) = block_card_colors(theme, false, BtnStatus::Disabled);
         assert_eq!(
-            disabled_fg, p.background.weak.text,
-            "Theme {:?} block card default-state label must use weak text",
+            disabled_fg,
+            chrome::text(theme),
+            "Theme {:?} block card default-state label must use the palette text",
             theme
         );
 
-        // Placing (selected) cards always use the primary pair, regardless of
-        // hover — the background does not switch on hover while placing.
+        // Placing (selected) cards always use the selected-row look,
+        // regardless of hover — the background does not switch on hover.
         for status in [BtnStatus::Active, BtnStatus::Hovered, BtnStatus::Pressed] {
             let (bg, fg) = block_card_colors(theme, true, status);
             assert_eq!(
-                bg, p.primary.base.color,
-                "Theme {:?} placing card bg must be primary.base",
+                bg,
+                chrome::row_selected(theme),
+                "Theme {:?} placing card bg must be row_selected",
                 theme
             );
             assert_eq!(
-                fg, p.primary.base.text,
-                "Theme {:?} placing card label must be primary.base.text",
+                fg,
+                chrome::strong(theme),
+                "Theme {:?} placing card label must be strong text",
                 theme
             );
         }
@@ -561,7 +567,7 @@ fn test_block_palette_contrast() {
         );
 
         // ── 3. Placing card contrast ──
-        // Selected-card label on `primary.base`: UI button component threshold
+        // Selected-card label on `row_selected`: UI button component threshold
         // (>= 3.0:1 per WCAG 1.4.11, matching the Primary-button test above).
         let (placing_bg, placing_fg) = block_card_colors(theme, true, BtnStatus::Active);
         let placing_contrast = wcag_contrast(placing_fg, placing_bg);
@@ -585,37 +591,38 @@ fn test_block_palette_contrast() {
         // ── 4. Card border is theme-driven (no invisible borders) ──
         assert_eq!(
             block_card_border(theme, false),
-            p.background.neutral.color,
-            "Theme {:?} block card border must use neutral color",
+            chrome::border(theme),
+            "Theme {:?} block card border must use the palette border",
             theme
         );
         assert_eq!(
             block_card_border(theme, true),
-            p.primary.base.color,
-            "Theme {:?} placing block card border must use primary color",
+            chrome::accent(theme),
+            "Theme {:?} placing block card border must use the accent",
             theme
         );
 
         // ── 5. Header icon buttons (glyphs inherit button text_color) ──
-        // Resting buttons are transparent over the dock (`base`) background.
+        // Resting buttons are transparent over the palette body.
         let icon_rest = block_icon_button_text_color(theme, BtnStatus::Active);
-        assert_eq!(icon_rest, p.background.base.text);
-        let icon_rest_contrast = wcag_contrast(icon_rest, p.background.base.color);
+        assert_eq!(icon_rest, chrome::text(theme));
+        let icon_rest_contrast = wcag_contrast(icon_rest, chrome::palette_body(theme));
         assert!(
             icon_rest_contrast >= 4.5,
             "Theme {:?} block palette icon button ({:.2}:1) fails WCAG AA on dock background",
             theme,
             icon_rest_contrast
         );
-        // Hovered/pressed buttons sit on the `strong` surface with its text.
+        // Hovered/pressed buttons sit on the hover surface with strong text.
         for status in [BtnStatus::Hovered, BtnStatus::Pressed] {
             let icon_fg = block_icon_button_text_color(theme, status);
             assert_eq!(
-                icon_fg, p.background.strong.text,
+                icon_fg,
+                chrome::strong(theme),
                 "Theme {:?} hovered icon button must use strong text",
                 theme
             );
-            let c = wcag_contrast(icon_fg, p.background.strong.color);
+            let c = wcag_contrast(icon_fg, chrome::hover(theme));
             assert!(
                 c >= 4.5,
                 "Theme {:?} hovered icon button ({:.2}:1) fails WCAG AA on hovered background",
@@ -625,14 +632,11 @@ fn test_block_palette_contrast() {
         }
 
         // ── 6. Empty-state muted text ("No blocks in this drawing") ──
-        // Rendered as `base.text` at 0.72 alpha over the dock `base`
-        // background → secondary text threshold >= 3.0:1. (The old hardcoded
-        // 0.55-gray failed this on light themes.)
-        let empty_text = composite_over(
-            p.background.base.text.scale_alpha(0.72),
-            p.background.base.color,
-        );
-        let empty_contrast = wcag_contrast(empty_text, p.background.base.color);
+        // kit::empty_state draws it in the muted token over the palette body
+        // → secondary text threshold >= 3.0:1. (The old hardcoded 0.55-gray
+        // failed this on light themes.)
+        let empty_text = chrome::muted(theme);
+        let empty_contrast = wcag_contrast(empty_text, chrome::palette_body(theme));
         assert!(
             empty_contrast >= 3.0,
             "Theme {:?} block palette empty-state text ({:.2}:1) fails secondary text threshold (>=3.0:1)",

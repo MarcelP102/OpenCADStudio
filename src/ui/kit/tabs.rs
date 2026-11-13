@@ -11,6 +11,12 @@ use iced::{Background, Element, Length, Padding, Theme};
 pub fn tabs<'a>(items: Vec<(String, Message)>, active: usize) -> Element<'a, Message> {
     let parts = items.into_iter().enumerate().map(|(i, (name, message))| {
         let is_active = i == active;
+        // Tabs share the width in proportion to their labels, so a long one
+        // ("Current Drawing") is not cut while a short one has room to spare.
+        let portion = (crate::ui::style::text_metrics::width(&name, text::UI, false)
+            + 2.0 * pm::CELL_PAD_X)
+            .ceil()
+            .max(1.0) as u16;
         button(
             container(
                 label(name)
@@ -18,10 +24,12 @@ pub fn tabs<'a>(items: Vec<(String, Message)>, active: usize) -> Element<'a, Mes
                     .line_height(text::line())
                     .wrapping(iced::widget::text::Wrapping::None),
             )
-            .center(Length::Fill),
+            .center(Length::Fill)
+            .clip(true),
         )
         .on_press(message)
-        .width(Length::Fill)
+        .clip(true)
+        .width(Length::FillPortion(portion))
         .height(Length::Fixed(pm::TOOL_H - 2.0 * pm::LINE))
         .padding(0)
         .style(move |theme: &Theme, status| {
