@@ -579,7 +579,7 @@ impl PluginPanelState {
                         ))),
                         border: iced::Border {
                             color: chrome::border(theme),
-                            width: pm::LINE,
+                            width: pm::line(),
                             radius: 0.0.into(),
                         },
                         ..Default::default()
@@ -851,7 +851,7 @@ impl PluginPanelState {
                 // Table headers, as the kit's column header: palette_bar,
                 // semibold titles, 1 px palette-body lines between them.
                 let mut header_row = row![]
-                    .spacing(pm::LINE)
+                    .spacing(pm::line())
                     .align_y(iced::Alignment::Center)
                     .width(Fill);
                 for h in headers {
@@ -890,12 +890,12 @@ impl PluginPanelState {
                 // Table data rows: plain text until hovered or typed in,
                 // 1 px lines between rows and cells.
                 let current_rows = self.table_values.get(id);
-                let mut rows_list = column![header_row].spacing(pm::LINE).width(Fill);
+                let mut rows_list = column![header_row].spacing(pm::line()).width(Fill);
 
                 if let Some(rows) = current_rows {
                     for (r_idx, row_cells) in rows.iter().enumerate() {
                         let mut r_widget = row![]
-                            .spacing(pm::LINE)
+                            .spacing(pm::line())
                             .align_y(iced::Alignment::Center)
                             .width(Fill);
                         for (c_idx, cell_text) in row_cells.iter().enumerate() {
@@ -956,7 +956,7 @@ impl PluginPanelState {
                         .height(Length::Shrink)
                         .width(Fill),
                 )
-                .padding(pm::LINE)
+                .padding(pm::line())
                 .style(|theme: &Theme| container::Style {
                     background: Some(iced::Background::Color(chrome::palette_bar(theme))),
                     ..Default::default()

@@ -928,7 +928,7 @@ impl LayerPanel {
                                 } else {
                                     Color::TRANSPARENT
                                 },
-                                width: pm::LINE,
+                                width: pm::line(),
                                 radius: 0.0.into(),
                             },
                             ..Default::default()
@@ -984,7 +984,7 @@ impl LayerPanel {
             .style(|theme: &Theme| container::Style {
                 border: Border {
                     color: chrome::border(theme),
-                    width: pm::LINE,
+                    width: pm::line(),
                     radius: 0.0.into(),
                 },
                 ..Default::default()
@@ -1403,12 +1403,16 @@ impl LayerPanel {
             ),
             // Draggable divider: adjusts the Name column width (#359).
             iced::widget::mouse_area(
-                container(iced::widget::Space::new().width(pm::LINE).height(pm::ROW_H))
-                    .padding(Padding::ZERO.left(pm::LINE).right(pm::LINE))
-                    .style(|theme: &Theme| container::Style {
-                        background: Some(Background::Color(chrome::border(theme))),
-                        ..Default::default()
-                    }),
+                container(
+                    iced::widget::Space::new()
+                        .width(pm::line())
+                        .height(pm::ROW_H)
+                )
+                .padding(Padding::ZERO.left(pm::LINE).right(pm::LINE))
+                .style(|theme: &Theme| container::Style {
+                    background: Some(Background::Color(chrome::border(theme))),
+                    ..Default::default()
+                }),
             )
             .on_press(Message::LayerNameColGrab)
             .interaction(iced::mouse::Interaction::ResizingHorizontally),
@@ -1450,12 +1454,12 @@ impl LayerPanel {
                 background: Some(Background::Color(chrome::palette_bar(theme))),
                 border: Border {
                     color: chrome::border(theme),
-                    width: pm::LINE,
+                    width: pm::line(),
                     radius: 0.0.into(),
                 },
                 ..Default::default()
             })
-            .height(pm::ROW_H + 2.0 * pm::LINE)
+            .height(pm::ROW_H + 2.0 * pm::line())
             .padding(Padding::ZERO.left(pm::CELL_PAD_X).right(pm::CELL_PAD_X))
             .width(Length::Fill);
         // A right-click on the header chooses the columns.
@@ -1976,12 +1980,15 @@ fn toolbar_btn<'a>(
 /// A thin upright line between toolbar groups.
 fn toolbar_divider<'a>() -> Element<'a, Message> {
     container(
-        container(iced::widget::Space::new().width(pm::LINE).height(pm::ROW_H)).style(
-            |theme: &Theme| container::Style {
-                background: Some(Background::Color(chrome::border(theme))),
-                ..Default::default()
-            },
-        ),
+        container(
+            iced::widget::Space::new()
+                .width(pm::line())
+                .height(pm::ROW_H),
+        )
+        .style(|theme: &Theme| container::Style {
+            background: Some(Background::Color(chrome::border(theme))),
+            ..Default::default()
+        }),
     )
     .padding([0.0, pm::LINE * 3.0])
     .into()
@@ -2141,7 +2148,7 @@ fn layer_row<'a>(
                 background: filled.then_some(Background::Color(ink)),
                 border: Border {
                     color: ink,
-                    width: pm::LINE,
+                    width: pm::line(),
                     radius: (pm::DIRTY_DOT / 2.0).into(),
                 },
                 ..Default::default()
@@ -2544,7 +2551,7 @@ fn menu_item(
 
 fn menu_separator() -> Element<'static, Message> {
     container(
-        container(iced::widget::Space::new().width(Fill).height(pm::LINE)).style(
+        container(iced::widget::Space::new().width(Fill).height(pm::line())).style(
             |theme: &Theme| container::Style {
                 background: Some(Background::Color(chrome::border(theme))),
                 ..Default::default()

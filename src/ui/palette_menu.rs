@@ -137,12 +137,12 @@ const ITEM_ICON: f32 = 16.0;
 pub fn entry<'a>(it: Item) -> Element<'a, Message> {
     match it {
         Item::Separator => container(
-            container(Space::new().width(Length::Fill).height(pm::LINE)).style(|theme: &Theme| {
-                container::Style {
+            container(Space::new().width(Length::Fill).height(pm::line())).style(
+                |theme: &Theme| container::Style {
                     background: Some(Background::Color(chrome::border(theme))),
                     ..Default::default()
-                }
-            }),
+                },
+            ),
         )
         .center_y(Length::Fixed(pm::MENU_SEPARATOR_H))
         .width(Length::Fill)
@@ -295,7 +295,7 @@ pub fn frame_style(theme: &Theme) -> container::Style {
         text_color: Some(chrome::text(theme)),
         border: Border {
             color: chrome::edge(theme),
-            width: pm::LINE,
+            width: pm::line(),
             radius: 0.0.into(),
         },
         shadow: iced::Shadow {

@@ -34,7 +34,11 @@ pub fn flat_button_style(active: bool) -> impl Fn(&Theme, button::Status) -> but
             background: background.map(Background::Color),
             border: Border {
                 color: border,
-                width: if background.is_some() { pm::LINE } else { 0.0 },
+                width: if background.is_some() {
+                    pm::line()
+                } else {
+                    0.0
+                },
                 radius: BUTTON_RADIUS.into(),
             },
             text_color: if matches!(status, button::Status::Disabled) {

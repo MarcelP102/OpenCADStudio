@@ -945,7 +945,7 @@ impl PropertiesPanel {
                     text_color: Some(crate::ui::style::chrome::text(theme)),
                     border: Border {
                         color: crate::ui::style::chrome::edge(theme),
-                        width: crate::ui::style::palette_metrics::LINE,
+                        width: crate::ui::style::palette_metrics::line(),
                         radius: 0.0.into(),
                     },
                     ..Default::default()
@@ -1735,7 +1735,7 @@ impl PropertiesPanel {
                     background: Some(Background::Color(palette.background.base.color)),
                     border: Border {
                         color: border_color,
-                        width: 1.0,
+                        width: crate::ui::style::palette_metrics::line(),
                         radius: 2.0.into(),
                     },
                     ..Default::default()
@@ -1979,7 +1979,7 @@ impl PropertiesPanel {
                     text_color: Some(palette.danger.weak.text),
                     border: Border {
                         color: palette.danger.base.color,
-                        width: 1.0,
+                        width: crate::ui::style::palette_metrics::line(),
                         radius: 4.0.into(),
                     },
                     ..Default::default()
@@ -2027,7 +2027,7 @@ impl PropertiesPanel {
                     } else {
                         palette.background.neutral.color
                     },
-                    width: 1.0,
+                    width: crate::ui::style::palette_metrics::line(),
                     radius: 2.0.into(),
                 },
                 ..Default::default()
@@ -2088,7 +2088,7 @@ fn render_stepper_row<'a>(label: &'a str, display: &'a str) -> Element<'a, Messa
                 background: Some(Background::Color(pair.color)),
                 border: Border {
                     color: palette.background.neutral.color,
-                    width: 1.0,
+                    width: crate::ui::style::palette_metrics::line(),
                     radius: 2.0.into(),
                 },
                 text_color: pair.text,
@@ -2135,7 +2135,7 @@ fn render_bool_row<'a>(label: &'a str, field: &'static str, value: bool) -> Elem
             background: Some(Background::Color(pair.color)),
             border: Border {
                 color: palette.background.neutral.color,
-                width: 1.0,
+                width: crate::ui::style::palette_metrics::line(),
                 radius: 2.0.into(),
             },
             text_color: if value {
@@ -2355,7 +2355,7 @@ fn render_entity_link_row<'a>(
             background: Some(Background::Color(pair.color)),
             border: Border {
                 color: palette.background.neutral.color,
-                width: 1.0,
+                width: crate::ui::style::palette_metrics::line(),
                 radius: 2.0.into(),
             },
             text_color: pair.text,
@@ -2432,7 +2432,7 @@ fn render_params_visibility_toggle_row<'a>(value: bool) -> Element<'a, Message> 
             background: Some(Background::Color(pair.color)),
             border: Border {
                 color: palette.background.neutral.color,
-                width: 1.0,
+                width: crate::ui::style::palette_metrics::line(),
                 radius: 2.0.into(),
             },
             text_color: pair.text,

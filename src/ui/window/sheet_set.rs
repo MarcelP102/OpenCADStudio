@@ -686,7 +686,7 @@ fn badge<'a>(prefix: &str, label: &str, warn: bool) -> Element<'a, Message> {
         }),
         border: Border {
             color: chrome::border(theme),
-            width: pm::LINE,
+            width: pm::line(),
             radius: (pm::CHECK / 2.0).into(),
         },
         ..Default::default()

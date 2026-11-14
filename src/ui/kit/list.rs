@@ -108,7 +108,7 @@ pub fn column_header<'a>(columns: Vec<Column>) -> Element<'a, Message> {
         let mut cell = row![title].height(Length::Fill);
         // The line between columns, and the resize handle over it.
         if i + 1 < count || c.on_resize.is_some() {
-            let line = container(Space::new().width(pm::LINE).height(Length::Fill)).style(
+            let line = container(Space::new().width(pm::line()).height(Length::Fill)).style(
                 |theme: &Theme| container::Style {
                     background: Some(Background::Color(chrome::palette_body(theme))),
                     ..Default::default()

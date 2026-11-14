@@ -834,7 +834,7 @@ impl XrefManagerPanel {
             if i + 1 < self.col_widths.len() {
                 let grab = mouse_area(
                     container(
-                        container(iced::widget::Space::new().width(pm::LINE).height(Fill)).style(
+                        container(iced::widget::Space::new().width(pm::line()).height(Fill)).style(
                             |theme: &Theme| container::Style {
                                 background: Some(Background::Color(chrome::palette_body(theme))),
                                 ..Default::default()
@@ -1405,7 +1405,7 @@ fn submenu_row(label: String, msg: Message) -> Element<'static, Message> {
 
 fn menu_separator() -> Element<'static, Message> {
     container(
-        container(iced::widget::Space::new().height(Length::Fixed(pm::LINE)))
+        container(iced::widget::Space::new().height(Length::Fixed(pm::line())))
             .style(|theme: &Theme| container::Style {
                 background: Some(Background::Color(chrome::border(theme))),
                 ..Default::default()

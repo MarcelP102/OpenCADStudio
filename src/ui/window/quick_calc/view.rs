@@ -569,7 +569,7 @@ fn body<'a>(p: &'a QuickCalcPalette, inputs: &Inputs, height: f32) -> Element<'a
 
     // Toolbar.
     let divider =
-        container(Space::new().width(pm::LINE).height(pm::ROW_ICON)).style(|theme: &Theme| {
+        container(Space::new().width(pm::line()).height(pm::ROW_ICON)).style(|theme: &Theme| {
             container::Style {
                 background: Some(Background::Color(tokens(theme).line)),
                 ..Default::default()

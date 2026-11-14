@@ -435,13 +435,13 @@ impl OpenCADStudio {
                 .align_x(window_side);
             let body: Element<'_, Message> = stack![
                 column(cells)
-                    .width(Length::Fixed(pm::STRIP_BODY_W))
+                    .width(Length::Fixed(DOCK_STRIP_W - pm::line()))
                     .height(Length::Fixed(row_h)),
                 band
             ]
             .into();
             // The open group runs over the edge line into the palette.
-            let edge = Space::new().width(pm::LINE).height(Length::Fixed(row_h));
+            let edge = Space::new().width(pm::line()).height(Length::Fixed(row_h));
             let group: Element<'_, Message> = match side {
                 DockSide::Left => row![body, edge].into(),
                 DockSide::Right => row![edge, body].into(),
@@ -461,17 +461,21 @@ impl OpenCADStudio {
             let next_open = groups.get(n + 1).is_some_and(|g| shown == Some(*g));
             let around_open = is_open || next_open;
             items.push(body_and_edge(
-                container(Space::new().width(pm::STRIP_BODY_W).height(pm::LINE))
-                    .style(move |theme: &Theme| container::Style {
-                        background: Some(Background::Color(if around_open {
-                            chrome::edge(theme)
-                        } else {
-                            chrome::strip_divider(theme)
-                        })),
-                        ..Default::default()
-                    })
-                    .into(),
-                Space::new().width(pm::LINE).height(pm::LINE).into(),
+                container(
+                    Space::new()
+                        .width(DOCK_STRIP_W - pm::line())
+                        .height(pm::line()),
+                )
+                .style(move |theme: &Theme| container::Style {
+                    background: Some(Background::Color(if around_open {
+                        chrome::edge(theme)
+                    } else {
+                        chrome::strip_divider(theme)
+                    })),
+                    ..Default::default()
+                })
+                .into(),
+                Space::new().width(pm::line()).height(pm::line()).into(),
             ));
         }
         let plus = button(
@@ -488,7 +492,7 @@ impl OpenCADStudio {
                 .then(|| Background::Color(chrome::hover(theme))),
             ..Default::default()
         })
-        .width(Length::Fixed(pm::STRIP_BODY_W))
+        .width(Length::Fixed(DOCK_STRIP_W - pm::line()))
         .height(Length::Fixed(STRIP_PLUS_H))
         .padding(0);
         // The tabs clip above the +, so overflowing ones never push it away.
@@ -498,14 +502,14 @@ impl OpenCADStudio {
         let strip = column![
             tabs,
             Space::new().height(STRIP_PLUS_GAP),
-            body_and_edge(plus.into(), Space::new().width(pm::LINE).into()),
+            body_and_edge(plus.into(), Space::new().width(pm::line()).into()),
         ];
         let strip = mouse_area(strip).on_move(|p| Message::Dock(DockMsg::StripPointer(p)));
         // Underneath: the strip colour and the edge line along the palette
         // side, full height (the open group covers it).
         let base = body_and_edge(
             container(Space::new())
-                .width(Length::Fixed(pm::STRIP_BODY_W))
+                .width(Length::Fixed(DOCK_STRIP_W - pm::line()))
                 .height(Fill)
                 .style(|theme: &Theme| container::Style {
                     background: Some(Background::Color(chrome::strip(theme))),
@@ -513,7 +517,7 @@ impl OpenCADStudio {
                 })
                 .into(),
             container(Space::new())
-                .width(Length::Fixed(pm::LINE))
+                .width(Length::Fixed(pm::line()))
                 .height(Fill)
                 .style(|theme: &Theme| container::Style {
                     background: Some(Background::Color(chrome::edge(theme))),
@@ -731,13 +735,13 @@ impl OpenCADStudio {
         // under the content, which would otherwise cover it.
         let framed = container(content)
             .height(Length::Fixed(f.h))
-            .padding(crate::ui::style::palette_metrics::LINE)
+            .padding(crate::ui::style::palette_metrics::line())
             .clip(true)
             .style(|theme: &Theme| container::Style {
                 // The ribbon's dark 1 px contour, all the way round.
                 border: Border {
                     color: crate::ui::style::chrome::page(theme),
-                    width: crate::ui::style::palette_metrics::LINE,
+                    width: crate::ui::style::palette_metrics::line(),
                     radius: 0.0.into(),
                 },
                 shadow: iced::Shadow {
@@ -829,7 +833,7 @@ impl OpenCADStudio {
             row![text(t!("Allow docking")).size(12).width(Fill), check].align_y(iced::Center);
         let separator = container(Space::new())
             .width(Fill)
-            .height(Length::Fixed(1.0))
+            .height(Length::Fixed(crate::ui::style::palette_metrics::line()))
             .style(|theme: &Theme| container::Style {
                 background: Some(Background::Color(theme.palette().background.neutral.color)),
                 ..Default::default()
@@ -1168,7 +1172,7 @@ fn floating_title_bar(
     .height(Fill);
     // Close and pin only show while the pointer is over the bar, as on a
     // docked title bar.
-    let mut bar = column![].spacing(pm::LINE);
+    let mut bar = column![].spacing(pm::line());
     if hovered {
         bar = bar
             .push(crate::ui::dock::close_button_sized(id, tip, pm::FLOAT_ICON))
@@ -1204,7 +1208,7 @@ fn floating_title_bar(
         background: Some(Background::Color(chrome::title_bar(theme))),
         ..Default::default()
     });
-    let line = container(Space::new().width(pm::LINE).height(Fill)).style(|theme: &Theme| {
+    let line = container(Space::new().width(pm::line()).height(Fill)).style(|theme: &Theme| {
         container::Style {
             background: Some(Background::Color(chrome::page(theme))),
             ..Default::default()
@@ -1401,7 +1405,7 @@ fn menu_frame(rows: Element<'static, Message>) -> Element<'static, Message> {
             background: Some(Background::Color(theme.palette().background.base.color)),
             border: Border {
                 color: theme.palette().background.neutral.color,
-                width: 1.0,
+                width: crate::ui::style::palette_metrics::line(),
                 radius: 4.0.into(),
             },
             shadow: iced::Shadow {

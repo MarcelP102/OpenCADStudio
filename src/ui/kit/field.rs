@@ -73,7 +73,7 @@ pub fn box_button_style(
                 } else {
                     chrome::palette_bar(theme)
                 },
-                width: pm::LINE,
+                width: pm::line(),
                 radius: 0.0.into(),
             },
             ..Default::default()
@@ -102,7 +102,7 @@ pub fn pick_list_style(
         background: Background::Color(background),
         border: iced::Border {
             color: edge,
-            width: pm::LINE,
+            width: pm::line(),
             radius: 0.0.into(),
         },
     }
@@ -114,7 +114,7 @@ pub fn pick_menu_style(theme: &Theme) -> iced::overlay::menu::Style {
         background: Background::Color(chrome::palette_body(theme)),
         border: iced::Border {
             color: chrome::edge(theme),
-            width: pm::LINE,
+            width: pm::line(),
             radius: 0.0.into(),
         },
         text_color: chrome::text(theme),

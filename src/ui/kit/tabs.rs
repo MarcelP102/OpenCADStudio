@@ -30,7 +30,7 @@ pub fn tabs<'a>(items: Vec<(String, Message)>, active: usize) -> Element<'a, Mes
         .on_press(message)
         .clip(true)
         .width(Length::FillPortion(portion))
-        .height(Length::Fixed(pm::TOOL_H - 2.0 * pm::LINE))
+        .height(Length::Fixed(pm::TOOL_H - 2.0 * pm::line()))
         .padding(0)
         .style(move |theme: &Theme, status| {
             let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
@@ -53,8 +53,8 @@ pub fn tabs<'a>(items: Vec<(String, Message)>, active: usize) -> Element<'a, Mes
         .into()
     });
     super::band(
-        container(row(parts).spacing(pm::LINE))
-            .padding(Padding::new(pm::LINE))
+        container(row(parts).spacing(pm::line()))
+            .padding(Padding::new(pm::line()))
             .width(Length::Fill)
             .style(|theme: &Theme| container::Style {
                 background: Some(Background::Color(chrome::palette_bar(theme))),

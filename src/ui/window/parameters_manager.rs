@@ -761,7 +761,7 @@ pub fn view(
             chrome,
         ),
         body.push(Space::new().height(pm::TOOL_GAP))
-            .push(container(kit::scroll_area(column(lines).spacing(pm::LINE))).height(Fill))
+            .push(container(kit::scroll_area(column(lines).spacing(pm::line()))).height(Fill))
             .push(kit::footer(kit::footer_text(footer)))
             .height(Fill),
         width,

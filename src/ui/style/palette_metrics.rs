@@ -6,8 +6,16 @@
 //! Colours live in [`super::chrome`] (`palette_body`, `palette_bar`,
 //! `strip`, `edge`, ...), text sizes in [`super::text`].
 
-/// A 1 px line: edges, grid lines, dividers.
+/// A 1 px line: edges, grid lines, dividers. For sizes that count a line
+/// in; a line as drawn is [`line`].
 pub const LINE: f32 = 1.0;
+
+/// A drawn line (an edge, a grid line, a border, a divider): one physical
+/// pixel at any scale, as the ribbon's hairlines, so it stays thin at
+/// 125 % and 150 % instead of covering one or two pixels.
+pub fn line() -> f32 {
+    crate::ui::icons::hairline()
+}
 
 // ── Palette strip ─────────────────────────────────────────────────────────
 

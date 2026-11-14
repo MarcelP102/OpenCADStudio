@@ -314,7 +314,7 @@ fn catalog(
             entry
         }
     }))
-    .spacing(pm::LINE)
+    .spacing(pm::line())
     .into()
 }
 
@@ -394,9 +394,9 @@ fn constraints() -> Element<'static, Message> {
     ];
     column![
         kit::section_bar(crate::t!("Geometric Constraints").into_owned(), Vec::new()),
-        column(geometric.into_iter().map(constraint_row)).spacing(pm::LINE),
+        column(geometric.into_iter().map(constraint_row)).spacing(pm::line()),
         kit::section_bar(crate::t!("Constraint Parameters").into_owned(), Vec::new()),
-        column(dimensional.into_iter().map(constraint_row)).spacing(pm::LINE),
+        column(dimensional.into_iter().map(constraint_row)).spacing(pm::line()),
     ]
     .into()
 }
@@ -429,7 +429,7 @@ pub fn view(
         .id(category.widget_id())
         .into()
     }))
-    .spacing(pm::LINE)
+    .spacing(pm::line())
     .push(Space::new().height(Fill));
     kit::palette(
         dock::title_bar(

@@ -414,7 +414,7 @@ pub fn view<'a>(
 
         let row_el = container(
             row![main_btn, up_btn, down_btn, del_btn]
-                .spacing(pm::LINE)
+                .spacing(pm::line())
                 .align_y(iced::Center),
         )
         .id(format!("tool-palette-item-{idx}"))
@@ -426,7 +426,7 @@ pub fn view<'a>(
     let tools_list: Element<'a, Message> = if tool_rows.is_empty() {
         kit::empty_state(crate::tr!("tool-palettes", "no-tools"))
     } else {
-        kit::scroll_area(column(tool_rows).spacing(pm::LINE))
+        kit::scroll_area(column(tool_rows).spacing(pm::line()))
     };
 
     // Vertical palette tabs along the right side, like the palette strip.
@@ -439,7 +439,7 @@ pub fn view<'a>(
         .id(format!("tool-palette-tab-{idx}"))
         .into()
     }))
-    .spacing(pm::LINE)
+    .spacing(pm::line())
     .push(Space::new().height(Fill));
 
     // Placement options footer

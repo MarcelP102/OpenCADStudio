@@ -754,7 +754,7 @@ fn color_control<'a>(
                 } else {
                     chrome::border(theme)
                 },
-                width: pm::LINE,
+                width: pm::line(),
                 radius: 0.0.into(),
             },
             ..Default::default()
@@ -952,7 +952,7 @@ fn preview_row<'a>(
                 } else {
                     chrome::palette_bar(theme)
                 },
-                width: pm::LINE,
+                width: pm::line(),
                 radius: 0.0.into(),
             },
             ..Default::default()
@@ -1313,7 +1313,7 @@ pub fn view<'a>(
                     },
                 );
                 let popup = container(picker)
-                    .padding(pm::LINE)
+                    .padding(pm::line())
                     .style(crate::ui::palette_menu::frame_style);
                 (popup.into(), HATCH_FLYOUT_W, Some(HATCH_FLYOUT_H))
             });

@@ -49,7 +49,7 @@ fn line<'a>(w: Length, h: Length) -> Element<'a, Message> {
 
 /// A vertical grid line one row tall.
 fn vline<'a>() -> Element<'a, Message> {
-    line(Length::Fixed(pm::LINE), Length::Fixed(pm::ROW_H))
+    line(Length::Fixed(pm::line()), Length::Fixed(pm::ROW_H))
 }
 
 /// Name text: muted when the value is read-only.
@@ -133,7 +133,7 @@ pub fn row_view<'a>(
         .height(Length::Fixed(pm::ROW_H)),
         row![
             Space::new().width(pm::INDENT),
-            line(Length::Fill, Length::Fixed(pm::LINE)),
+            line(Length::Fill, Length::Fixed(pm::line())),
         ],
     ]
     .into()
@@ -278,7 +278,7 @@ pub fn field_style(
         background: Background::Color(background),
         border: Border {
             color: border,
-            width: pm::LINE,
+            width: pm::line(),
             radius: 0.0.into(),
         },
         icon: Color::TRANSPARENT,
@@ -356,7 +356,7 @@ pub fn read_only_style(
         background: Background::Color(chrome::palette_body(theme)),
         border: Border {
             color: chrome::palette_body(theme),
-            width: pm::LINE,
+            width: pm::line(),
             radius: 0.0.into(),
         },
         icon: Color::TRANSPARENT,
