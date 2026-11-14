@@ -41,6 +41,35 @@ impl OpenCADStudio {
                 );
             }
         }
+        // A docked edge's grab band, over the drawing beside its group.
+        for side in [DockSide::Left, DockSide::Right] {
+            if self.dock.edge_auto_hide(side) || !self.dock_edge_expanded(side) {
+                continue;
+            }
+            let Some(gi) = self.dock_shown_group(side) else {
+                continue;
+            };
+            let Some(&id) = self.dock_group_visible(side, gi).first() else {
+                continue;
+            };
+            let inset = Space::new()
+                .width(crate::ui::dock::DOCK_STRIP_W + self.dock_group_width(side, gi))
+                .height(Fill);
+            let grab = dock_divider(id, side);
+            layers.push(
+                container(match side {
+                    DockSide::Left => row![inset, grab],
+                    DockSide::Right => row![grab, inset],
+                })
+                .width(Fill)
+                .height(Fill)
+                .align_x(match side {
+                    DockSide::Left => iced::alignment::Horizontal::Left,
+                    DockSide::Right => iced::alignment::Horizontal::Right,
+                })
+                .into(),
+            );
+        }
         let movement = self.dock_drag.and_then(|d| d.movement());
         for f in &self.dock.floating {
             if !self.dock_panel_visible(f.id) {
@@ -643,8 +672,10 @@ impl OpenCADStudio {
         }
     }
 
-    /// A pallet of the shown group: its body plus a grabbable divider
-    /// against the viewport (sizing the whole group). Hovering is handled by
+    /// A pallet of the shown group. On an auto-hiding edge, which draws
+    /// over the drawing, its grab band for sizing the group comes along
+    /// (so reaching for it keeps the edge open); a docked edge's band lies
+    /// over the drawing instead (see `dock_overlay`). Hovering is handled by
     /// the enclosing edge region (see `build_edge_stack`), so the body stays
     /// fully interactive without fighting the region's hover tracking.
     fn expanded_panel<'a>(
@@ -655,6 +686,9 @@ impl OpenCADStudio {
         tab: &'a DocumentTab,
     ) -> Element<'a, Message> {
         let panel = self.panel_body(id, width, false, tab);
+        if !self.dock.edge_auto_hide(side) {
+            return panel;
+        }
         let divider = dock_divider(id, side);
         match side {
             crate::app::config::DockSide::Left => row![panel, divider].height(Fill).into(),
@@ -1267,31 +1301,24 @@ fn dock_divider(
     side: crate::app::config::DockSide,
 ) -> Element<'static, Message> {
     use crate::ui::style::{chrome, palette_metrics as pm};
-    // The grab band reads as part of the palette: its body colour. Only
-    // under the pointer does its line show, in the accent, against the
-    // drawing.
+    // The grab band lies over the drawing's edge, beside the palette, and
+    // shows nothing: the palette runs up to the drawing as a floating one
+    // does. Under the pointer its line shows in the accent, against the
+    // palette.
     let band = |lit: bool| -> Element<'static, Message> {
-        let body = container(Space::new())
-            .width(Length::Fixed(DOCK_DIVIDER_W - pm::DIVIDER_LINE))
-            .height(Fill)
-            .style(|theme: &Theme| container::Style {
-                background: Some(Background::Color(chrome::palette_body(theme))),
-                ..Default::default()
-            });
-        let edge = container(Space::new())
+        let line = container(Space::new())
             .width(Length::Fixed(pm::DIVIDER_LINE))
             .height(Fill)
             .style(move |theme: &Theme| container::Style {
-                background: Some(Background::Color(if lit {
-                    chrome::accent(theme)
-                } else {
-                    chrome::palette_body(theme)
-                })),
+                background: lit.then(|| Background::Color(chrome::accent(theme))),
                 ..Default::default()
             });
+        let rest = Space::new()
+            .width(Length::Fixed(DOCK_DIVIDER_W - pm::DIVIDER_LINE))
+            .height(Fill);
         match side {
-            crate::app::config::DockSide::Left => row![body, edge].into(),
-            crate::app::config::DockSide::Right => row![edge, body].into(),
+            crate::app::config::DockSide::Left => row![line, rest].into(),
+            crate::app::config::DockSide::Right => row![rest, line].into(),
         }
     };
     let line = iced::widget::hover(band(false), band(true));
@@ -1400,7 +1427,7 @@ fn dock_splitter(
     active: bool,
 ) -> Element<'static, Message> {
     let line = canvas(crate::ui::dock::SplitterGrip { active })
-        .width(Length::Fixed(col_w + DOCK_DIVIDER_W))
+        .width(Length::Fixed(col_w))
         .height(Length::Fixed(crate::ui::style::palette_metrics::SPLITTER_H));
     mouse_area(line)
         .on_press(Message::Dock(crate::ui::dock::DockMsg::SplitGrab(

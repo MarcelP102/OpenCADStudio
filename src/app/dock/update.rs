@@ -1033,11 +1033,8 @@ impl OpenCADStudio {
         let inset = |side: DockSide| match self.dock_shown_group(side) {
             None => 0.0,
             Some(_) if self.dock.edge_auto_hide(side) => crate::ui::dock::DOCK_STRIP_W,
-            Some(gi) => {
-                crate::ui::dock::DOCK_STRIP_W
-                    + self.dock_group_width(side, gi)
-                    + crate::ui::dock::DOCK_DIVIDER_W
-            }
+            // The grab band lies over the drawing: it takes no room.
+            Some(gi) => crate::ui::dock::DOCK_STRIP_W + self.dock_group_width(side, gi),
         };
         (inset(DockSide::Left), inset(DockSide::Right))
     }

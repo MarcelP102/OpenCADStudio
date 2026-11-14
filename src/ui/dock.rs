@@ -1169,7 +1169,9 @@ pub const DOCK_MIN_W: f32 = 200.0;
 pub const DOCK_MAX_W: f32 = 600.0;
 /// Width of the band along an empty edge that docks a dragged panel there.
 pub const DOCK_EDGE_ZONE: f32 = 48.0;
-/// Width of the grabbable divider between a docked group and the viewport.
+/// Width of the grab band that sizes a docked group: over the drawing's
+/// edge beside the group (or, on an auto-hiding edge, beside the revealed
+/// group), taking no room of its own.
 pub const DOCK_DIVIDER_W: f32 = 5.0;
 /// Width of a floating panel's vertical title bar: 22 px and the 1 px dark
 /// line parting it from the panel.
