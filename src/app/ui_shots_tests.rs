@@ -260,6 +260,7 @@ fn ui_shots() {
                     PanelId::Layers => app.show_layers = true,
                     PanelId::ExternalReferences => app.show_external_references = true,
                     PanelId::SheetSetManager => app.sheet_set.show = true,
+                    PanelId::Assistant => app.assistant.show = true,
                     _ => {}
                 }
                 app.dock.left = vec![DockGroup::stack(vec![PanelId::Properties, id])];
@@ -392,6 +393,7 @@ fn family_palette(name: &str) -> Option<(&'static str, crate::ui::dock::PanelId,
         "layers" => ("layers", PanelId::Layers, "LAYER"),
         "xref" => ("xref", PanelId::ExternalReferences, "XREF"),
         "sheets" => ("sheets", PanelId::SheetSetManager, "SHEETSET"),
+        "assistant" => ("assistant", PanelId::Assistant, "ASSISTANT"),
         _ => return None,
     })
 }

@@ -112,6 +112,11 @@ pub fn danger(theme: &Theme) -> Color {
     theme.palette().danger.base.color
 }
 
+/// A good outcome: a live connection, a step that worked.
+pub fn success(theme: &Theme) -> Color {
+    theme.palette().success.base.color
+}
+
 /// Background of a lit button: the command it runs is running, or the
 /// switch it shows is on. The panel tinted with the accent.
 pub fn lit(theme: &Theme) -> Color {
