@@ -709,6 +709,9 @@ pub struct PropertiesPanel {
     pub picker_in_quick: bool,
     /// Set while `quick_view` builds its rows.
     pub rendering_quick: std::cell::Cell<bool>,
+    /// Width of the panel whose rows are being built (the docked palette
+    /// or Quick Properties), for sizing a row's dropdown list.
+    pub rendering_width: std::cell::Cell<f32>,
     /// The row selected by pressing its name, keyed `section/name`. Its
     /// name cell is lit and its combo / pick buttons show.
     pub selected_row: Option<String>,
@@ -755,6 +758,7 @@ impl Default for PropertiesPanel {
             open_choice: None,
             picker_in_quick: false,
             rendering_quick: std::cell::Cell::new(false),
+            rendering_width: std::cell::Cell::new(0.0),
             selected_row: None,
             active_field: None,
             field_key_by_id: HashMap::default(),
@@ -838,6 +842,7 @@ impl PropertiesPanel {
 
     pub fn view(&self, width: f32, chrome: crate::ui::dock::Chrome) -> Element<'_, Message> {
         use crate::ui::dock::PanelId;
+        self.rendering_width.set(width);
         // ── Header ──────────────────────────────────────────────────────────
         let header =
             crate::ui::dock::title_bar(PanelId::Properties, t!("Properties").into_owned(), chrome);
@@ -935,6 +940,7 @@ impl PropertiesPanel {
 
         let mut sections = column![].spacing(0);
         self.rendering_quick.set(true);
+        self.rendering_width.set(QUICK_W);
         for section in &self.sections {
             sections = sections.push(self.render_section(section));
         }
@@ -1151,7 +1157,9 @@ impl PropertiesPanel {
                 let value = crate::ui::color_select::editable_drop_down_below(
                     head.into(),
                     popup.into(),
-                    None,
+                    Some(Length::Fixed(
+                        self.list_width(options.iter().map(String::as_str)),
+                    )),
                     Length::Shrink,
                     Message::PropBlockPickerDismiss { key, quick },
                     open,
@@ -1543,6 +1551,25 @@ impl PropertiesPanel {
         )
     }
 
+    /// Width of a row's dropdown list: its longest option (`labels`), and
+    /// never narrower than the row's value field. Wider than the palette it
+    /// runs out over the drawing, starting at the field's left edge.
+    fn list_width<'s>(&self, labels: impl Iterator<Item = &'s str>) -> f32 {
+        use crate::ui::style::palette_metrics as pm;
+        let widest = labels
+            .map(|label| crate::ui::style::text_metrics::width(label, ui_text::UI, false))
+            .fold(0.0_f32, f32::max);
+        let field = self.rendering_width.get()
+            - pm::GRID_INSET_L
+            - pm::GRID_INSET_R
+            - pm::INDENT
+            - pm::NAME_COL_W
+            - 3.0 * pm::LINE;
+        (widest + 2.0 * CHOICE_ITEM_PAD_X + 2.0 * CHOICE_POPUP_PAD + pm::SCROLLBAR_W)
+            .max(field)
+            .ceil()
+    }
+
     fn render_choice_row<'a>(
         &'a self,
         label: &'a str,
@@ -1591,6 +1618,7 @@ impl PropertiesPanel {
         use crate::ui::dropdown_list::{DropdownList, DropdownRow};
         let mut rows = Vec::with_capacity(options.len());
         let mut selected = None;
+        let mut labels = Vec::with_capacity(options.len());
         for (index, option) in options.iter().enumerate() {
             let is_current = !varies && option.as_str() == current;
             if is_current {
@@ -1610,8 +1638,10 @@ impl PropertiesPanel {
             .style(choice_option_style(is_current))
             .padding([2.0, CHOICE_ITEM_PAD_X])
             .width(Length::Fill);
+            labels.push(label.clone());
             rows.push(DropdownRow::item(btn, label, msg));
         }
+        let list_w = self.list_width(labels.iter().map(String::as_str));
         let list = DropdownList::new(rows)
             .selected(selected)
             .select_first_by_default(selected.is_some())
@@ -1623,9 +1653,7 @@ impl PropertiesPanel {
         let value = crate::ui::color_select::editable_drop_down_below(
             head.into(),
             popup.into(),
-            // As wide as the field and under it, as the lineweight list is;
-            // an option that does not fit ends with "…".
-            None,
+            Some(Length::Fixed(list_w)),
             Length::Shrink,
             Message::PropChoiceDismiss { field, quick },
             open,
@@ -1820,7 +1848,9 @@ impl PropertiesPanel {
             crate::ui::color_select::editable_drop_down_below(
                 head.into(),
                 popup.into(),
-                None,
+                Some(Length::Fixed(
+                    self.list_width(options.iter().map(|o| o.as_str())),
+                )),
                 Length::Shrink,
                 Message::PropEditChoiceToggle(field),
                 open,
