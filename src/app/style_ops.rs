@@ -318,7 +318,7 @@ impl OpenCADStudio {
         let i = self.active_tab;
         match kind {
             StyleKind::Text => self.load_textstyle_draft(i),
-            StyleKind::Dim => self.load_dimstyle_bufs(i),
+            StyleKind::Dim => {}
             StyleKind::MLeader => self.load_mleaderstyle_bufs(i),
             StyleKind::Table => self.load_tablestyle_bufs(i),
             StyleKind::MLine => self.load_mlstyle_bufs(i),
@@ -361,6 +361,7 @@ impl OpenCADStudio {
             StyleKind::MLeader => {
                 let mut s = MultiLeaderStyle::new(name);
                 s.description = name.to_string();
+                s.align_space = s.text_height;
                 s.handle = handle;
                 doc.objects.insert(handle, ObjectType::MultiLeaderStyle(s));
             }
@@ -449,8 +450,9 @@ impl OpenCADStudio {
                     ObjectType::MultiLeaderStyle(s) => Some((s.name.as_str(), s.clone())),
                     _ => None,
                 }) {
+                    // The copy keeps the description of the style it
+                    // starts from.
                     s.name = name.to_string();
-                    s.description = name.to_string();
                     s.handle = handle;
                     doc.objects.insert(handle, ObjectType::MultiLeaderStyle(s));
                     return true;
@@ -581,33 +583,70 @@ impl OpenCADStudio {
             }
             StyleKind::Dim => {
                 let doc = &mut self.tabs[i].scene.document;
-                if let Some(mut s) = doc.dim_styles.get(old).cloned() {
-                    s.name = new.to_string();
-                    if !s.handle.is_valid() {
-                        s.handle = doc.allocate_handle();
+                // The family members (`NAME$0` linear, `$2` angular, ...)
+                // follow their parent's name.
+                let renames: Vec<(String, String)> = doc
+                    .dim_styles
+                    .iter()
+                    .filter_map(|style| {
+                        if style.name.eq_ignore_ascii_case(old) {
+                            return Some((style.name.clone(), new.to_string()));
+                        }
+                        let (parent, member) = style.name.rsplit_once('$')?;
+                        (parent.eq_ignore_ascii_case(old)
+                            && !member.is_empty()
+                            && member.chars().all(|c| c.is_ascii_digit()))
+                        .then(|| (style.name.clone(), format!("{new}${member}")))
+                    })
+                    .collect();
+                for (from, to) in &renames {
+                    if let Some(mut s) = doc.dim_styles.get(from).cloned() {
+                        s.name = to.clone();
+                        if !s.handle.is_valid() {
+                            s.handle = doc.allocate_handle();
+                        }
+                        if doc.dim_styles.add(s).is_ok() {
+                            doc.dim_styles.remove(from);
+                        }
                     }
-                    let _ = doc.dim_styles.add(s);
                 }
-                doc.dim_styles.remove(old);
                 if doc.header.current_dimstyle_name.eq_ignore_ascii_case(old) {
                     doc.header.current_dimstyle_name = new.to_string();
                 }
-                for e in doc.entities_mut() {
-                    match e {
-                        document::entities::EntityType::Dimension(d)
-                            if d.base().style_name.eq_ignore_ascii_case(old) =>
-                        {
-                            d.base_mut().style_name = new.to_string();
+                // Only the objects naming the style change, each through
+                // `get_entity_mut`: a bulk `entities_mut` pass would drop the
+                // stored record of every entity in the drawing.
+                let handles: Vec<Handle> = doc
+                    .entities()
+                    .filter(|entity| match entity {
+                        document::entities::EntityType::Dimension(d) => {
+                            d.base().style_name.eq_ignore_ascii_case(old)
                         }
-                        document::entities::EntityType::Leader(l)
-                            if l.dimension_style.eq_ignore_ascii_case(old) =>
-                        {
-                            l.dimension_style = new.to_string();
+                        document::entities::EntityType::Leader(l) => {
+                            l.dimension_style.eq_ignore_ascii_case(old)
                         }
-                        document::entities::EntityType::Tolerance(t)
-                            if t.dimension_style_name.eq_ignore_ascii_case(old) =>
-                        {
-                            t.dimension_style_name = new.to_string();
+                        document::entities::EntityType::Tolerance(t) => {
+                            t.dimension_style_name.eq_ignore_ascii_case(old)
+                        }
+                        _ => false,
+                    })
+                    .map(|entity| entity.common().handle)
+                    .collect();
+                for handle in handles {
+                    if let (Some(stage), Some(before)) =
+                        (self.style_stage.as_mut(), doc.get_entity_arc(handle))
+                    {
+                        stage.entities.entry(handle).or_insert(before);
+                    }
+                    match doc.get_entity_mut(handle) {
+                        Some(document::entities::EntityType::Dimension(d)) => {
+                            d.base_mut().style_name = new.to_string()
+                        }
+                        Some(document::entities::EntityType::Leader(l)) => {
+                            l.dimension_style = new.to_string()
+                        }
+                        Some(document::entities::EntityType::Tolerance(t)) => {
+                            t.dimension_style_name = new.to_string()
                         }
                         _ => {}
                     }
@@ -938,6 +977,15 @@ impl OpenCADStudio {
             active_table: self.ribbon.active_table_style.clone(),
             active_mleader: self.ribbon.active_mleader_style.clone(),
             tab_active_mleader: self.tabs[i].active_mleader_style.clone(),
+            dim_overrides: self.tabs[i].scene.dim_overrides.clone(),
+            dim_style_xdata: doc
+                .dim_styles
+                .iter()
+                .filter_map(|style| {
+                    doc.object_xdata(style.handle)
+                        .map(|data| (style.handle, data.clone()))
+                })
+                .collect(),
             linetypes: linetypes.then(|| LinetypeState {
                 table: doc.line_types.clone(),
                 layer_linetypes: doc
@@ -985,6 +1033,15 @@ impl OpenCADStudio {
             self.ribbon.active_mleader_style = snap.active_mleader.clone();
         }
         self.tabs[i].active_mleader_style = snap.tab_active_mleader.clone();
+        self.tabs[i].scene.dim_overrides = snap.dim_overrides.clone();
+        // The extended data of the dimension styles (break size, jog
+        // height, DIMTALN) goes back with them.
+        let doc = &mut self.tabs[i].scene.document;
+        for (handle, data) in &snap.dim_style_xdata {
+            for record in data.records() {
+                doc.set_object_xdata_record(*handle, record.clone());
+            }
+        }
         if let Some(state) = &snap.linetypes {
             let scene = &mut self.tabs[i].scene;
             let doc = &mut scene.document;
@@ -1167,13 +1224,19 @@ impl OpenCADStudio {
                 .map(|(handle, _, _)| (*handle, crate::scene::ChangeKind::Modified))
                 .collect();
             self.tabs[i].scene.bump_entities(&renamed);
+            if linetypes {
+                if let (Some(new_lt), Some(old_lt)) =
+                    (edited.linetypes.as_ref(), stage.baseline.linetypes.as_ref())
+                {
+                    new_lt.invalidate_diff(old_lt, &mut self.tabs[i].scene);
+                }
+            }
             self.commit_style_undo(i, stage.baseline, edited, entities, stage.dirty_at_open);
         } else {
             self.tabs[i].dirty = stage.dirty_at_open;
         }
         self.sync_ribbon_styles();
         if linetypes {
-            self.tabs[i].scene.bump_geometry();
             self.sync_ribbon_layers();
             self.sync_ribbon_from_selection();
         }
@@ -1259,6 +1322,9 @@ pub(super) struct StyleStateSnapshot {
     active_table: String,
     active_mleader: String,
     tab_active_mleader: String,
+    /// The current style's overrides for new dimensions.
+    dim_overrides: Option<(String, Vec<(i16, document::xdata::XDataValue)>)>,
+    dim_style_xdata: Vec<(Handle, document::xdata::ExtendedData)>,
     linetypes: Option<LinetypeState>,
 }
 
@@ -1274,6 +1340,67 @@ pub(super) struct LinetypeState {
     celtscale: f64,
     psltscale: bool,
     msltscale: bool,
+}
+
+fn diff_table_names<T: document::tables::TableEntry + PartialEq>(
+    a: &document::tables::Table<T>,
+    b: &document::tables::Table<T>,
+) -> Vec<String> {
+    a.iter()
+        .filter(|entry| b.get(entry.name()) != Some(*entry))
+        .map(|entry| entry.name().to_string())
+        .chain(
+            b.iter()
+                .filter(|entry| a.get(entry.name()) != Some(*entry))
+                .map(|entry| entry.name().to_string()),
+        )
+        .collect::<rustc_hash::FxHashSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+impl LinetypeState {
+    fn invalidate_diff(&self, other: &Self, scene: &mut crate::scene::Scene) {
+        if (self.ltscale - other.ltscale).abs() > f64::EPSILON
+            || self.psltscale != other.psltscale
+            || self.msltscale != other.msltscale
+        {
+            scene.bump_geometry();
+            return;
+        }
+        let linetype_names = diff_table_names(&self.table, &other.table);
+        if !linetype_names.is_empty() {
+            scene.invalidate_linetype_dependencies(&linetype_names);
+        }
+        let self_layers: rustc_hash::FxHashMap<_, _> = self
+            .layer_linetypes
+            .iter()
+            .map(|(h, lt)| (*h, lt.as_str()))
+            .collect();
+        let other_layers: rustc_hash::FxHashMap<_, _> = other
+            .layer_linetypes
+            .iter()
+            .map(|(h, lt)| (*h, lt.as_str()))
+            .collect();
+        let layer_names: Vec<String> = self_layers
+            .iter()
+            .chain(other_layers.iter())
+            .filter(|(handle, _)| self_layers.get(*handle) != other_layers.get(*handle))
+            .filter_map(|(handle, _)| {
+                scene
+                    .document
+                    .layers
+                    .iter()
+                    .find(|layer| layer.handle == *handle)
+                    .map(|layer| layer.name.clone())
+            })
+            .collect::<rustc_hash::FxHashSet<_>>()
+            .into_iter()
+            .collect();
+        if !layer_names.is_empty() {
+            scene.invalidate_layer_dependencies(&layer_names);
+        }
+    }
 }
 
 impl StyleStateSnapshot {
@@ -1292,36 +1419,8 @@ impl StyleStateSnapshot {
     }
 
     pub(super) fn changed_keys(&self, other: &Self) -> (Vec<String>, Vec<String>, Vec<Handle>) {
-        let text_names = self
-            .text_styles
-            .iter()
-            .filter(|style| other.text_styles.get(&style.name) != Some(*style))
-            .map(|style| style.name.clone())
-            .chain(
-                other
-                    .text_styles
-                    .iter()
-                    .filter(|style| self.text_styles.get(&style.name) != Some(*style))
-                    .map(|style| style.name.clone()),
-            )
-            .collect::<rustc_hash::FxHashSet<_>>()
-            .into_iter()
-            .collect();
-        let dim_names = self
-            .dim_styles
-            .iter()
-            .filter(|style| other.dim_styles.get(&style.name) != Some(*style))
-            .map(|style| style.name.clone())
-            .chain(
-                other
-                    .dim_styles
-                    .iter()
-                    .filter(|style| self.dim_styles.get(&style.name) != Some(*style))
-                    .map(|style| style.name.clone()),
-            )
-            .collect::<rustc_hash::FxHashSet<_>>()
-            .into_iter()
-            .collect();
+        let text_names = diff_table_names(&self.text_styles, &other.text_styles);
+        let dim_names = diff_table_names(&self.dim_styles, &other.dim_styles);
         let self_objects: rustc_hash::FxHashMap<_, _> =
             self.style_objects.iter().map(|(h, o)| (*h, o)).collect();
         let other_objects: rustc_hash::FxHashMap<_, _> =
@@ -1517,7 +1616,28 @@ pub(crate) fn style_in_use(
 pub(crate) fn remove_style(doc: &mut document::Document, kind: StyleKind, name: &str) -> bool {
     match kind {
         StyleKind::Text => doc.text_styles.remove(name).is_some(),
-        StyleKind::Dim => doc.dim_styles.remove(name).is_some(),
+        StyleKind::Dim => {
+            // Its family members (`NAME$0`, `$2`, ...) go with it.
+            let members: Vec<String> = doc
+                .dim_styles
+                .iter()
+                .filter(|style| {
+                    style.name.rsplit_once('$').is_some_and(|(parent, member)| {
+                        parent.eq_ignore_ascii_case(name)
+                            && !member.is_empty()
+                            && member.chars().all(|c| c.is_ascii_digit())
+                    })
+                })
+                .map(|style| style.name.clone())
+                .collect();
+            let removed = doc.dim_styles.remove(name).is_some();
+            if removed {
+                for member in members {
+                    doc.dim_styles.remove(&member);
+                }
+            }
+            removed
+        }
         StyleKind::Linetype => {
             use crate::scene::linetype_service as service;
             match service::plan_delete(doc, name) {

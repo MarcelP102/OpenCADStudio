@@ -119,6 +119,7 @@ impl OpenCADStudio {
             &self.tabs[i].scene.document,
             handle,
         ));
+        sections.extend(crate::entities::civil::properties(entity, &self.tabs[i].scene.document));
 
         // Turn the Material row into an editable picker: the source
         // options (ByLayer / ByBlock) plus every named material the
@@ -2474,7 +2475,18 @@ impl OpenCADStudio {
 
         let annotation_scale_handle = self.tabs[i].scene.displayed_annotation_scale_handle();
         let mut new_panel = {
-            let selected = self.tabs[i].scene.selected_entities();
+            // `cur_handles` is already ordered and filtered to live entities
+            // above. Reusing it avoids rebuilding that entire selection again.
+            let selected: Vec<_> = cur_handles
+                .iter()
+                .filter_map(|&handle| {
+                    self.tabs[i]
+                        .scene
+                        .document
+                        .get_entity(handle)
+                        .map(|entity| (handle, entity))
+                })
+                .collect();
             let mut panel = match selected.len() {
                 0 => {
                     use crate::scene::model::object::{PropSection, PropValue, Property};
@@ -2990,6 +3002,43 @@ impl OpenCADStudio {
                                 merged
                             })
                             .unwrap_or_default();
+                    }
+                    // Mixed annotative objects lose the row the per-type
+                    // builders place in different sections; keep it so the
+                    // scale list can be edited on all of them at once.
+                    let doc = &self.tabs[i].scene.document;
+                    if filtered.len() > 1
+                        && !sections
+                            .iter()
+                            .any(|s| s.props.iter().any(|p| p.field == "annotative_scale"))
+                        && filtered.iter().all(|(_, entity)| {
+                            crate::scene::annotative::supports_annotation_context(entity)
+                                && crate::scene::annotative::is_annotative(doc, entity)
+                        })
+                    {
+                        let shown = |handle: Handle| {
+                            let scale = crate::scene::annotative::active_object_context_for_scale(
+                                doc, handle, None,
+                            )?
+                            .scale;
+                            crate::scene::annotative::object_scale_memberships(doc, handle)
+                                .into_iter()
+                                .find(|(_, h)| *h == scale)
+                                .map(|(name, _)| name)
+                        };
+                        let first = shown(filtered[0].0);
+                        let value = if filtered.iter().all(|(handle, _)| shown(*handle) == first) {
+                            first.unwrap_or_else(|| doc.header.current_annotation_scale.clone())
+                        } else {
+                            VARIES_LABEL.to_string()
+                        };
+                        if let Some(section) = sections.first_mut() {
+                            section.props.push(crate::entities::common::ro_prop(
+                                t!("Annotative scale").as_ref(),
+                                "annotative_scale",
+                                value,
+                            ));
+                        }
                     }
                     if let (Some(t), Some(groups_ms), Some(filter_ms), Some(local_ms)) =
                         (t_arm, t_groups, t_filter, t_local)
@@ -3837,6 +3886,7 @@ handles={handles_ms:.1} panel={:.1} ribbon={ribbon_ms:.1} tail={:.1} selected={}
             grip.targets.iter().any(|target| {
                 self.tabs[i].scene.is_layer_locked(target.handle)
                     || self.tabs[i].scene.is_reference_only(target.handle)
+                    || self.tabs[i].scene.native_edit_disabled(target.handle)
             })
         });
         if locked_active_grip {
@@ -3867,21 +3917,32 @@ handles={handles_ms:.1} panel={:.1} ribbon={ribbon_ms:.1} tail={:.1} selected={}
         let wo = if is_paper { [0.0f64; 3] } else { [0.0_f64; 3] };
         let group_boxes;
         let (new_handle, new_grips, new_grip_handles) = {
-            let selected = self.tabs[i].scene.selected_entities();
+            let limit = self.grip_object_limit;
+            // The limit is based on live entities, not raw handles. Count only
+            // up to the threshold before allocating or ordering the full set.
+            let over_limit = limit > 0
+                && self.tabs[i]
+                    .scene
+                    .selected
+                    .iter()
+                    .filter(|handle| self.tabs[i].scene.document.get_entity(**handle).is_some())
+                    .take(limit as usize + 1)
+                    .count()
+                    > limit as usize;
+            let selected = if over_limit {
+                Vec::new()
+            } else {
+                self.tabs[i].scene.selected_entities()
+            };
             let single_handle = (selected.len() == 1
                 && !self.tabs[i].scene.is_layer_locked(selected[0].0)
-                && !self.tabs[i].scene.is_reference_only(selected[0].0))
+                && !self.tabs[i].scene.is_reference_only(selected[0].0)
+                && !self.tabs[i].scene.native_edit_disabled(selected[0].0))
             .then(|| selected[0].0);
             let mut grips = Vec::new();
             let mut handles = Vec::new();
             // Avoid rebuilding every entity's grip markers above the configured
             // limit. Zero disables the limit.
-            let limit = self.grip_object_limit;
-            let selected = if limit > 0 && selected.len() > limit as usize {
-                Vec::new()
-            } else {
-                selected
-            };
             // A group picked whole shows one grip at the centre of its
             // extents (GROUPDISPLAYMODE 1, 2) in place of its members' own,
             // and a box round them (2) 2.5 % of their size out on each side.
@@ -3899,7 +3960,9 @@ handles={handles_ms:.1} panel={:.1} ribbon={ribbon_ms:.1} tail={:.1} selected={}
             for (members, min, max) in &whole_groups {
                 let centre = (*min + *max) * 0.5;
                 for &member in members {
-                    if self.tabs[i].scene.is_layer_locked(member) {
+                    if self.tabs[i].scene.is_layer_locked(member)
+                        || self.tabs[i].scene.native_edit_disabled(member)
+                    {
                         continue;
                     }
                     handles.push(member);
@@ -3921,6 +3984,9 @@ handles={handles_ms:.1} panel={:.1} ribbon={ribbon_ms:.1} tail={:.1} selected={}
             // A table whose cells are picked shows no table grips.
             let picked_table = self.tabs[i].scene.table_cells_handle();
             for (handle, entity) in selected {
+                if self.tabs[i].scene.native_edit_disabled(handle) {
+                    continue;
+                }
                 if group_members.contains(&handle) {
                     continue;
                 }
@@ -4084,6 +4150,7 @@ handles={handles_ms:.1} panel={:.1} ribbon={ribbon_ms:.1} tail={:.1} selected={}
         };
         if self.tabs[i].scene.is_layer_locked(handle)
             || self.tabs[i].scene.is_reference_only(handle)
+            || self.tabs[i].scene.native_edit_disabled(handle)
         {
             return Ok(Vec::new());
         }
@@ -4218,7 +4285,9 @@ handles={handles_ms:.1} panel={:.1} ribbon={ribbon_ms:.1} tail={:.1} selected={}
     pub(super) fn property_target_handles(&self, i: usize) -> Vec<Handle> {
         // The node graph edits its own node's entity through the panel's
         // handlers, independent of the drawing selection.
-        self.resolve_property_targets(i, true, |scene, handle| !scene.is_layer_locked(handle))
+        self.resolve_property_targets(i, true, |scene, handle| {
+            !scene.is_layer_locked(handle) && !scene.native_edit_disabled(handle)
+        })
     }
 
     /// The point clouds the Locked row applies to: locked ones too, unless
@@ -4268,6 +4337,25 @@ handles={handles_ms:.1} panel={:.1} ribbon={ribbon_ms:.1} tail={:.1} selected={}
 
     pub(super) fn invalidate_property_targets(&mut self, i: usize, handles: &[Handle]) {
         self.invalidate_property_targets_with_driven(i, handles, &[]);
+    }
+
+    /// Invalidate property targets incrementally when all handles are in top-level
+    /// spaces, falling back to `bump_geometry()` if any handle belongs to a block
+    /// definition (whose assembled cache and references must rebuild).
+    pub(super) fn invalidate_property_targets_or_blocks(&mut self, i: usize, handles: &[Handle]) {
+        if handles.is_empty() {
+            return;
+        }
+        let changes: Vec<_> = handles
+            .iter()
+            .copied()
+            .map(|h| (h, crate::scene::ChangeKind::Modified))
+            .collect();
+        if self.tabs[i].scene.changes_touch_block_definition(&changes) {
+            self.tabs[i].scene.bump_geometry();
+        } else {
+            self.invalidate_property_targets(i, handles);
+        }
     }
 
     pub(super) fn invalidate_property_targets_with_driven(
@@ -4440,7 +4528,13 @@ handles={handles_ms:.1} panel={:.1} ribbon={ribbon_ms:.1} tail={:.1} selected={}
                 crate::modules::annotate::data_link::link_cells(table, link, 1);
             }
             const PREFIX: &str = "__OPENCAD_LINK_PENDING__";
-            if let Some(path) = table.name.strip_prefix(PREFIX).map(str::to_string) {
+            if let Some(pending) = table.name.strip_prefix(PREFIX).map(str::to_string) {
+                // A file; or a file, a sheet of it and the cells of the
+                // sheet, each on a line (`DataLinkPlaceCommand::of_cells`).
+                let mut lines = pending.split('\n');
+                let path = lines.next().unwrap_or_default().to_string();
+                let sheet = lines.next().unwrap_or_default();
+                let cells = lines.next().filter(|cells| !cells.is_empty());
                 let document = &mut self.tabs[i].scene.document;
                 let stem = std::path::Path::new(&path)
                     .file_stem()
@@ -4463,9 +4557,12 @@ handles={handles_ms:.1} panel={:.1} ribbon={ribbon_ms:.1} tail={:.1} selected={}
                     &crate::app::annotation_data::SpreadsheetLinkSettings {
                         path: &path,
                         stored_path: &path,
-                        sheet: "",
-                        kind: crate::ui::window::annotation_data::LinkRange::EntireSheet,
-                        range: None,
+                        sheet,
+                        kind: match cells {
+                            Some(_) => crate::ui::window::annotation_data::LinkRange::CellRange,
+                            None => crate::ui::window::annotation_data::LinkRange::EntireSheet,
+                        },
+                        range: cells,
                         path_option: 1,
                         allow_write: false,
                         use_source_formatting: true,
@@ -5113,32 +5210,16 @@ fn intersect_into(
     acc: &mut Vec<crate::scene::model::object::PropSection>,
     right: &[crate::scene::model::object::PropSection],
 ) {
-    use rustc_hash::FxHashMap;
-
-    // First match wins, exactly like `right.iter().find(...)`.
-    let mut right_sections: FxHashMap<&str, usize> = FxHashMap::default();
-    let mut right_fields: Vec<FxHashMap<&'static str, usize>> = Vec::with_capacity(right.len());
-    for (section_index, section) in right.iter().enumerate() {
-        let mut fields = FxHashMap::default();
-        for (prop_index, prop) in section.props.iter().enumerate() {
-            fields.entry(prop.field).or_insert(prop_index);
-        }
-        right_fields.push(fields);
-        right_sections
-            .entry(section.title.as_str())
-            .or_insert(section_index);
-    }
-
+    // Property sections are small. Avoid allocating hash maps for every one
+    // of thousands of selected entities while retaining first-match behavior.
     acc.retain_mut(|section| {
-        let Some(&section_index) = right_sections.get(section.title.as_str()) else {
+        let Some(other_section) = right.iter().find(|other| other.title == section.title) else {
             return false;
         };
-        let fields = &right_fields[section_index];
         section.props.retain_mut(|prop| {
-            let Some(&prop_index) = fields.get(prop.field) else {
+            let Some(other) = other_section.props.iter().find(|other| other.field == prop.field) else {
                 return false;
             };
-            let other = &right[section_index].props[prop_index];
             if prop.value != other.value {
                 prop.value = merge_prop_value(&prop.value, &other.value);
             }

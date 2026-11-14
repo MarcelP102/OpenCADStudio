@@ -72,8 +72,30 @@ impl OpenCADStudio {
                 self.tabs[i].active_cmd = Some(Box::new(wo_cmd));
             }
 
-            cmd if cmd == "IMAGE" || cmd == "IMAGEATTACH" || cmd == "IM" => {
-                return Some(Task::done(Message::ImagePick));
+            // IMAGE / IMAGEATTACH / -IMAGEATTACH / IM [path]
+            // A bare command opens the file picker. A path on the command
+            // line is attached the way a dropped picture is, so a script can
+            // place a raster reference without a dialog; the insertion point
+            // prompt then follows as usual.
+            cmd if {
+                let verb = cmd.split_whitespace().next().unwrap_or_default();
+                matches!(
+                    verb.trim_start_matches('-').to_ascii_uppercase().as_str(),
+                    "IMAGE" | "IMAGEATTACH" | "IM"
+                )
+            } =>
+            {
+                let rest = cmd
+                    .split_once(char::is_whitespace)
+                    .map(|(_, rest)| rest.trim())
+                    .unwrap_or("");
+                if rest.is_empty() {
+                    return Some(Task::done(Message::ImagePick));
+                }
+                let path = std::path::PathBuf::from(rest.trim_matches('"'));
+                return Some(self.update(Message::ImagePickResult(
+                    crate::io::image_file_size(path),
+                )));
             }
 
             cmd if cmd == "IMAGEEMBED" => {
@@ -1110,11 +1132,7 @@ impl OpenCADStudio {
                     glam::DVec3::from_array(storage.y_axis),
                 );
                 let sources_started = crate::perf::enabled().then(iced::time::Instant::now);
-                let mut boundary_sources =
-                    self.tabs[i].scene.boundary_sources_on_plane(plane, 1.0e-6);
-                self.tabs[i]
-                    .scene
-                    .retain_sources_on_screen(&mut boundary_sources, plane);
+                let boundary_sources = self.tabs[i].scene.boundary_sources_on_screen(plane, 1.0e-6);
                 let sources_ms = crate::perf::elapsed_ms(sources_started);
                 let (source_count, segment_count, curve_count) = if perf_hatch {
                     (
@@ -1220,11 +1238,7 @@ impl OpenCADStudio {
             "GRADIENT" => {
                 use crate::modules::draw::draw::hatch::HatchCommand;
                 let plane = crate::command::WorkingPlane::default();
-                let mut boundary_sources =
-                    self.tabs[i].scene.boundary_sources_on_plane(plane, 1.0e-6);
-                self.tabs[i]
-                    .scene
-                    .retain_sources_on_screen(&mut boundary_sources, plane);
+                let boundary_sources = self.tabs[i].scene.boundary_sources_on_screen(plane, 1.0e-6);
                 let new_cmd = HatchCommand::new(boundary_sources, Vec::new(), None, plane)
                     .gradient()
                     .with_origin(self.tabs[i].scene.document.hatch_origin())
@@ -1248,10 +1262,7 @@ impl OpenCADStudio {
                 } else {
                     crate::command::WorkingPlane::default()
                 };
-                let mut sources = self.tabs[i].scene.boundary_sources_on_plane(plane, 1.0e-6);
-                self.tabs[i]
-                    .scene
-                    .retain_sources_on_screen(&mut sources, plane);
+                let sources = self.tabs[i].scene.boundary_sources_on_screen(plane, 1.0e-6);
                 let selected = self.tabs[i]
                     .scene
                     .selected_entities()
@@ -1264,7 +1275,7 @@ impl OpenCADStudio {
                 self.tabs[i].active_cmd = Some(Box::new(new_cmd));
             }
 
-            "ELLIPSE" => {
+            "ELLIPSE_CENTER" => {
                 use crate::modules::draw::draw::ellipse::EllipseCommand;
                 let pellipse = self.tabs[i]
                     .scene
@@ -1277,7 +1288,7 @@ impl OpenCADStudio {
                 self.tabs[i].active_cmd = Some(Box::new(new_cmd));
             }
 
-            "ELLIPSE_AXIS" => {
+            "ELLIPSE" | "ELLIPSE_AXIS" => {
                 use crate::modules::draw::draw::ellipse::EllipseAxisCommand;
                 let pellipse = self.tabs[i]
                     .scene

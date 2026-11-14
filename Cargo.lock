@@ -102,7 +102,7 @@ checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
 [[package]]
 name = "acadrust"
 version = "0.6.8"
-source = "git+https://github.com/hakanaktt/acadrust.git?rev=37e1e4d#37e1e4d4da739cc6c44066dbcdf8587977fb2cc2"
+source = "git+https://github.com/hakanaktt/acadrust.git?rev=94acea8#94acea84749a45b6abf5218401f472ccc51db974"
 dependencies = [
  "anyhow",
  "bitflags 2.13.1",
@@ -2625,7 +2625,7 @@ dependencies = [
 [[package]]
 name = "iced_aw"
 version = "0.14.1"
-source = "git+https://github.com/HakanSeven12/iced_aw.git?branch=agent%2Ffix-iced-fonts#9bff59df71c215abe91710870634886967fc9f1c"
+source = "git+https://github.com/HakanSeven12/iced_aw.git?branch=agent%2Ffix-iced-fonts#cf24e6498265ed6a5f91a8c5b0c92734c0c4c925"
 dependencies = [
  "iced_core",
  "iced_fonts_macros",
@@ -2943,8 +2943,8 @@ dependencies = [
 
 [[package]]
 name = "ifccad"
-version = "2026.45.2"
-source = "git+https://github.com/OpenAEC-Foundation/ifccad.git?rev=71106c80efbae4c5ea5e1326a3983f3e2b25f1d7#71106c80efbae4c5ea5e1326a3983f3e2b25f1d7"
+version = "2026.46.0"
+source = "git+https://github.com/OpenAEC-Foundation/ifccad.git?rev=a09aeb27c5964f39c2b94ac99ac49255339cb3ff#a09aeb27c5964f39c2b94ac99ac49255339cb3ff"
 dependencies = [
  "base64",
  "fpmath",
@@ -4381,6 +4381,7 @@ dependencies = [
  "cargo-lock",
  "getrandom 0.2.17",
  "interprocess",
+ "libc",
  "libloading",
  "memmap2",
  "opencaddocument",
@@ -4390,6 +4391,7 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "thiserror 1.0.69",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4451,7 +4453,7 @@ dependencies = [
 [[package]]
 name = "opencaddocument"
 version = "0.1.0"
-source = "git+https://github.com/HakanSeven12/opencaddocument.git?rev=a23cdca#a23cdca3575d645607e68dabec2b211bb45c283b"
+source = "git+https://github.com/HakanSeven12/opencaddocument.git?rev=1450ecf#1450ecf57ee043d4e7bf129bbb55b4766945c3d6"
 dependencies = [
  "acadrust",
  "ifccad",

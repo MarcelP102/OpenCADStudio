@@ -5060,10 +5060,13 @@ fn draw_ucs_icon(
     frame.fill(&circle, dot_color);
 
     // Draggable grips when selected: a square at the origin and at the X / Y
-    // tips. Warm grip colour with a light border, like an entity grip.
+    // tips, and at the Z tip once it stands clear of the origin (a plan view
+    // shows Z end-on). Warm grip colour with a light border, like an entity grip.
     if selected {
         let x_tip = Point::new(icon_origin.x + geom[0].dx, icon_origin.y + geom[0].dy);
         let y_tip = Point::new(icon_origin.x + geom[1].dx, icon_origin.y + geom[1].dy);
+        let z_tip = Point::new(icon_origin.x + geom[2].dx, icon_origin.y + geom[2].dy);
+        let z_clear = geom[2].dx.hypot(geom[2].dy) > UCS_GRIP_BOX * 2.0;
         let fill = Color {
             r: 0.20,
             g: 0.85,
@@ -5076,7 +5079,8 @@ fn draw_ucs_icon(
             b: 1.0,
             a: 0.9,
         };
-        for c in [icon_origin, x_tip, y_tip] {
+        let grips = [Some(icon_origin), Some(x_tip), Some(y_tip), z_clear.then_some(z_tip)];
+        for c in grips.into_iter().flatten() {
             let h = UCS_GRIP_BOX / 2.0;
             let sq = canvas::Path::rectangle(
                 Point::new(c.x - h, c.y - h),
@@ -5288,13 +5292,19 @@ impl DynInputCanvas {
         }
     }
 
+    /// The prompt pill's width, measured with the font it is drawn in.
+    fn prompt_width(&self) -> f32 {
+        let font = iced::Font::default();
+        crate::ui::ribbon::text_width(&self.prompt, DYN_FONT, font) + DYN_PAD * 2.0
+    }
+
     /// Prompt pill at `pos`.
     fn draw_prompt(&self, frame: &mut canvas::Frame, pos: Point, theme: &Theme) {
         if self.prompt.is_empty() {
             return;
         }
         let palette = theme.palette();
-        let pw = (self.prompt.len() as f32 * DYN_CHAR_W) + DYN_PAD * 2.0;
+        let pw = self.prompt_width();
         let rect = canvas::Path::rectangle(
             pos,
             Size {
@@ -5636,7 +5646,7 @@ impl DynInputCanvas {
         // value boxes a further gap below the prompt.
         let pad = DYN_OFFSET_X;
         let has_prompt = !self.prompt.is_empty();
-        let prompt_w = (self.prompt.len() as f32 * DYN_CHAR_W) + DYN_PAD * 2.0;
+        let prompt_w = self.prompt_width();
         let block_w = total_w.max(if has_prompt { prompt_w } else { 0.0 });
         let mut bx = self.cursor_screen.x + pad;
         let mut py = self.cursor_screen.y + pad;
@@ -5730,7 +5740,7 @@ impl canvas::Program<Message> for DynInputCanvas {
         // No boxes — just the prompt pill near the cursor.
         if self.boxes.is_empty() {
             if !self.prompt.is_empty() {
-                let pw = (self.prompt.len() as f32 * DYN_CHAR_W) + DYN_PAD * 2.0;
+                let pw = self.prompt_width();
                 let mut px = self.cursor_screen.x + DYN_OFFSET_X;
                 let mut py = self.cursor_screen.y + DYN_OFFSET_X;
                 if px + pw > bounds.width {

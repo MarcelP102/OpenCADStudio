@@ -517,25 +517,12 @@ fn append_pdf_page(
         entity_layers,
         entity_plot_styles,
     } = &page.content;
-    let layer_of = |name: &str| {
-        crate::scene::Scene::handle_from_wire_name(name)
-            .and_then(|handle| entity_layers.get(&handle))
-            .map(String::as_str)
-    };
-    // Hatch models name their fill pattern in `name`, not an entity handle;
-    // their drawing layer comes from the entity the model plots for.
-    let hatch_layer_of = |hatch: &crate::scene::model::hatch_model::HatchModel| {
-        hatch
-            .entity
-            .and_then(|handle| entity_layers.get(&handle))
-            .map(String::as_str)
-    };
     let (paper_w, paper_h) = (page.paper_w as f32, page.paper_h as f32);
     let (ox, oy) = (page.offset_x, page.offset_y);
     let (rotation_deg, scale, clip) = (page.rotation_deg, page.scale, page.clip);
     let plot_style = page.plot_style.as_ref().or(fallback_plot_style);
     let options = page.options;
-    let line_step = vector_step(options);
+    let line_step = vector_step(options, scale);
     let mut ops: Vec<Op> = Vec::new();
     let mut named_styles: std::collections::HashMap<String, Option<PlotStyleTable>> =
         std::collections::HashMap::new();
@@ -750,9 +737,9 @@ fn append_pdf_page(
             }
             let layer = match &item {
                 DrawItem::WireFill(wire) | DrawItem::Wire(wire) | DrawItem::Text(wire) => {
-                    layer_of(&wire.name)
+                    super::plot::wire_layer(&wire.wire, entity_layers)
                 }
-                DrawItem::Hatch(hatch) => hatch_layer_of(hatch),
+                DrawItem::Hatch(hatch) => super::plot::hatch_layer(hatch, entity_layers),
                 DrawItem::Image(_) => None,
             };
             // A named (STB) table plots each entity with its own object style.
@@ -1099,6 +1086,19 @@ fn append_pdf_page(
             // along northing — which is exactly the distortion the plot showed while
             // low-coordinate drawings came out clean. The result is a sheet-mm value
             // in single digits, so f32 is lossless from here.
+            // A circle or arc is drawn as its curve, not as chords.
+            if let Some(spans) = crate::io::plot::wire_arc_beziers(wire, page_h) {
+                let mm = |p: glam::DVec2, bezier: bool| LinePoint {
+                    p: Point::new(Mm((p.x + ox) as f32), Mm((p.y + oy) as f32)),
+                    bezier,
+                };
+                let mut curve = vec![mm(spans[0][0], false)];
+                for [_, c1, c2, end] in spans {
+                    curve.extend([mm(c1, true), mm(c2, true), mm(end, false)]);
+                }
+                flush_line(&mut ops, &curve, None, line_step);
+                continue;
+            }
             let mut segment: Vec<LinePoint> = Vec::new();
             let dot_radius = (wire.name == "viewport_hatch_pattern")
                 .then_some(Pt(SCREEN_DOT_MM * MM_TO_PT / (2.0 * scale.max(1e-6))));
@@ -1439,12 +1439,15 @@ fn visible_station_ranges(
     ranges
 }
 
-/// One vector DPI step in points, for `PlotOptions::vector_dpi`.
-fn vector_step(options: PdfPlotOptions) -> Option<f32> {
+/// One vector DPI step in the pre-CTM coordinate space, for
+/// `PlotOptions::vector_dpi`. The geometry is drawn under a CTM that scales it
+/// by the plot `scale`, so the grid is divided by it to land on 1/dpi inch of
+/// paper; without that a large plot scale quantised far coarser than asked.
+fn vector_step(options: PdfPlotOptions, scale: f32) -> Option<f32> {
     options
         .vector_dpi
         .filter(|&dpi| dpi > 0)
-        .map(|dpi| 72.0 / dpi as f32)
+        .map(|dpi| 72.0 / dpi as f32 / scale.max(1e-6))
 }
 
 fn flush_line(ops: &mut Vec<Op>, pts: &[LinePoint], dot_radius: Option<Pt>, step: Option<f32>) {
@@ -1582,6 +1585,7 @@ fn emit_wire_fills(
                 boundary.push(boundary[0]);
                 let hatch = HatchModel {
                     entity: None,
+                    effective_layer: wire.effective_layer.clone(),
                     pattern_origin: None,
                     render_instance: wire.render_instance,
                     world_origin: [0.0, 0.0],
@@ -1907,7 +1911,7 @@ fn emit_hatch(
                 },
             ];
             let dot_radius = Pt(SCREEN_DOT_MM * MM_TO_PT / (2.0 * scale.max(1e-6)));
-            flush_line(ops, &points, Some(dot_radius), vector_step(options));
+            flush_line(ops, &points, Some(dot_radius), vector_step(options, scale));
         }
         return;
     }
@@ -2895,6 +2899,18 @@ pub(crate) fn pdf_stream_text(bytes: &[u8]) -> String {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     #[test]
+    fn vector_step_is_one_dpi_step_on_paper_at_any_plot_scale() {
+        let mut options = super::PdfPlotOptions::default();
+        assert_eq!(super::vector_step(options, 1.0), None);
+        options.vector_dpi = Some(600);
+        for scale in [0.01_f32, 1.0, 10.0, 1000.0] {
+            let step = super::vector_step(options, scale).unwrap();
+            // Under the CTM the step grows by `scale`: it must stay 1/600 in.
+            assert!((step * scale - 72.0 / 600.0).abs() < 1e-5, "scale {scale}");
+        }
+    }
+
+    #[test]
     fn dash_ranges_align_a_run_on_its_end_dashes() {
         let mut pattern = [0.0; 8];
         pattern[0] = 20.0;
@@ -2974,6 +2990,32 @@ mod tests {
             options: PdfPlotOptions::default(),
             plot_style: None,
         }
+    }
+
+    #[test]
+    fn optional_content_uses_per_occurrence_layers_before_handle_fallback() {
+        let wire = |layer: &str, depth| {
+            let mut wire = WireModel::solid(
+                "126".into(),
+                vec![[10.0, 20.0, 0.0], [30.0, 40.0, 0.0]],
+                WireModel::WHITE,
+                false,
+            );
+            wire.effective_layer = Some(std::sync::Arc::from(layer));
+            PlotWire {
+                wire,
+                draw_depth: depth,
+            }
+        };
+        let mut page = test_page(vec![wire("FIRST_LAYER", 0.4), wire("SECOND_LAYER", 0.5)]);
+        page.content.entity_layers = std::collections::HashMap::from([(
+            crate::scene::Scene::handle_from_wire_name("126").expect("handle parses"),
+            "OUTER_INSERT".to_string(),
+        )]);
+        let text = pdf_stream_text(&render_pdf_bytes(&[page], None).unwrap());
+        assert!(text.contains("FIRST_LAYER"), "{text}");
+        assert!(text.contains("SECOND_LAYER"), "{text}");
+        assert!(!text.contains("OUTER_INSERT"), "{text}");
     }
 
     #[test]

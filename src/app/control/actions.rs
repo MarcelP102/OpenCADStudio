@@ -173,6 +173,8 @@ pub(super) const NAMES: &[&str] = &[
     "hyperlink_dialog",
     "object_scale_dialog",
     "mleader_style_dialog",
+    "dimstyle_dialog",
+    "anno_scale_prompt",
     "scale_list_dialog",
     "spell_dialog",
     "table_cell_tab",
@@ -192,6 +194,8 @@ pub(super) const NAMES: &[&str] = &[
     "keytips",
     "dialog_ok",
     "dialog_answer",
+    // The attribute form's page steppers: `page=next|previous`.
+    "dialog_page",
     "dialog_discard",
     "dialog_cancel",
     "block_def_dialog",
@@ -629,6 +633,7 @@ impl OpenCADStudio {
 
         // Optional plot style table: a CTB path or a folder-discovered name.
         let style = req["plot_style"].as_str().filter(|s| !s.is_empty());
+        let drawing_base = crate::io::drawing_dir(&self.tabs[i].scene.document);
         let loaded_style = match style {
             // An existing file reports its own load error; anything else is
             // looked up by name in the plot styles folder.
@@ -637,7 +642,7 @@ impl OpenCADStudio {
                     .map_err(|e| failure("plot_style_invalid", e))?,
             ),
             Some(name) => Some(
-                crate::io::plot_style::PlotStyleTable::load_named(name)
+                crate::io::plot_style::PlotStyleTable::load_named_at(name, drawing_base)
                     .map_err(|e| failure("plot_style_missing", e))?,
             ),
             None => None,
@@ -1589,6 +1594,7 @@ impl OpenCADStudio {
             name,
             "dialog_ok"
                 | "dialog_answer"
+                | "dialog_page"
                 | "dialog_discard"
                 | "dialog_cancel"
                 | "pdf_dialog_ok"
@@ -2985,6 +2991,7 @@ impl OpenCADStudio {
             // "pick=<name>", "pick_ok", "pick_cancel", "pick_load",
             // "load_file", "load_path=<.lin path>", "load_toggle=<linetype>",
             // "load_ok", "load_cancel",
+            // "reload=this|all|skip|skip_rest|cancel",
             // "default_text",
             // "text_styles", "ok", "cancel".
             "mleader_style_dialog" => {
@@ -3108,6 +3115,22 @@ impl OpenCADStudio {
                     "load_toggle" => dlg(M::LoadToggle(value.to_string())),
                     "load_ok" => dlg(M::LoadOk),
                     "load_cancel" => dlg(M::LoadCancel),
+                    "reload" => {
+                        use crate::ui::style::mleaderstyle::Reload;
+                        dlg(M::ReloadAnswer(match value {
+                            "this" => Reload::This,
+                            "all" => Reload::All,
+                            "skip" => Reload::Skip,
+                            "skip_rest" => Reload::SkipRest,
+                            "cancel" => Reload::Cancel,
+                            _ => {
+                                return Err(failure(
+                                    "invalid_value",
+                                    "reload is this, all, skip, skip_rest or cancel",
+                                ))
+                            }
+                        }))
+                    }
                     "default_text" => dlg(M::DefaultText),
                     "text_styles" => dlg(M::TextStyles),
                     "ok" => dlg(M::Ok),
@@ -3116,6 +3139,194 @@ impl OpenCADStudio {
                         return Err(failure(
                             "invalid_value",
                             "Unknown Multileader Style field",
+                        ))
+                    }
+                }
+            }
+            // The Dimension Style window, one field per call. Manager:
+            // "select=<style>", "overrides", "filter=all|used",
+            // "hide_xrefs=0|1", "context=<style>", "rename=<style>",
+            // "rename_to=<text>", "rename_ok", "set_current", "new",
+            // "modify", "override", "compare", "delete=<style>",
+            // "delete_yes", "delete_no", "save_overrides", "discard_yes",
+            // "discard_no", "help", "close" ("overrides" also names the
+            // overrides entry in context/rename/delete). New: "name=<text>",
+            // "start=<style>", "annotative=0|1", "use_for=0..6", "continue",
+            // "create_cancel", "notice_close". Settings: "tab=0..6",
+            // "text=<field>:<value>", "set=<field>:<code>",
+            // "toggle=<field>:0|1", "color=<field>:<aci|bylayer|byblock>",
+            // "color_more=<field>", "list=<field>",
+            // "arrow=<0|1|2>:<name|other>", "linetype=<field>:<name|other>",
+            // "lineweight=<field>:<1/100 mm|-1|-2|-3>", "pick=<name>",
+            // "pick_ok", "pick_cancel", "pick_load", "load_file",
+            // "load_path=<.lin path>", "load_toggle=<linetype>", "load_ok",
+            // "load_cancel", "reload=this|all|skip|skip_rest|cancel",
+            // "text_styles", "ok", "cancel". Compare:
+            // "first=<style>", "second=<style|none>", "copy", "compare_close".
+            // The annotation scale question: "pick=<scale>", "dont_ask=0|1",
+            // "ok".
+            "anno_scale_prompt" => {
+                use crate::ui::window::anno_scale_prompt::AnnoScaleMsg as A;
+                if !self.focus_dialog(crate::app::ModalKind::AnnotationScalePrompt) {
+                    return Err(failure("no_dialog", "The annotation scale question is not open"));
+                }
+                let spec = string(req, "value")?;
+                let (key, value) = spec.split_once('=').unwrap_or((spec, ""));
+                Message::AnnoScalePrompt(match key {
+                    "pick" => A::Pick(value.to_string()),
+                    "dont_ask" => A::DontAsk(value == "1"),
+                    "ok" => A::Ok,
+                    _ => return Err(failure("invalid_value", spec)),
+                })
+            }
+            "dimstyle_dialog" => {
+                if !self.focus_dialog(crate::app::ModalKind::DimStyle) {
+                    return Err(failure(
+                        "no_dialog",
+                        "The Dimension Style window is not open",
+                    ));
+                }
+                use crate::ui::style::dimstyle::{DsMsg as M, OTHER, OVERRIDES};
+                let spec = string(req, "value")?;
+                let (key, value) = spec.split_once('=').unwrap_or((spec, ""));
+                let (field, arg) = value.split_once(':').unwrap_or((value, ""));
+                // The fields of the settings face, as the window names them.
+                const FIELDS: &[&str] = &[
+                    "dimdle", "dimdli", "dimexe", "dimexo", "dimfxl", "dimasz", "dimcen",
+                    "dimbreak", "dimjogang", "dimjag", "dimtxt", "dimtfac", "dimgap",
+                    "dimscale", "dimrnd", "prefix", "suffix", "dimlfac", "dimmzf", "dimmzs",
+                    "dimaltf", "dimaltrnd", "alt_prefix", "alt_suffix", "dimaltmzf",
+                    "dimaltmzs", "dimtp", "dimtm", "dimtxsty", "center", "dimarcsym",
+                    "dimtad", "dimjust", "dimtxtdirection", "text_align", "fit", "dimtmove",
+                    "scale_mode", "dimlunit", "dimdec", "dimfrac", "dimdsep", "dimaunit",
+                    "dimadec", "dimaltu", "dimaltd", "dimalttd", "alt_place", "tol_method",
+                    "dimtdec", "dimtolj", "dimtaln", "dimsd1", "dimsd2", "dimse1", "dimse2",
+                    "dimfxlon", "frame", "annotative", "dimsoxd", "dimupt", "dimtofl",
+                    "dimalt", "layout_only", "dimazin.lead", "dimazin.trail", "dimzin.lead",
+                    "dimzin.trail", "dimzin.feet", "dimzin.inch", "dimaltz.lead",
+                    "dimaltz.trail", "dimaltz.feet", "dimaltz.inch", "dimtzin.lead",
+                    "dimtzin.trail", "dimtzin.feet", "dimtzin.inch", "dimalttz.lead",
+                    "dimalttz.trail", "dimalttz.feet", "dimalttz.inch", "dimclrd", "dimclre",
+                    "dimclrt", "fill", "dimltype", "dimltex1", "dimltex2", "dimlwd",
+                    "dimlwe",
+                ];
+                let known = |name: &str| -> Result<&'static str, Value> {
+                    FIELDS
+                        .iter()
+                        .find(|known| **known == name)
+                        .copied()
+                        .ok_or_else(|| failure("invalid_value", "Unknown Dimension Style field"))
+                };
+                let other = |name: &str| {
+                    if name == "other" {
+                        OTHER.to_string()
+                    } else {
+                        name.to_string()
+                    }
+                };
+                let dlg = Message::DimStyleDlg;
+                let entry = |name: &str| {
+                    if name == "overrides" {
+                        OVERRIDES.to_string()
+                    } else {
+                        name.to_string()
+                    }
+                };
+                match key {
+                    "select" => dlg(M::Select(value.to_string())),
+                    "overrides" => dlg(M::SelectOverrides),
+                    "filter" => dlg(M::ListFilter(value == "used")),
+                    "hide_xrefs" => dlg(M::HideXrefs(value == "1")),
+                    "context" => dlg(M::Context(Some(entry(value)))),
+                    "rename" => dlg(M::RenameStart(entry(value))),
+                    "rename_to" => dlg(M::RenameInput(value.to_string())),
+                    "rename_ok" => dlg(M::RenameCommit),
+                    "set_current" => dlg(M::SetCurrent),
+                    "new" => dlg(M::New),
+                    "modify" => dlg(M::Modify),
+                    "override" => dlg(M::Override),
+                    "compare" => dlg(M::Compare),
+                    "delete" => dlg(M::Delete(entry(value))),
+                    "delete_yes" => dlg(M::DeleteAnswer(true)),
+                    "delete_no" => dlg(M::DeleteAnswer(false)),
+                    "save_overrides" => dlg(M::SaveOverrides),
+                    "reload" => {
+                        use crate::ui::style::mleaderstyle::Reload;
+                        dlg(M::ReloadAnswer(match value {
+                            "this" => Reload::This,
+                            "all" => Reload::All,
+                            "skip" => Reload::Skip,
+                            "skip_rest" => Reload::SkipRest,
+                            "cancel" => Reload::Cancel,
+                            _ => {
+                                return Err(failure(
+                                    "invalid_value",
+                                    "reload is this, all, skip, skip_rest or cancel",
+                                ))
+                            }
+                        }))
+                    }
+                    "discard_yes" => dlg(M::DiscardAnswer(true)),
+                    "discard_no" => dlg(M::DiscardAnswer(false)),
+                    "help" => dlg(M::Help),
+                    "close" => Message::CloseModal,
+                    "name" => dlg(M::CreateName(value.to_string())),
+                    "start" => dlg(M::CreateStart(value.to_string())),
+                    "annotative" => dlg(M::CreateAnnotative(value == "1")),
+                    "use_for" => dlg(M::CreateUse(value.parse().unwrap_or(0))),
+                    "continue" => dlg(M::CreateContinue),
+                    "create_cancel" => dlg(M::CreateCancel),
+                    "notice_close" => dlg(M::NoticeClose),
+                    "tab" => dlg(M::Tab(value.parse().unwrap_or(0))),
+                    "text" => dlg(M::Text(known(field)?, arg.to_string())),
+                    "set" => dlg(M::Set(known(field)?, arg.to_string())),
+                    "toggle" => dlg(M::Toggle(known(field)?, arg == "1")),
+                    "color" => dlg(M::Color(
+                        known(field)?,
+                        match arg.to_ascii_lowercase().as_str() {
+                            "bylayer" => document::types::Color::ByLayer,
+                            "byblock" => document::types::Color::ByBlock,
+                            index => {
+                                document::types::Color::from_index(index.parse().unwrap_or(7))
+                            }
+                        },
+                    )),
+                    "color_more" => dlg(M::ColorMore(known(value)?)),
+                    "list" => dlg(M::OpenList(known(value)?)),
+                    "arrow" => dlg(M::Arrow(field.parse().unwrap_or(0), other(arg))),
+                    "linetype" => dlg(M::Linetype(known(field)?, other(arg))),
+                    "lineweight" => dlg(M::Lineweight(
+                        known(field)?,
+                        document::types::LineWeight::from_value(arg.parse().unwrap_or(-2)),
+                    )),
+                    "pick" => dlg(M::PickChoice(value.to_string())),
+                    "pick_ok" => dlg(M::PickOk),
+                    "pick_cancel" => dlg(M::PickCancel),
+                    "pick_load" => dlg(M::PickLoad),
+                    "load_file" => dlg(M::LoadFile),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    "load_path" => dlg(M::LoadFileChosen(Some(
+                        crate::io::PickedLinetypeFile::read(std::path::Path::new(value))
+                            .map_err(|error| failure("invalid_value", error.to_string()))?,
+                    ))),
+                    "load_toggle" => dlg(M::LoadToggle(value.to_string())),
+                    "load_ok" => dlg(M::LoadOk),
+                    "load_cancel" => dlg(M::LoadCancel),
+                    "text_styles" => dlg(M::TextStyles),
+                    "ok" => dlg(M::Ok),
+                    "cancel" => dlg(M::Cancel),
+                    "first" => dlg(M::CompareFirst(value.to_string())),
+                    "second" => dlg(M::CompareSecond(if value == "none" {
+                        crate::tr!("dim-style", "none-style")
+                    } else {
+                        value.to_string()
+                    })),
+                    "copy" => dlg(M::CompareCopy),
+                    "compare_close" => dlg(M::CompareClose),
+                    _ => {
+                        return Err(failure(
+                            "invalid_value",
+                            "Unknown Dimension Style field",
                         ))
                     }
                 }
@@ -4095,6 +4306,16 @@ impl OpenCADStudio {
                         value.to_string(),
                     ),
                 )
+            }
+            "dialog_page" if self.active_modal == Some(crate::app::ModalKind::InsertAttributes) => {
+                Message::InsertAttrDialog(match string(req, "page")? {
+                    "next" => crate::ui::window::insert_attr_dialog::InsertAttrMsg::Next,
+                    "previous" => crate::ui::window::insert_attr_dialog::InsertAttrMsg::Previous,
+                    _ => return Err(failure("invalid_value", "page is next or previous")),
+                })
+            }
+            "dialog_page" => {
+                return Err(failure("no_dialog", "The attribute form is not open"));
             }
             // The attribute form's Cancel is the plain decline of the parked
             // placement, so it is the modal closing itself.

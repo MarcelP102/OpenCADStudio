@@ -289,22 +289,6 @@ fn emit_page_content(
     let (ox, oy) = (page.offset_x, page.offset_y);
     let options = page.options;
 
-    // The drawing layer of each plotted entity, for the `data-layer` groups
-    // an SVG consumer toggles. Same resolution the PDF export uses. Hatch
-    // models name their fill pattern, not a handle, so they resolve through
-    // their plotted entity.
-    let layer_of = |name: &str| -> Option<&str> {
-        crate::scene::Scene::handle_from_wire_name(name)
-            .and_then(|handle| content.entity_layers.get(&handle))
-            .map(String::as_str)
-    };
-    let hatch_layer_of = |hatch: &crate::scene::model::hatch_model::HatchModel| -> Option<&str> {
-        hatch
-            .entity
-            .and_then(|handle| content.entity_layers.get(&handle))
-            .map(String::as_str)
-    };
-
     let (first_wires, second_wires) = content
         .wires
         .split_at(content.group_splits.wires.min(content.wires.len()));
@@ -362,9 +346,9 @@ fn emit_page_content(
             let layer = if options.layer_attributes {
                 match &item {
                     DrawItem::WireFill(w) | DrawItem::Wire(w) | DrawItem::Text(w) => {
-                        layer_of(&w.wire.name)
+                        crate::io::plot::wire_layer(&w.wire, &content.entity_layers)
                     }
-                    DrawItem::Hatch(h) => hatch_layer_of(h),
+                    DrawItem::Hatch(h) => crate::io::plot::hatch_layer(h, &content.entity_layers),
                     DrawItem::Image(_) => None,
                 }
             } else {
@@ -523,7 +507,26 @@ fn emit_wire(
     let mut d = String::new();
     let mut pen_down = false;
     let mut any = false;
-    for (pi, &[x, y, _]) in wire.points.iter().enumerate() {
+    // A circle or arc is drawn as its curve, not as chords.
+    let spans = crate::io::plot::wire_arc_beziers(wire, view_h).unwrap_or_default();
+    for (index, span) in spans.iter().enumerate() {
+        let [p0, c1, c2, p3] = span.map(|p| map.apply(p.x + ox, p.y + oy));
+        if index == 0 {
+            d.push_str(&format!("M {} {} ", fmt(p0.0), fmt(p0.1)));
+        }
+        d.push_str(&format!(
+            "C {} {} {} {} {} {} ",
+            fmt(c1.0),
+            fmt(c1.1),
+            fmt(c2.0),
+            fmt(c2.1),
+            fmt(p3.0),
+            fmt(p3.1)
+        ));
+        any = true;
+    }
+    let chords = if spans.is_empty() { wire.points.as_slice() } else { &[] };
+    for (pi, &[x, y, _]) in chords.iter().enumerate() {
         if x.is_nan() || y.is_nan() {
             pen_down = false;
             continue;
@@ -1113,6 +1116,16 @@ fn emit_searchable_text(
 
 fn svg_font_family(name: &str) -> String {
     let trimmed = name.trim();
+    // Resolved SHX identities can carry a legacy code page and a big-font
+    // path; neither belongs in an SVG font-family attribute.
+    let trimmed = trimmed
+        .split([
+            crate::scene::text::font_face::BIG_FONT_SEP,
+            crate::scene::text::font_face::CODE_PAGE_SEP,
+        ])
+        .next()
+        .unwrap_or(trimmed)
+        .trim();
     if trimmed.is_empty() {
         return "sans-serif".to_string();
     }
@@ -1423,6 +1436,15 @@ mod tests {
     }
 
     #[test]
+    fn svg_font_family_omits_resolved_shx_metadata() {
+        let font =
+            crate::scene::text::font_face::Face::with_code_page("cs_ENGINEERING.shx", "ANSI_1250");
+        let paired = crate::scene::text::font_face::Face::with_big_font(&font, "chineset.shx");
+        assert_eq!(svg_font_family(&font), "cs_ENGINEERING.shx, sans-serif");
+        assert_eq!(svg_font_family(&paired), "cs_ENGINEERING.shx, sans-serif");
+    }
+
+    #[test]
     fn y_flip_puts_bottom_left_geometry_at_the_svg_bottom() {
         // A wire point at paper y=0 (sheet bottom) must land at y=paper_h in SVG.
         let map = PageMap {
@@ -1507,12 +1529,47 @@ mod tests {
     }
 
     #[test]
+    fn per_occurrence_layers_override_a_shared_insert_handle() {
+        let wire = |layer: &str, depth| {
+            let mut wire = WireModel::solid(
+                "126".to_string(),
+                vec![[10.0, 20.0, 0.0], [30.0, 40.0, 0.0]],
+                [1.0, 0.0, 0.0, 1.0],
+                false,
+            );
+            wire.effective_layer = Some(std::sync::Arc::from(layer));
+            PlotWire {
+                wire,
+                draw_depth: depth,
+            }
+        };
+        let content = PlotContent {
+            wires: std::sync::Arc::new(vec![wire("FIRST", 0.4), wire("SECOND", 0.5)]),
+            entity_layers: std::collections::HashMap::from([(
+                crate::scene::Scene::handle_from_wire_name("126").expect("handle parses"),
+                "OUTER_INSERT".to_string(),
+            )]),
+            ..Default::default()
+        };
+        let mut page = page_with(content, 210.0, 297.0);
+        page.options = PlotOptions {
+            layer_attributes: true,
+            ..Default::default()
+        };
+        let svg = build_svg(&page, None).expect("builds");
+        assert!(svg.contains("<g data-layer=\"FIRST\">"), "{svg}");
+        assert!(svg.contains("<g data-layer=\"SECOND\">"), "{svg}");
+        assert!(!svg.contains("data-layer=\"OUTER_INSERT\""), "{svg}");
+    }
+
+    #[test]
     fn hatches_land_in_layer_groups_through_their_plotted_entity() {
         // Hatch models name their fill pattern in `name` — `SOLID`, `ANSI31`,
         // … — which parses to nothing. The layer attribution must come from
         // the entity the model plots for instead.
         let mut tagged = HatchModel {
             entity: None,
+            effective_layer: None,
             pattern_origin: None,
             render_instance: None,
             world_origin: [0.0, 0.0],
@@ -1550,16 +1607,28 @@ mod tests {
         // A hatch whose entity is unknown carries no layer markup.
         page.content = content_for(tagged.clone());
         let svg = build_svg(&page, None).expect("builds");
-        assert!(!svg.contains("data-layer=\"Parcels\""), "no entity set: {svg}");
+        assert!(
+            !svg.contains("data-layer=\"Parcels\""),
+            "no entity set: {svg}"
+        );
 
         // With the plotted entity recorded, the fill sits in its layer group.
         tagged.entity = Some(crate::scene::Scene::handle_from_wire_name("128").expect("handle"));
-        page.content = content_for(tagged);
+        page.content = content_for(tagged.clone());
         let svg = build_svg(&page, None).expect("builds");
         assert!(
             svg.contains("<g data-layer=\"Parcels\">"),
             "the hatch fill must sit in its layer group: {svg}"
         );
+
+        tagged.effective_layer = Some(std::sync::Arc::from("INHERITED_PLACEMENT"));
+        page.content = content_for(tagged);
+        let svg = build_svg(&page, None).expect("builds");
+        assert!(
+            svg.contains("<g data-layer=\"INHERITED_PLACEMENT\">"),
+            "placement metadata must beat the raw entity fallback: {svg}"
+        );
+        assert!(!svg.contains("data-layer=\"Parcels\""), "{svg}");
     }
 
     #[test]
@@ -1587,6 +1656,7 @@ mod tests {
         ]);
         let hatch = |pattern, color| HatchModel {
             entity: None,
+            effective_layer: None,
             pattern_origin: None,
             render_instance: None,
             world_origin: [0.0, 0.0],
@@ -1787,7 +1857,7 @@ mod tests {
 
     #[test]
     fn mtext_canvas_mask_is_white_on_paper_but_explicit_fill_keeps_its_color() {
-        for (flags, expected_fill) in [(0x02, "#ffffff"), (0x01, "#ff0000")] {
+        for (flags, expected_fill) in [(0x03, "#ffffff"), (0x01, "#ff0000")] {
             let mut text = document::entities::MText::with_value(
                 "MASK",
                 document::types::Vector3::new(10.0, 10.0, 0.0),

@@ -3399,6 +3399,19 @@ mod dash_layer_properties_tests {
             .expect("WALLS layer")
     }
 
+    /// A quoted name or description keeps its spaces, as in AutoCAD.
+    #[test]
+    fn dash_layer_takes_quoted_names_with_spaces() {
+        let mut app = app_with_layer();
+        let _ = app.run_command_line(r#"-LAYER NEW "Power Cables""#);
+        let _ = app.run_command_line(r#"-LAYER D "outer walls" WALLS"#);
+        let _ = app.run_command_line(r#"-LAYER R WALLS "Main Walls""#);
+        let layers = &app.tabs[app.active_tab].scene.document.layers;
+        assert!(layers.get("Power Cables").is_some());
+        assert!(layers.get("WALLS").is_none());
+        assert_eq!(layers.get("Main Walls").expect("renamed").description, "outer walls");
+    }
+
     #[test]
     fn dash_layer_sets_transparency_and_description() {
         let mut app = app_with_layer();
@@ -6658,6 +6671,46 @@ mod batch4_tests {
         assert_eq!(members(&app), vec![("G".to_string(), vec![lines[1], lines[2]])]);
     }
 
+    /// UNGROUP on a group picked whole drops its box and centre grip at
+    /// once, not at the next click.
+    #[test]
+    fn ungroup_clears_the_group_box_and_grip() {
+        crate::app::commands::set_group_display_mode(2);
+        let mut app = new_app();
+        let _ = app.automation_op(r#"{"op":"new"}"#);
+        let i = app.active_tab;
+        let _ = app.run_command_line("LINE 0,0 10,0");
+        let _ = app.run_command_line("LINE 0,5 10,5");
+        let lines = model_lines(&app);
+        let group_grips = |app: &OpenCADStudio| {
+            app.tabs[i]
+                .selected_grips
+                .iter()
+                .filter(|grip| grip.id == crate::scene::GROUP_GRIP_ID)
+                .count()
+        };
+        app.tabs[i]
+            .scene
+            .create_group("G".to_string(), vec![lines[0], lines[1]]);
+        app.tabs[i].scene.select_entities(&lines);
+        app.refresh_selected_grips();
+        assert_eq!(app.tabs[i].group_boxes.len(), 1, "{}", out(&app));
+        assert!(group_grips(&app) > 0, "{}", out(&app));
+
+        let _ = app.run_command_line("UNGROUP");
+        assert_eq!(app.tabs[i].scene.groups().count(), 0, "{}", out(&app));
+        assert!(app.tabs[i].group_boxes.is_empty(), "{}", out(&app));
+        assert_eq!(group_grips(&app), 0, "{}", out(&app));
+        // The members stay picked, now with their own grips.
+        assert_eq!(
+            app.tabs[i].scene.selected_entities().len(),
+            2,
+            "{}",
+            out(&app)
+        );
+        assert!(!app.tabs[i].selected_grips.is_empty(), "{}", out(&app));
+    }
+
     #[test]
     fn qselect_command_line_compares_negates_and_matches_wildcards() {
         let mut app = new_app();
@@ -8452,4 +8505,431 @@ mod batch7_tests {
         assert!(out.contains("not found"), "{out}");
         assert_eq!(xref_status(&app, &name), "not_found");
     }
+
+    /// A Text hosting a whole-text FILENAME field, so its value is the
+    /// drawing's file name. The drawing is named first so the field resolves.
+    fn file_name_field_text(app: &mut OpenCADStudio, name: &str) -> document::Handle {
+        let i = app.active_tab;
+        app.tabs[i].scene.document.source_path = Some(format!(r"C:\work\{name}.dwg"));
+        let text = app.tabs[i]
+            .scene
+            .add_entity(document::EntityType::Text(
+                document::entities::Text::with_value("OLD", document::types::Vector3::ZERO),
+            ));
+        let _ = app.run_command_line(&format!("-FIELD {:X} FILENAME", text.value()));
+        text
+    }
+
+    fn field_text_value(app: &OpenCADStudio, handle: document::Handle) -> String {
+        match app.tabs[app.active_tab].scene.document.get_entity(handle) {
+            Some(document::EntityType::Text(text)) => text.value.clone(),
+            _ => panic!("the field host disappeared"),
+        }
+    }
+
+    /// M043: FIELDEVAL masks the automatic events, while UPDATEFIELD always
+    /// runs. With every bit cleared the save event evaluates nothing and the
+    /// cached text survives; the explicit command still catches it up.
+    #[test]
+    fn fieldeval_zero_masks_automatic_updates_but_not_updatefield() {
+        let mut app = new_app();
+        let i = app.active_tab;
+        let text = file_name_field_text(&mut app, "ONE");
+        assert_eq!(field_text_value(&app, text), "ONE.dwg");
+
+        let _ = app.run_command_line("FIELDEVAL 0");
+        let out = out_text(&app);
+        assert_eq!(
+            crate::entities::field::fieldeval(&app.tabs[i].scene.document),
+            0,
+            "{out}"
+        );
+
+        app.tabs[i].scene.document.source_path = Some(r"C:\work\TWO.dwg".into());
+        assert_eq!(
+            app.tabs[i].scene.update_fields(2, None),
+            (0, 0),
+            "the save event is masked off"
+        );
+        assert_eq!(field_text_value(&app, text), "ONE.dwg");
+
+        // UPDATEFIELD is explicit: the mask never applies to it.
+        app.tabs[i].scene.select_entities(&[text]);
+        let _ = app.run_command_line("UPDATEFIELD");
+        let out = out_text(&app);
+        assert!(out.contains("field(s) found"), "{out}");
+        assert_eq!(field_text_value(&app, text), "TWO.dwg", "{out}");
+    }
+
+    /// M043: the mask is per event. A save-only drawing keeps its cached text
+    /// at open time and catches up through the real save path.
+    #[test]
+    fn fieldeval_save_bit_skips_the_open_event() {
+        let mut app = new_app();
+        let i = app.active_tab;
+        let text = file_name_field_text(&mut app, "ONE");
+        // The SETVAR spelling takes the same path as the bare variable.
+        let _ = app.run_command_line("SETVAR FIELDEVAL 2");
+        assert_eq!(
+            crate::entities::field::fieldeval(&app.tabs[i].scene.document),
+            2
+        );
+
+        app.tabs[i].scene.document.source_path = Some(r"C:\work\THREE.dwg".into());
+        assert_eq!(
+            app.tabs[i].scene.update_fields(1, None),
+            (0, 0),
+            "open is masked off"
+        );
+        assert_eq!(field_text_value(&app, text), "ONE.dwg");
+
+        // The save path is allowed and the value follows the written file.
+        let path = temp_named("m043-save", "dwg");
+        let forward = path.display().to_string().replace('\\', "/");
+        let saved = app.automation_op(&format!(r#"{{"op":"save","path":"{forward}"}}"#));
+        assert_eq!(saved["ok"], true, "{saved}");
+        assert_eq!(field_text_value(&app, text), "m043-save.dwg");
+
+        // The file on disk carries its own name too: reopening must not be
+        // what corrects a title block that shipped with the previous one.
+        let bytes = std::fs::read(&path).expect("the saved drawing is readable");
+        let reopened =
+            crate::io::load_bytes_finalized(&path, bytes).expect("the saved drawing reparses");
+        let stored = reopened
+            .entities()
+            .find_map(|entity| match entity {
+                document::EntityType::Text(text) => Some(text.value.clone()),
+                _ => None,
+            })
+            .expect("the saved drawing keeps its text");
+        assert_eq!(stored, "m043-save.dwg");
+    }
+
+    /// M072: IMAGEATTACH takes a path on the command line and places the
+    /// picture without the file picker; the insertion-point prompt follows as
+    /// after a dropped file.
+    #[test]
+    fn imageattach_takes_a_path_from_the_command_line() {
+        use base64::Engine as _;
+        let mut app = new_app();
+        let path = temp_named("m072-pic", "png");
+        let png = base64::engine::general_purpose::STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+            .expect("the fixture is valid base64");
+        std::fs::write(&path, png).expect("the picture is written");
+
+        let _ = app.run_command_line(&format!("IMAGEATTACH \"{}\"", path.display()));
+        let out = out_text(&app);
+        assert!(out.contains("1×1 px"), "{out}");
+        assert!(out.contains("Specify insertion point"), "{out}");
+
+        let _ = app.feed_active_cmd("0,0");
+        let _ = app.feed_active_cmd("5,0");
+        let after = out_text(&app);
+        let image = app.tabs[app.active_tab]
+            .scene
+            .document
+            .entities()
+            .find_map(|entity| match entity {
+                document::EntityType::RasterImage(image) => Some(image.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("the command placed a raster image; said: {after}"));
+        assert_eq!(image.file_path, path.to_string_lossy());
+        // One pixel wide placed 5 units across: the u-vector is one pixel.
+        let world_width = image.u_vector.length() * image.size.x;
+        assert!((world_width - 5.0).abs() < 1.0e-6, "{world_width}");
+    }
+
+    /// A table with a title row merged across both columns. Columns are 20
+    /// wide and rows 10 high; the insertion point is the world origin.
+    fn merged_title_table(app: &mut OpenCADStudio) -> document::Handle {
+        use document::entities::table::CellRange;
+        let mut table = document::entities::Table::new(document::types::Vector3::ZERO, 3, 2);
+        for column in &mut table.columns {
+            column.width = 20.0;
+        }
+        for row in &mut table.rows {
+            row.height = 10.0;
+        }
+        table.merge_cells(CellRange::new(0, 0, 0, 1));
+        table.cell_mut(0, 0).unwrap().set_text("before");
+        app.tabs[app.active_tab]
+            .scene
+            .add_entity(document::EntityType::Table(Box::new(table)))
+    }
+
+    /// M047: a merged cell is one cell. A TABLEDIT that lands in the covered
+    /// half must write the merged cell the drawing shows, not the hidden one
+    /// underneath it; the in-place editor and the command-line form have to
+    /// agree on which cell is being edited.
+    #[test]
+    fn tabledit_in_a_merged_cell_edits_the_merged_cell() {
+        let mut app = new_app();
+        let i = app.active_tab;
+        let handle = merged_title_table(&mut app);
+
+        // (30, -5) is the right half of the merged title row: column 1 is
+        // covered by the merge that starts in column 0.
+        let _ = app.run_command_line("TABLEDIT 30,-5 after");
+        let out = out_text(&app);
+        assert!(out.contains("TABLE CELL  Enter text for [0,0]"), "{out}");
+
+        let Some(document::EntityType::Table(table)) =
+            app.tabs[i].scene.document.get_entity(handle)
+        else {
+            panic!("the table disappeared");
+        };
+        assert_eq!(
+            table.cell_text(0, 0),
+            Some("after"),
+            "the merged cell takes the text"
+        );
+        assert_eq!(
+            table.cell_text(0, 1),
+            Some(""),
+            "the covered cell must not hold the text"
+        );
+    }
 }
+
+#[cfg(test)]
+mod batch8_tests {
+    use super::*;
+    use crate::app::OpenCADStudio;
+
+    fn out_text(app: &OpenCADStudio) -> String {
+        app.command_line.history_plain_text().trim().to_string()
+    }
+
+    fn new_app() -> OpenCADStudio {
+        let mut app = OpenCADStudio::new_for_test();
+        let _ = app.automation_op(r#"{"op":"new"}"#);
+        app
+    }
+
+    fn add_line(app: &mut OpenCADStudio, x1: f64, y1: f64, x2: f64, y2: f64) -> document::Handle {
+        use document::entities::Line;
+        use document::types::Vector3;
+        let i = app.active_tab;
+        let doc = &mut app.tabs[i].scene.document;
+        let line = Line::from_points(Vector3::new(x1, y1, 0.0), Vector3::new(x2, y2, 0.0));
+        doc.add_entity(document::EntityType::Line(line)).unwrap()
+    }
+
+    /// M086: SELECTSIMILAR is a selection command, so it may only add objects
+    /// the user can see and pick. An object on an off layer is never drawn and
+    /// never hit-tested; the old path walked every top-level handle and added
+    /// it anyway, so a following MOVE or ERASE silently changed geometry the
+    /// user could not see.
+    #[test]
+    fn selectsimilar_skips_objects_on_an_off_layer() {
+        let mut app = new_app();
+        let i = app.active_tab;
+        let visible = add_line(&mut app, 0.0, 0.0, 10.0, 0.0);
+        let hidden = add_line(&mut app, 0.0, 5.0, 10.0, 5.0);
+
+        let _ = app.run_command_line("-LAYER NEW HIDDEN");
+        let _ = app.run_command_line("-LAYER OFF HIDDEN");
+        app.tabs[i]
+            .scene
+            .document
+            .get_entity_mut(hidden)
+            .unwrap()
+            .common_mut()
+            .layer = "HIDDEN".to_string();
+
+        app.tabs[i].scene.select_entities(&[visible]);
+        // Type-only similarity: both objects are lines, so layer is the only
+        // thing that can keep the hidden one out.
+        app.select_similar_mode = 0;
+        let _ = app.run_command_line("SELECTSIMILAR");
+
+        let out = out_text(&app);
+        assert!(out.contains("Select Similar: 0 added"), "{out}");
+        assert!(app.tabs[i].scene.selected.contains(&visible));
+        assert!(
+            !app.tabs[i].scene.selected.contains(&hidden),
+            "an object on an off layer must not be selected"
+        );
+    }
+
+    /// A field on an attribute definition is what makes its references show
+    /// live text. ATTSYNC rebuilds every reference from the definitions, but
+    /// it built fresh attributes without copying the definition's field, so a
+    /// field added after the references were placed never reached them and a
+    /// field they already had was dropped.
+    #[test]
+    fn attsync_copies_a_field_from_the_attribute_definition() {
+        use document::entities::{AttributeDefinition, AttributeEntity, Insert};
+        use document::types::Vector3;
+        use document::EntityType;
+
+        let mut app = new_app();
+        let i = app.active_tab;
+        app.tabs[i].scene.document.source_path = Some(r"C:\work\PLAN.dwg".to_string());
+        app.tabs[i].scene.define_block_raw(
+            "TAGGED",
+            Vector3::ZERO,
+            vec![EntityType::AttributeDefinition(AttributeDefinition {
+                insertion_point: Vector3::new(2.0, 2.0, 0.0),
+                height: 1.0,
+                ..AttributeDefinition::new("TITLE".into(), "Title".into(), String::new())
+            })],
+        );
+        let mut insert = Insert::new("TAGGED", Vector3::new(100.0, 100.0, 0.0));
+        insert
+            .attributes
+            .push(AttributeEntity::new("TITLE".into(), String::new()));
+        let reference = app.tabs[i].scene.add_entity(EntityType::Insert(insert));
+        assert!(!reference.is_null(), "the reference is placed");
+
+        let definition = app.tabs[i]
+            .scene
+            .document
+            .block_records
+            .get("TAGGED")
+            .expect("the definition")
+            .entity_handles
+            .iter()
+            .copied()
+            .find(|handle| {
+                matches!(
+                    app.tabs[i].scene.document.get_entity(*handle),
+                    Some(EntityType::AttributeDefinition(_))
+                )
+            })
+            .expect("the definition carries an ATTDEF");
+        crate::entities::field::set_text_field(
+            &mut app.tabs[i].scene.document,
+            definition,
+            Some((r#"\AcVar Filename \f "%fn6""#.to_string(), Vec::new())),
+            "PLAN.dwg",
+        );
+
+        let _ = app.run_command_line("ATTSYNC TAGGED");
+
+        let document = &app.tabs[i].scene.document;
+        let EntityType::Insert(insert) = document.get_entity(reference).expect("reference") else {
+            panic!("not an insert");
+        };
+        let attribute = insert
+            .attributes
+            .iter()
+            .find(|a| a.tag == "TITLE")
+            .expect("the rebuilt attribute");
+        assert!(
+            crate::entities::field::common_hosts_field(document, &attribute.common),
+            "the rebuilt attribute must host the definition's field"
+        );
+        assert_eq!(
+            attribute.get_value(),
+            "PLAN.dwg",
+            "the field is resolved for the reference"
+        );
+    }
+}
+
+#[cfg(test)]
+mod text_mask_tests {
+    use super::*;
+    use crate::app::OpenCADStudio;
+
+    /// A mask is a wipeout around the text, so it must turn with the text.
+    /// The old bounds were the axis-aligned box of the rotated glyph wires,
+    /// and the rectangle built from it covered far more than the text did —
+    /// on a 45-degree label it hid a large square of the drawing around it.
+    #[test]
+    fn a_rotated_text_gets_a_mask_that_turns_with_it() {
+        use document::entities::Text;
+        use document::types::Vector3;
+
+        let mut app = OpenCADStudio::new_for_test();
+        let _ = app.automation_op(r#"{"op":"new"}"#);
+        let i = app.active_tab;
+        let mut text = Text::with_value("MASK", Vector3::new(20.0, 20.0, 0.0));
+        text.height = 2.0;
+        text.rotation = std::f64::consts::FRAC_PI_4;
+        let handle = app.tabs[i]
+            .scene
+            .add_entity(document::EntityType::Text(text));
+        app.tabs[i].scene.select_entities(&[handle]);
+
+        let _ = app.run_command_line("TEXTMASK");
+        let _ = app.feed_active_cmd("");
+
+        let wipeout = app.tabs[i]
+            .scene
+            .document
+            .entities()
+            .find_map(|entity| match entity {
+                document::EntityType::Wipeout(wipeout) => Some(wipeout.clone()),
+                _ => None,
+            })
+            .expect("the text is masked");
+        assert_ne!(
+            wipeout.clip_type,
+            document::entities::WipeoutClipType::Rectangular,
+            "a rotated text needs a turned polygon, not an axis-aligned box"
+        );
+        let corners = wipeout.world_boundary_vertices();
+        assert_eq!(corners.len(), 4);
+        // The first edge follows the text's 45-degree rotation.
+        let (dx, dy) = (corners[1].x - corners[0].x, corners[1].y - corners[0].y);
+        assert!(
+            dx.abs() > 0.2 && dy.abs() > 0.2,
+            "the mask edge must not stay on an axis: {dx}, {dy}"
+        );
+        assert!(
+            (dx.abs() - dy.abs()).abs() < 1e-6,
+            "the mask edge turns 45 degrees: {dx}, {dy}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod change_properties_tests {
+    use super::*;
+    use crate::app::OpenCADStudio;
+    use document::entities::Line;
+    use document::types::{Color, Vector3};
+
+    fn color_of(app: &OpenCADStudio, handle: document::Handle) -> Color {
+        app.tabs[app.active_tab]
+            .scene
+            .document
+            .get_entity(handle)
+            .expect("the object stays")
+            .common()
+            .color
+    }
+
+    /// CHPROP's prompt offers "name / 1-255 / ByLayer", but its parser read
+    /// the value as a bare index, so every named colour and ByLayer itself was
+    /// rejected as invalid. The objects kept their old colour.
+    #[test]
+    fn chprop_color_accepts_the_names_and_bylayer_its_prompt_offers() {
+        let mut app = OpenCADStudio::new_for_test();
+        let _ = app.automation_op(r#"{"op":"new"}"#);
+        let i = app.active_tab;
+        let line = app.tabs[i].scene.add_entity(document::EntityType::Line(
+            Line::from_points(Vector3::ZERO, Vector3::new(10.0, 0.0, 0.0)),
+        ));
+        app.tabs[i].scene.select_entities(&[line]);
+
+        let _ = app.run_command_line("CHPROP COLOR GREEN");
+        assert_eq!(color_of(&app, line), Color::Index(3), "a named colour");
+
+        let _ = app.run_command_line("CHPROP COLOR BYLAYER");
+        assert_eq!(color_of(&app, line), Color::ByLayer, "ByLayer itself");
+
+        let _ = app.run_command_line("CHPROP COLOR CHARTREUSE");
+        assert_eq!(
+            color_of(&app, line),
+            Color::ByLayer,
+            "an unknown colour leaves the object alone"
+        );
+    }
+}
+
+

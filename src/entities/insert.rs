@@ -3,11 +3,11 @@ use document::types::{Matrix3, Transform, Vector3};
 use document::{Document, EntityType, Handle};
 use glam::Vec3;
 
-use crate::command::EntityTransform;
 use crate::entities::common::{
     edit_angle_prop as edit_angle, edit_prop as edit, parse_f64, ro_prop as ro, square_grip,
 };
 use crate::entities::traits::Grippable;
+use crate::entities::transform::EntityTransform;
 
 use crate::scene::cache::block_cache;
 use crate::scene::convert::tessellate;
@@ -424,6 +424,9 @@ pub(crate) fn append_insert_attribute_wires(
         annotation_scale_handle,
         crate::scene::BlockScalePolicy::FromInsert,
     );
+    if attributes.is_empty() {
+        return;
+    }
     for offset in crate::scene::render_graph::array_offsets(ins) {
         let delta = crate::scene::render_graph::insert_instance_translation_delta(
             document,
@@ -480,8 +483,16 @@ pub(crate) fn append_insert_attribute_wires(
                 bg_color,
                 false,
             );
+            let effective_layer = if render::is_effective_layer_zero(&attr.layer)
+                && !render::is_effective_layer_zero(&ins.common.layer)
+            {
+                ins.common.layer.as_str()
+            } else {
+                attr.layer.as_str()
+            };
             for w in &mut attr_wires {
                 w.name = insert_handle.value().to_string();
+                w.effective_layer = Some(std::sync::Arc::from(effective_layer));
                 w.aci = sub_aci;
                 w.aabb = sub_aabb;
                 w.plot_visible &= attr_plottable;

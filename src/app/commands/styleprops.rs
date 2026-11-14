@@ -211,16 +211,7 @@ impl OpenCADStudio {
                         );
                         return Some(Task::none());
                     }
-                    "BYLAYER" => Some(Color::ByLayer),
-                    "BYBLOCK" => Some(Color::ByBlock),
-                    "RED" => Some(Color::Index(1)),
-                    "YELLOW" => Some(Color::Index(2)),
-                    "GREEN" => Some(Color::Index(3)),
-                    "CYAN" => Some(Color::Index(4)),
-                    "BLUE" => Some(Color::Index(5)),
-                    "MAGENTA" => Some(Color::Index(6)),
-                    "WHITE" => Some(Color::Index(7)),
-                    n => n.parse::<i16>().ok().map(Color::from_index),
+                    other => command_color(other),
                 };
                 match color {
                     Some(c) => {
@@ -629,14 +620,8 @@ impl OpenCADStudio {
                             .push_error(crate::t!("CHPROP: no entities selected.").as_ref());
                     } else {
                         // Validate value early to give clear errors
-                        let color_val: Option<document::types::Color> = if prop == "COLOR" {
-                            value
-                                .parse::<i16>()
-                                .ok()
-                                .map(document::types::Color::from_index)
-                        } else {
-                            None
-                        };
+                        let color_val: Option<document::types::Color> =
+                            if prop == "COLOR" { command_color(&value) } else { None };
                         let ltscale_val: Option<f64> = if prop == "LTSCALE" {
                             value.parse().ok()
                         } else {
@@ -1158,6 +1143,7 @@ impl OpenCADStudio {
                     | "WINDOWAREACOLOR"
                     | "CROSSINGAREACOLOR"
                     | "SELECTIONPREVIEW"
+                    | "SELECTIONPREVIEWLIMIT"
                     | "GRIPSIZE"
                     | "GRIPCOLOR"
                     | "GRIPHOT"
@@ -3013,6 +2999,16 @@ impl OpenCADStudio {
                                     false,
                                 )),
                             },
+                            "SELECTIONPREVIEWLIMIT" => match &value {
+                                Some(v) => match v.parse::<u32>() {
+                                    Ok(limit) => {
+                                        self.model_space.selection_preview_limit = limit;
+                                        Ok((format!("SELECTIONPREVIEWLIMIT = {limit}"), true))
+                                    }
+                                    _ => Err("SETVAR: non-negative integer required.".into()),
+                                },
+                                None => Ok((format!("SELECTIONPREVIEWLIMIT = {}", self.model_space.selection_preview_limit), false)),
+                            },
                             "GRIPSIZE" => match &value {
                                 Some(v) => match v.parse::<u8>() {
                                     Ok(size @ 1..=25) => {
@@ -3802,6 +3798,7 @@ impl OpenCADStudio {
                                         | "WINDOWAREACOLOR"
                                         | "CROSSINGAREACOLOR"
                                         | "SELECTIONPREVIEW"
+                                        | "SELECTIONPREVIEWLIMIT"
                                         | "GRIPSIZE"
                                         | "GRIPCOLOR"
                                         | "GRIPHOT"
@@ -4489,6 +4486,37 @@ impl OpenCADStudio {
                     }
                 }
             }
+            "LWEIGHT" => {
+                let c = crate::command::FreeTextValuePromptCommand::new(
+                    "LWEIGHT",
+                    "LWEIGHT  default lineweight for new objects  [ByLayer / ByBlock / Default / 0.00-2.11 mm]:",
+                );
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            cmd if cmd.starts_with("LWEIGHT ") => {
+                use crate::ui::window::attman_dialog::{lineweight_label, parse_lineweight};
+                let value = cmd.trim_start_matches("LWEIGHT").trim();
+                if value.is_empty() {
+                    let current = document::types::LineWeight::from_value(
+                        self.tabs[i].scene.document.header.current_line_weight,
+                    );
+                    self.command_line.push_output(
+                        crate::tf!("LWEIGHT = {}", lineweight_label(current)).as_ref(),
+                    );
+                } else if let Some(lw) = parse_lineweight(value) {
+                    self.tabs[i].scene.document.header.current_line_weight = lw.value();
+                    self.tabs[i].dirty = true;
+                    self.ribbon.active_lineweight = lw;
+                    self.refresh_properties();
+                    self.command_line.push_output(
+                        crate::tf!("LWEIGHT = {}", lineweight_label(lw)).as_ref(),
+                    );
+                } else {
+                    self.command_line
+                        .push_error(crate::t!("LWEIGHT: invalid lineweight.").as_ref());
+                }
+            }
             "CELTSCALE" => {
                 use crate::command::ValuePromptCommand;
                 let c = ValuePromptCommand::new(
@@ -4826,6 +4854,24 @@ impl OpenCADStudio {
 
 /// A VSEDGECOLOR value: an index, a colour name or R,G,B, with BLACK (or 0)
 /// for the default black edges (`Some(None)`).
+/// A colour named the way the COLOR prompt accepts it: ByLayer, ByBlock, one
+/// of the seven named ACI colours, or an index.
+fn command_color(arg: &str) -> Option<document::types::Color> {
+    use document::types::Color;
+    match arg.trim().to_ascii_uppercase().as_str() {
+        "BYLAYER" => Some(Color::ByLayer),
+        "BYBLOCK" => Some(Color::ByBlock),
+        "RED" => Some(Color::Index(1)),
+        "YELLOW" => Some(Color::Index(2)),
+        "GREEN" => Some(Color::Index(3)),
+        "CYAN" => Some(Color::Index(4)),
+        "BLUE" => Some(Color::Index(5)),
+        "MAGENTA" => Some(Color::Index(6)),
+        "WHITE" => Some(Color::Index(7)),
+        index => index.parse::<i16>().ok().map(Color::from_index),
+    }
+}
+
 fn parse_edge_color(value: &str) -> Option<Option<[u8; 3]>> {
     let value = value.trim().trim_start_matches("RGB:");
     if value.eq_ignore_ascii_case("BLACK") || value == "0" {
