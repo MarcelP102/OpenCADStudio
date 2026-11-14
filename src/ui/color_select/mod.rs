@@ -398,13 +398,15 @@ pub fn editable_drop_down_below<'a>(
     on_dismiss: Message,
     expanded: bool,
 ) -> Element<'a, Message> {
-    let mut dd = iced_aw::DropDown::new(base, popup, expanded)
+    let dd = iced_aw::DropDown::new(base, popup, expanded)
         .height(popup_height)
         .alignment(iced_aw::drop_down::Alignment::Bottom)
         .offset(2.0)
         .on_dismiss(on_dismiss);
-    if let Some(w) = popup_width {
-        dd = dd.width(w);
+    // A list wider than its field starts at the field's left edge, as the
+    // other lists do (they are as wide as their field).
+    match popup_width {
+        Some(w) => crate::ui::drop_down_fit::drop_down_fit_start(dd.width(w)),
+        None => crate::ui::drop_down_fit::drop_down_fit(dd),
     }
-    crate::ui::drop_down_fit::drop_down_fit(dd)
 }

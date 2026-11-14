@@ -110,17 +110,17 @@ pub fn pick_list_style(
 
 /// The list a palette pick list opens: the palette menu's look.
 pub fn pick_menu_style(theme: &Theme) -> iced::overlay::menu::Style {
+    // The list of a dropdown in the colours of the palette menus (the
+    // right-click menus): their frame and shadow, the item under the
+    // pointer or the keys lit as theirs.
+    let frame = crate::ui::palette_menu::frame_style(theme);
     iced::overlay::menu::Style {
         background: Background::Color(chrome::palette_body(theme)),
-        border: iced::Border {
-            color: chrome::edge(theme),
-            width: pm::line(),
-            radius: 0.0.into(),
-        },
+        border: frame.border,
         text_color: chrome::text(theme),
-        selected_text_color: chrome::strong(theme),
-        selected_background: Background::Color(chrome::row_selected(theme)),
-        shadow: iced::Shadow::default(),
+        selected_text_color: chrome::text(theme),
+        selected_background: Background::Color(chrome::hover(theme)),
+        shadow: frame.shadow,
     }
 }
 

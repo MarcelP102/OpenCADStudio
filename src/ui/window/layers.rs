@@ -2238,7 +2238,8 @@ fn layer_row<'a>(
             .line_height(ui_line())
             .padding(kit::FIELD_PAD)
             .width(w(LayerSortCol::Linetype))
-            .input_style(cell_field_style),
+            .input_style(cell_field_style)
+            .menu_style(kit::pick_menu_style),
             LINETYPE_MENU_W,
         )
     } else {
@@ -2264,6 +2265,7 @@ fn layer_row<'a>(
         .padding(kit::FIELD_PAD)
         .width(w(LayerSortCol::Lineweight))
         .input_style(cell_field_style)
+        .menu_style(kit::pick_menu_style)
         .into()
     } else {
         kit::one_line(text(cur_lw_item.to_string()))

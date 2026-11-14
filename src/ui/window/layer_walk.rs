@@ -742,6 +742,7 @@ fn view_content<'a>(
         .padding(kit::BOX_PAD)
         .width(Length::Fixed(pm::NAME_COL_W))
         .input_style(kit::combo_style)
+        .menu_style(kit::pick_menu_style)
         .into()
     };
     let filter_box = kit::search_field(

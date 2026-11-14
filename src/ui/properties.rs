@@ -28,7 +28,21 @@ const ROW_H: f32 = crate::ui::style::palette_metrics::ROW_H;
 /// Horizontal padding of an option in a choice row's list, and the list's
 /// own padding.
 const CHOICE_ITEM_PAD_X: f32 = 6.0;
-const CHOICE_POPUP_PAD: f32 = 2.0;
+const CHOICE_POPUP_PAD: f32 = crate::ui::style::palette_metrics::LINE;
+
+/// An option of a Properties list, as an item of the kit's dropdown list
+/// (`kit::pick_menu_style`): square, lit like a palette menu item under the
+/// pointer, the current one lit too.
+fn choice_option_style(current: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    use crate::ui::style::chrome;
+    move |theme: &Theme, status: button::Status| button::Style {
+        background: (current
+            || matches!(status, button::Status::Hovered | button::Status::Pressed))
+        .then(|| Background::Color(chrome::hover(theme))),
+        text_color: chrome::text(theme),
+        ..Default::default()
+    }
+}
 /// Width of the Quick Properties panel.
 const QUICK_W: f32 = 260.0;
 const PATTERN_CARD_W: f32 = 158.0;
@@ -845,6 +859,8 @@ impl PropertiesPanel {
             .line_height(crate::ui::style::text::line())
             .padding([2, 6])
             .input_style(combo_input_style)
+            .menu_style(crate::ui::kit::pick_menu_style)
+            .menu_style(crate::ui::kit::pick_menu_style)
             .on_open(Message::PropColorPickerClose)
             .width(Length::Fill)
             .into()
@@ -1112,20 +1128,22 @@ impl PropertiesPanel {
                 for (index, option) in options.iter().enumerate() {
                     let msg = Message::PropBlockChoice { key, index };
                     let btn = button(
-                        text(option.as_str())
+                        crate::ui::kit::one_line(text(option.as_str()))
                             .size(ui_text::UI)
                             .line_height(crate::ui::style::text::line()),
                     )
                     .on_press(msg.clone())
-                    .style(button::subtle)
-                    .padding([2, 6])
+                    .style(choice_option_style(index == *selected))
+                    .padding([2.0, CHOICE_ITEM_PAD_X])
                     .width(Length::Fill);
                     rows.push(DropdownRow::item(btn, option.clone(), msg));
                 }
                 let list = DropdownList::new(rows)
                     .selected((*selected < options.len()).then_some(*selected))
                     .on_escape(Message::PropBlockPickerDismiss { key, quick });
-                let popup = container(list).style(container::bordered_box).padding(2);
+                let popup = container(list)
+                    .style(crate::ui::palette_menu::frame_style)
+                    .padding(CHOICE_POPUP_PAD);
                 // The overlay reports its own Escape before the global shortcut
                 // repeats it; a distinct dismiss message lets the later repeat
                 // be swallowed with the list already closed.
@@ -1248,6 +1266,7 @@ impl PropertiesPanel {
             right: 6.0,
         })
         .input_style(combo_input_style)
+        .menu_style(crate::ui::kit::pick_menu_style)
         .on_open(Message::PropColorPickerClose)
         .width(Length::Fill);
 
@@ -1392,6 +1411,7 @@ impl PropertiesPanel {
             right: 6.0,
         })
         .input_style(combo_input_style)
+        .menu_style(crate::ui::kit::pick_menu_style)
         .on_open(Message::PropColorPickerClose)
         .width(Length::Fill);
 
@@ -1423,6 +1443,7 @@ impl PropertiesPanel {
             right: 6.0,
         })
         .input_style(combo_input_style)
+        .menu_style(crate::ui::kit::pick_menu_style)
         .on_open(Message::PropColorPickerClose)
         .width(Length::Fill);
 
@@ -1445,6 +1466,7 @@ impl PropertiesPanel {
             right: 6.0,
         })
         .input_style(combo_input_style)
+        .menu_style(crate::ui::kit::pick_menu_style)
         .on_open(Message::PropColorPickerClose)
         .width(Length::Fill);
 
@@ -1474,6 +1496,7 @@ impl PropertiesPanel {
             right: 6.0,
         })
         .input_style(combo_input_style)
+        .menu_style(crate::ui::kit::pick_menu_style)
         .on_open(Message::PropColorPickerClose)
         .width(Length::Fill);
 
@@ -1509,6 +1532,7 @@ impl PropertiesPanel {
             right: 6.0,
         })
         .input_style(combo_input_style)
+        .menu_style(crate::ui::kit::pick_menu_style)
         .on_open(Message::PropColorPickerClose)
         .width(Length::Fill);
 
@@ -1566,20 +1590,12 @@ impl PropertiesPanel {
         use crate::ui::dropdown_list::{DropdownList, DropdownRow};
         let mut rows = Vec::with_capacity(options.len());
         let mut selected = None;
-        // The list is as wide as its longest option, not the cell: a long
-        // option wrapped onto a second line in a narrow palette.
-        let mut widest = 0.0_f32;
         for (index, option) in options.iter().enumerate() {
             let is_current = !varies && option.as_str() == current;
             if is_current {
                 selected = Some(index);
             }
             let label = LocalizedChoice::new(option.clone()).to_string();
-            widest = widest.max(crate::ui::style::text_metrics::width(
-                &label,
-                ui_text::UI,
-                false,
-            ));
             let msg = Message::PropGeomChoiceChanged {
                 field,
                 value: option.clone(),
@@ -1590,33 +1606,25 @@ impl PropertiesPanel {
                     .line_height(crate::ui::style::text::line()),
             )
             .on_press(msg.clone())
-            .style(if is_current {
-                button::secondary
-            } else {
-                button::subtle
-            })
+            .style(choice_option_style(is_current))
             .padding([2.0, CHOICE_ITEM_PAD_X])
             .width(Length::Fill);
             rows.push(DropdownRow::item(btn, label, msg));
         }
-        let popup_w = (widest
-            + 2.0 * CHOICE_ITEM_PAD_X
-            + 2.0 * CHOICE_POPUP_PAD
-            + 2.0 * crate::ui::style::palette_metrics::LINE
-            + crate::ui::style::palette_metrics::SCROLLBAR_W)
-            .ceil();
         let list = DropdownList::new(rows)
             .selected(selected)
             .select_first_by_default(selected.is_some())
             .on_escape(Message::PropChoiceDismiss { field, quick });
         let popup = container(list)
-            .style(container::bordered_box)
+            .style(crate::ui::palette_menu::frame_style)
             .padding(CHOICE_POPUP_PAD);
 
         let value = crate::ui::color_select::editable_drop_down_below(
             head.into(),
             popup.into(),
-            Some(Length::Fixed(popup_w)),
+            // As wide as the field and under it, as the lineweight list is;
+            // an option that does not fit ends with "…".
+            None,
             Length::Shrink,
             Message::PropChoiceDismiss { field, quick },
             open,
@@ -1783,13 +1791,13 @@ impl PropertiesPanel {
                 value: value.clone(),
             };
             let btn = button(
-                text(opt.as_str())
+                crate::ui::kit::one_line(text(opt.as_str()))
                     .size(ui_text::UI)
                     .line_height(crate::ui::style::text::line()),
             )
             .on_press(msg.clone())
-            .style(button::subtle)
-            .padding([2, 6])
+            .style(choice_option_style(false))
+            .padding([2.0, CHOICE_ITEM_PAD_X])
             .width(Length::Fill);
             if typed.is_some_and(|t| t.eq_ignore_ascii_case(opt.as_str())) {
                 initial_selected = Some(rows.len());
@@ -1802,7 +1810,9 @@ impl PropertiesPanel {
             .select_first_by_default(select_first)
             .query(filter.unwrap_or_default())
             .on_escape(Message::PropEditChoiceToggle(field));
-        let popup = container(list).style(container::bordered_box).padding(2);
+        let popup = container(list)
+            .style(crate::ui::palette_menu::frame_style)
+            .padding(CHOICE_POPUP_PAD);
 
         prop_row_with_active(
             label,
@@ -2646,7 +2656,7 @@ mod tests {
         }
 
         for theme in crate::app::config::all_themes() {
-            let popup = iced::widget::container::bordered_box(&theme);
+            let popup = crate::ui::palette_menu::frame_style(&theme);
             assert!(
                 popup.background.is_some_and(is_opaque),
                 "{theme}: list surface must be opaque"
