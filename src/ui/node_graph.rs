@@ -1265,8 +1265,16 @@ impl Graph {
             PaletteItem::Op(spec) => Some(spec),
             PaletteItem::Object(_) => None,
         };
+        // The highlight is a layer under the entry, so the entry's icon and
+        // name stay on top of it.
+        let lit = hover(
+            container(Space::new())
+                .width(Length::Fill)
+                .height(Length::Fixed(pm::ROW_H)),
+            hovered,
+        );
         with_tip(
-            mouse_area(hover(entry, hovered))
+            mouse_area(iced::widget::stack![lit, entry])
                 .on_press(msg(GraphMsg::PalettePress(item)))
                 .on_release(msg(GraphMsg::PaletteRelease)),
             node_tip(t!(item.label()).into_owned(), spec),
