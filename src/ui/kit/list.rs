@@ -62,6 +62,32 @@ impl Column {
 /// Width of a column's resize handle.
 const RESIZE_W: f32 = 4.0;
 
+/// The line at a column header's right end: 1 px of `palette_body`, and
+/// with `on_resize` a 4 px grip over it that sends it when
+/// pressed, to size the column by dragging. For headers laid out by hand
+/// (the Layer Manager's, Layer Walk's) as well as [`column_header`].
+pub fn column_divider<'a>(on_resize: Option<Message>) -> Element<'a, Message> {
+    let line =
+        container(Space::new().width(pm::line()).height(Length::Fill)).style(|theme: &Theme| {
+            container::Style {
+                background: Some(Background::Color(chrome::palette_body(theme))),
+                ..Default::default()
+            }
+        });
+    match on_resize {
+        Some(m) => mouse_area(
+            container(line)
+                .width(Length::Fixed(RESIZE_W))
+                .height(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Right),
+        )
+        .on_press(m)
+        .interaction(iced::mouse::Interaction::ResizingHorizontally)
+        .into(),
+        None => line.into(),
+    }
+}
+
 /// The header row: column titles on `palette_bar`, 11 px semibold, a sort
 /// arrow on the sorted column, 1 px palette-body lines between columns.
 pub fn column_header<'a>(columns: Vec<Column>) -> Element<'a, Message> {
@@ -108,25 +134,7 @@ pub fn column_header<'a>(columns: Vec<Column>) -> Element<'a, Message> {
         let mut cell = row![title].height(Length::Fill);
         // The line between columns, and the resize handle over it.
         if i + 1 < count || c.on_resize.is_some() {
-            let line = container(Space::new().width(pm::line()).height(Length::Fill)).style(
-                |theme: &Theme| container::Style {
-                    background: Some(Background::Color(chrome::palette_body(theme))),
-                    ..Default::default()
-                },
-            );
-            let edge: Element<'a, Message> = match c.on_resize {
-                Some(m) => mouse_area(
-                    container(line)
-                        .width(Length::Fixed(RESIZE_W))
-                        .height(Length::Fill)
-                        .align_x(iced::alignment::Horizontal::Right),
-                )
-                .on_press(m)
-                .interaction(iced::mouse::Interaction::ResizingHorizontally)
-                .into(),
-                None => line.into(),
-            };
-            cell = cell.push(edge);
+            cell = cell.push(column_divider(c.on_resize));
         }
         container(cell).width(c.width).height(Length::Fill).into()
     });

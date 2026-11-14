@@ -18,6 +18,7 @@ use iced::widget::{
 use iced::Padding;
 use iced::{Background, Border, Color, Element, Fill, Length, Theme};
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 // ── Per-viewport column descriptor ───────────────────────────────────────────
 
@@ -41,7 +42,7 @@ pub struct ViewportLayers {
 
 /// Sortable column in the Layer Manager table. Clicking a header sorts by
 /// that column; clicking the active header again flips the direction (#133).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum LayerSortCol {
     Name,
     On,
@@ -1285,6 +1286,7 @@ impl LayerPanel {
     pub fn view_panel(
         &self,
         name_col_w: f32,
+        col_w: &HashMap<LayerSortCol, f32>,
         width: f32,
         chrome: crate::ui::dock::Chrome,
         active_vp: Option<Handle>,
@@ -1297,7 +1299,7 @@ impl LayerPanel {
         );
         // No border of its own: docked it runs up to the strip and the
         // drawing as every palette does; floating, its frame draws one.
-        let body = self.view_content(name_col_w, width, active_vp);
+        let body = self.view_content(name_col_w, col_w, width, active_vp);
         container(column![title_bar, body])
             .width(Length::Fixed(width))
             .height(Length::Fill)
@@ -1312,6 +1314,7 @@ impl LayerPanel {
     fn view_content(
         &self,
         name_col_w: f32,
+        col_w: &HashMap<LayerSortCol, f32>,
         inner_w: f32,
         active_vp: Option<Handle>,
     ) -> Element<'_, Message> {
@@ -1394,38 +1397,21 @@ impl LayerPanel {
                 .font(kit::SEMIBOLD)
                 .wrapping(iced::widget::text::Wrapping::None)
                 .width(COL_STATUS),
-            sortable_header(
-                t!("Name"),
-                LayerSortCol::Name,
-                Length::Fixed(name_col_w),
-                sc,
-                sa
+            // Its divider sizes the Name column (#359), as each column's
+            // divider sizes that column.
+            header_cell(
+                sortable_header(t!("Name"), LayerSortCol::Name, Fill, sc, sa),
+                name_col_w,
+                Message::LayerNameColGrab,
             ),
-            // Draggable divider: adjusts the Name column width (#359).
-            iced::widget::mouse_area(
-                container(
-                    iced::widget::Space::new()
-                        .width(pm::line())
-                        .height(pm::ROW_H)
-                )
-                .padding(Padding::ZERO.left(pm::LINE).right(pm::LINE))
-                .style(|theme: &Theme| container::Style {
-                    background: Some(Background::Color(chrome::border(theme))),
-                    ..Default::default()
-                }),
-            )
-            .on_press(Message::LayerNameColGrab)
-            .interaction(iced::mouse::Interaction::ResizingHorizontally),
         ]
         .spacing(pm::TOOL_GAP)
         .align_y(iced::Center);
         for col in &columns {
-            header_row = header_row.push(sortable_header(
-                col.label(),
-                *col,
-                Length::Fixed(col.width()),
-                sc,
-                sa,
+            header_row = header_row.push(header_cell(
+                sortable_header(col.label(), *col, Fill, sc, sa),
+                column_width(col_w, *col),
+                Message::LayerColGrab(*col),
             ));
         }
 
@@ -1452,14 +1438,9 @@ impl LayerPanel {
         let col_header = container(header_row)
             .style(|theme: &Theme| container::Style {
                 background: Some(Background::Color(chrome::palette_bar(theme))),
-                border: Border {
-                    color: chrome::border(theme),
-                    width: pm::line(),
-                    radius: 0.0.into(),
-                },
                 ..Default::default()
             })
-            .height(pm::ROW_H + 2.0 * pm::line())
+            .height(pm::ROW_H)
             .padding(Padding::ZERO.left(pm::CELL_PAD_X).right(pm::CELL_PAD_X))
             .width(Length::Fill);
         // A right-click on the header chooses the columns.
@@ -1508,6 +1489,7 @@ impl LayerPanel {
                 &self.vp_cols,
                 active_vp,
                 name_col_w,
+                col_w,
                 &columns,
                 self.eye_on(&layer.name),
             );
@@ -2064,6 +2046,15 @@ fn name_tip_owned<'a>(label: Cow<'static, str>) -> Element<'a, Message> {
         .into()
 }
 
+/// A column header cell `width` wide: its title, then the line to the
+/// next column with a grip sending `grab` to size it.
+fn header_cell<'a>(title: Element<'a, Message>, width: f32, grab: Message) -> Element<'a, Message> {
+    container(row![title, kit::column_divider(Some(grab))].height(Fill))
+        .width(Length::Fixed(width))
+        .height(Length::Fixed(pm::ROW_H))
+        .into()
+}
+
 /// The description field being typed in; leaving it applies the text.
 pub fn description_input_id() -> iced::widget::Id {
     iced::widget::Id::new("layer-description-input")
@@ -2095,9 +2086,11 @@ fn layer_row<'a>(
     vp_cols: &'a [VpCol],
     active_vp: Option<Handle>,
     name_col_w: f32,
+    col_w: &HashMap<LayerSortCol, f32>,
     columns: &[LayerSortCol],
     eye_on: bool,
 ) -> Element<'a, Message> {
+    let w = |col: LayerSortCol| Length::Fixed(column_width(col_w, col));
     // #22: messages carry the layer name (resolved at dispatch time) so a
     // resort between view() and the handler cannot mistarget the row.
     let lname = layer.name.clone();
@@ -2225,7 +2218,7 @@ fn layer_row<'a>(
                 layer.color,
             ),
         ))
-        .width(Length::Fixed(COL_COLOR))
+        .width(w(LayerSortCol::Color))
         .into();
 
     // Linetype cell — uses LinetypeItem (with ASCII art) same as Properties panel
@@ -2244,7 +2237,7 @@ fn layer_row<'a>(
             .size(ui_text::UI)
             .line_height(ui_line())
             .padding(kit::FIELD_PAD)
-            .width(Length::Fixed(COL_LT))
+            .width(w(LayerSortCol::Linetype))
             .input_style(cell_field_style),
             LINETYPE_MENU_W,
         )
@@ -2253,7 +2246,7 @@ fn layer_row<'a>(
             .size(ui_text::UI)
             .line_height(ui_line())
             .style(muted_style)
-            .width(Length::Fixed(COL_LT))
+            .width(w(LayerSortCol::Linetype))
             .into()
     };
 
@@ -2269,7 +2262,7 @@ fn layer_row<'a>(
         .size(ui_text::UI)
         .line_height(ui_line())
         .padding(kit::FIELD_PAD)
-        .width(Length::Fixed(COL_LW))
+        .width(w(LayerSortCol::Lineweight))
         .input_style(cell_field_style)
         .into()
     } else {
@@ -2277,7 +2270,7 @@ fn layer_row<'a>(
             .size(ui_text::UI)
             .line_height(ui_line())
             .style(muted_style)
-            .width(Length::Fixed(COL_LW))
+            .width(w(LayerSortCol::Lineweight))
             .into()
     };
 
@@ -2292,7 +2285,7 @@ fn layer_row<'a>(
         .line_height(ui_line())
         .padding(kit::FIELD_PAD)
         .style(cell_field_style)
-        .width(Length::Fixed(COL_TRANS));
+        .width(w(LayerSortCol::Transparency));
     if trans_buf.is_some() {
         trans_cell = trans_cell.id(transparency_input_id());
     }
@@ -2307,7 +2300,7 @@ fn layer_row<'a>(
         .line_height(ui_line())
         .padding(kit::FIELD_PAD)
         .style(cell_field_style)
-        .width(Length::Fixed(COL_DESC));
+        .width(w(LayerSortCol::Description));
     if desc_buf.is_some() {
         desc_cell = desc_cell.id(description_input_id());
     }
@@ -2316,7 +2309,7 @@ fn layer_row<'a>(
     let objects_text = text(layer.objects.to_string())
         .size(ui_text::UI)
         .line_height(ui_line())
-        .width(Length::Fixed(COL_OBJECTS))
+        .width(w(LayerSortCol::Objects))
         .align_x(iced::alignment::Horizontal::Right);
     let objects_cell: Element<'_, Message> = if layer.in_blocks > 0 {
         tooltip(
@@ -2340,7 +2333,6 @@ fn layer_row<'a>(
         )
         .on_double_click(Message::LayerSetCurrent),
         name_cell,
-        iced::widget::Space::new().width(pm::LINE),
     ]
     .spacing(pm::TOOL_GAP)
     .width(Fill)
@@ -2350,28 +2342,28 @@ fn layer_row<'a>(
         (
             LayerSortCol::On,
             container(svg_btn(vis_svg, Message::LayerToggleVisible(lname.clone())))
-                .width(Length::Fixed(COL_ICON))
+                .width(w(LayerSortCol::On))
                 .align_x(iced::Center)
                 .into(),
         ),
         (
             LayerSortCol::Freeze,
             container(svg_btn(frz_svg, Message::LayerToggleFreeze(lname.clone())))
-                .width(Length::Fixed(COL_ICON))
+                .width(w(LayerSortCol::Freeze))
                 .align_x(iced::Center)
                 .into(),
         ),
         (
             LayerSortCol::Lock,
             container(svg_btn(lck_svg, Message::LayerToggleLock(lname.clone())))
-                .width(Length::Fixed(COL_ICON))
+                .width(w(LayerSortCol::Lock))
                 .align_x(iced::Center)
                 .into(),
         ),
         (
             LayerSortCol::Plot,
             container(plot_btn)
-                .width(Length::Fixed(COL_ICON))
+                .width(w(LayerSortCol::Plot))
                 .align_x(iced::Center)
                 .into(),
         ),
@@ -2718,6 +2710,13 @@ pub fn iced_color_from_acad(c: &AcadColor) -> Color {
 // Name column width is user-adjustable via the header divider drag (#359);
 // the app passes the current width into `view_window`.
 const COL_ICON: f32 = 36.0;
+/// The narrowest a column can be dragged.
+pub const COL_MIN_W: f32 = 24.0;
+
+/// Width of column `col`: the user's, else its default.
+pub fn column_width(widths: &HashMap<LayerSortCol, f32>, col: LayerSortCol) -> f32 {
+    widths.get(&col).copied().unwrap_or_else(|| col.width())
+}
 const COL_COLOR: f32 = 90.0;
 const COL_LT: f32 = 100.0;
 const COL_LW: f32 = 80.0;
@@ -2803,7 +2802,7 @@ mod more_menu_tests {
         let mut ui = Simulator::with_size(
             iced::Settings::default(),
             iced::Size::new(360.0, 600.0),
-            panel.view_content(140.0, 360.0, None),
+            panel.view_content(140.0, &HashMap::new(), 360.0, None),
         );
         for label in ["New Filter", "Layer States", "Import...", "Advanced…"] {
             let bounds = ui

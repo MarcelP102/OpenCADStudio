@@ -151,10 +151,10 @@ mod command;
 pub(crate) mod context_menu;
 mod dialog;
 mod dynamic;
-pub(in crate::app) mod linetype_manager;
 mod file;
 mod graphic_attributes;
 mod keytips;
+pub(in crate::app) mod linetype_manager;
 pub(in crate::app) mod mleader_style;
 pub(super) mod tool_palettes;
 pub(in crate::app) use file::background_task;
@@ -3370,9 +3370,7 @@ impl OpenCADStudio {
                 if let Some(p) = path {
                     let path_str = p.to_string_lossy().to_string();
                     if let Some(state) = &mut self.plugin_dialog_state {
-                        state
-                            .file_values
-                            .insert(id.clone(), path_str.clone());
+                        state.file_values.insert(id.clone(), path_str.clone());
                     }
                     return self.dispatch_plugin_dialog_action(
                         id,
@@ -3418,13 +3416,23 @@ impl OpenCADStudio {
                             (
                                 Some(resp),
                                 updates,
-                                Some((dialog_title, owner_plugin_id, owner_command_id, current_values)),
+                                Some((
+                                    dialog_title,
+                                    owner_plugin_id,
+                                    owner_command_id,
+                                    current_values,
+                                )),
                             )
                         } else {
                             (
                                 None,
                                 Vec::new(),
-                                Some((dialog_title, owner_plugin_id, owner_command_id, current_values)),
+                                Some((
+                                    dialog_title,
+                                    owner_plugin_id,
+                                    owner_command_id,
+                                    current_values,
+                                )),
                             )
                         }
                     } else {
@@ -3476,14 +3484,18 @@ impl OpenCADStudio {
                             rows.clear();
                         }
                     }
-                    if let Some((dialog_title, owner_plugin_id, owner_command_id, current_values)) = &dialog_meta {
+                    if let Some((dialog_title, owner_plugin_id, owner_command_id, current_values)) =
+                        &dialog_meta
+                    {
                         crate::plugin::v4_support::publish_panel_action_to_plugin(
                             owner_plugin_id.as_deref(),
                             *owner_command_id,
                             dialog_title.clone(),
                             id,
                             "clear".to_string(),
-                            Some(ocs_plugin_api::dialog::DialogValue::Fields(current_values.clone())),
+                            Some(ocs_plugin_api::dialog::DialogValue::Fields(
+                                current_values.clone(),
+                            )),
                         );
                     }
                     return Task::none();
@@ -3491,14 +3503,18 @@ impl OpenCADStudio {
                     if let Some(state) = &mut self.plugin_dialog_state {
                         state.reset_values();
                     }
-                    if let Some((dialog_title, owner_plugin_id, owner_command_id, current_values)) = &dialog_meta {
+                    if let Some((dialog_title, owner_plugin_id, owner_command_id, current_values)) =
+                        &dialog_meta
+                    {
                         crate::plugin::v4_support::publish_panel_action_to_plugin(
                             owner_plugin_id.as_deref(),
                             *owner_command_id,
                             dialog_title.clone(),
                             id,
                             "reset".to_string(),
-                            Some(ocs_plugin_api::dialog::DialogValue::Fields(current_values.clone())),
+                            Some(ocs_plugin_api::dialog::DialogValue::Fields(
+                                current_values.clone(),
+                            )),
                         );
                     }
                     return Task::none();
@@ -3518,7 +3534,9 @@ impl OpenCADStudio {
                         dialog_title.clone(),
                         id,
                         "click".to_string(),
-                        Some(ocs_plugin_api::dialog::DialogValue::Fields(current_values.clone())),
+                        Some(ocs_plugin_api::dialog::DialogValue::Fields(
+                            current_values.clone(),
+                        )),
                     );
                 }
                 Task::none()
@@ -3761,7 +3779,6 @@ impl OpenCADStudio {
                 );
                 Task::none()
             }
-
 
             // ── Document tabs ─────────────────────────────────────────────
             Message::TabNew => {
@@ -7094,8 +7111,12 @@ impl OpenCADStudio {
                 // The shared list opens on its first scale when none of the
                 // selected ones is in it.
                 if common && self.anno_object_scale.selected_listed().is_empty() {
-                    self.anno_object_scale.selected =
-                        self.anno_object_scale.listed().into_iter().take(1).collect();
+                    self.anno_object_scale.selected = self
+                        .anno_object_scale
+                        .listed()
+                        .into_iter()
+                        .take(1)
+                        .collect();
                 }
                 Task::none()
             }
@@ -7570,7 +7591,10 @@ impl OpenCADStudio {
                 // ones the window asks before dropping the rest.
                 let i = self.active_tab;
                 let picked = self.scale_manager_multi.clone();
-                let used = picked.iter().filter(|name| self.anno_scale_referenced(i, name)).count();
+                let used = picked
+                    .iter()
+                    .filter(|name| self.anno_scale_referenced(i, name))
+                    .count();
                 if picked.is_empty() || used == picked.len() {
                     return Task::none();
                 }
@@ -13316,7 +13340,13 @@ impl OpenCADStudio {
             Message::LayerNameColGrab => {
                 // Start a Name-column divider drag; the dock's pointer capture
                 // feeds it (see `on_dock`).
-                self.dock_drag = Some(crate::ui::dock::DockDrag::LayerColumn);
+                self.dock_drag = Some(crate::ui::dock::DockDrag::LayerColumn(None));
+                self.dock_drag_last = None;
+                Task::none()
+            }
+            Message::LayerColGrab(col) => {
+                // Another column's divider: the same capture sizes it.
+                self.dock_drag = Some(crate::ui::dock::DockDrag::LayerColumn(Some(col)));
                 self.dock_drag_last = None;
                 Task::none()
             }

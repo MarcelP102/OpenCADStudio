@@ -15,17 +15,15 @@ use crate::app::Message;
 use crate::io::xref_model::wildcard_match;
 use crate::t;
 use crate::ui::kit;
-use crate::ui::style::common::muted_style;
 use crate::ui::style::text as ui_text;
 use crate::ui::style::{chrome, palette_metrics as pm};
 use document::tables::layer::Layer as DocLayer;
 use document::tables::Table;
 use iced::widget::{
-    button, checkbox, column, combo_box, container, mouse_area, row, scrollable, text, text_input,
-    tooltip,
+    button, checkbox, column, combo_box, container, mouse_area, row, scrollable, text,
 };
 use iced::Padding;
-use iced::{Background, Border, Element, Fill, Length, Theme};
+use iced::{Background, Element, Fill, Length, Theme};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::rc::Rc;
@@ -33,7 +31,6 @@ use std::rc::Rc;
 /// Icon size inside a walk row (mirrors the Layer Manager table).
 /// Height of a walk row: the palette grid's.
 const ROW_H: f32 = pm::ROW_H;
-const ICON_SZ: f32 = pm::ROW_ICON;
 
 // ── Messages ─────────────────────────────────────────────────────────────
 
@@ -41,6 +38,8 @@ const ICON_SZ: f32 = pm::ROW_ICON;
 /// (picking, filtering, walking) are handled in `app::layer_walk`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LayerWalkMsg {
+    /// Start dragging the divider after a column: 0 the name, 1 the count.
+    ColumnGrab(usize),
     /// A row was pressed. Iced's `mouse_area` carries no modifier state, so
     /// the view bakes in the app's live Ctrl/Shift tracking (#1664).
     RowClick {
@@ -643,12 +642,11 @@ fn msg(m: LayerWalkMsg) -> Message {
 /// Scrollable id, so the app can focus the list for arrow navigation.
 pub const LIST_ID: &str = "layer-walk-list";
 
-/// Column widths: the swatch, the count, the hold pin and the state cluster are
-/// fixed; the layer name takes the rest and elides like the Layer Manager.
+/// Column widths: the swatch, the hold pin and the state cluster are fixed;
+/// the name and the count take the widths the user drags them to.
 /// The state column is exactly one effective eye plus the two underlying marks
 /// it can carry, so it never leaves dead width next to the name.
 const COL_SWATCH: f32 = 22.0;
-const COL_COUNT: f32 = 40.0;
 const COL_PIN: f32 = 22.0;
 const COL_STATE: f32 = 36.0;
 /// How much a row the walk hides loses: alpha carries the signal because the
@@ -659,9 +657,10 @@ const MATCH_ALPHA: f32 = 0.30;
 /// A row that is off or frozen in the drawing is only muted: the walk keeps it
 /// out of the eye's way, but it cannot switch such a layer on.
 const UNDERLYING_ALPHA: f32 = 0.55;
-/// The header's action buttons share one width so the second line reads as a
-/// control strip instead of three different shapes.
-const ACTION_W: f32 = 62.0;
+/// The narrowest a column can be dragged.
+pub const COL_MIN_W: f32 = 24.0;
+/// The name and object-count columns' widths until the user sizes them.
+pub const DEFAULT_COL_W: [f32; 2] = [240.0, 48.0];
 
 /// The whole pallet: chrome title, header, list, inline dialogs and footer.
 /// The pallet stays non-modal, so its dialogs are drawn inside it rather than
@@ -674,9 +673,15 @@ pub fn view<'a>(
     total_layers: usize,
     ctrl: bool,
     shift: bool,
+    col_w: [f32; 2],
     width: f32,
     chrome: crate::ui::dock::Chrome,
 ) -> Element<'a, Message> {
+    // The name column keeps its width while the palette has room for it and
+    // the fixed columns, and gives way when it does not.
+    let fixed = COL_SWATCH + col_w[1] + COL_PIN + COL_STATE + 4.0 * pm::TOOL_GAP;
+    let room = width - pm::GRID_INSET_L - pm::GRID_INSET_R - 2.0 * pm::CELL_PAD_X - fixed;
+    let col_w = [col_w[0].min(room).max(COL_MIN_W), col_w[1]];
     let body = container(view_content(
         rows,
         session,
@@ -685,6 +690,7 @@ pub fn view<'a>(
         total_layers,
         ctrl,
         shift,
+        col_w,
     ))
     .width(Length::Fixed(width))
     .height(Fill);
@@ -699,6 +705,7 @@ pub fn view<'a>(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn view_content<'a>(
     rows: &'a [LayerWalkRow],
     session: &'a LayerWalkSession,
@@ -707,25 +714,21 @@ fn view_content<'a>(
     total_layers: usize,
     ctrl: bool,
     shift: bool,
+    col_w: [f32; 2],
 ) -> Element<'a, Message> {
-    // ── Header ────────────────────────────────────────────────────────────
-    let select_btn = tooltip(
-        button(crate::ui::icons::themed(crate::ui::icons::PREVIEW, 14.0))
-            .on_press(msg(LayerWalkMsg::SelectObjects))
-            .style(button::subtle)
-            .padding([3, 5]),
-        text(crate::tr!("layer-walk", "select-objects-tip")).size(crate::ui::style::text::UI_SMALL),
-        iced::widget::tooltip::Position::Bottom,
+    // ── Toolbar ───────────────────────────────────────────────────────────
+    let select_btn = kit::tool_button(
+        kit::tool_icon(crate::ui::icons::PREVIEW),
+        crate::tr!("layer-walk", "select-objects-tip"),
+        Some(msg(LayerWalkMsg::SelectObjects)),
+        false,
     );
     let filter_combo_box: Element<'_, Message> = if saved_filters.is_empty() {
-        container(
-            text(crate::tr!("layer-walk", "saved-filters"))
-                .size(crate::ui::style::text::UI_SMALL)
-                .style(muted_style),
-        )
-        .padding([crate::ui::kit::FIELD_PAD_Y, pm::CELL_PAD_X])
+        container(kit::select_box(kit::value_text(
+            crate::tr!("layer-walk", "saved-filters"),
+            true,
+        )))
         .width(Length::Fixed(pm::NAME_COL_W))
-        .style(kit::combo_container_style)
         .into()
     } else {
         combo_box(
@@ -735,23 +738,18 @@ fn view_content<'a>(
             |name: String| msg(LayerWalkMsg::SavedFilterPick(name)),
         )
         .size(ui_text::UI)
-        .line_height(crate::ui::style::text::line())
-        .padding([crate::ui::kit::FIELD_PAD_Y, pm::CELL_PAD_X])
+        .line_height(ui_text::line())
+        .padding(kit::BOX_PAD)
         .width(Length::Fixed(pm::NAME_COL_W))
         .input_style(kit::combo_style)
         .into()
     };
-    let filter_box = text_input(
+    let filter_box = kit::search_field(
         crate::tr!("layer-walk", "pattern-placeholder").as_ref(),
         &session.filter_buf,
+        |s| msg(LayerWalkMsg::FilterEdit(s)),
     )
-    .on_input(|s| msg(LayerWalkMsg::FilterEdit(s)))
-    .on_submit(msg(LayerWalkMsg::FilterApply))
-    .size(ui_text::UI)
-    .line_height(crate::ui::style::text::line())
-    .padding([crate::ui::kit::FIELD_PAD_Y, pm::CELL_PAD_X])
-    .width(Length::Fill)
-    .style(kit::combo_style);
+    .on_submit(msg(LayerWalkMsg::FilterApply));
     // The Filter checkbox only does something while a pattern is active; with
     // no toggle it renders in the theme's disabled state, which is the mute.
     let filter_toggle: Option<Box<dyn Fn(bool) -> Message>> =
@@ -762,139 +760,132 @@ fn view_content<'a>(
     let filter_check: Element<'_, Message> = checkbox(session.show_only_matching)
         .label(t!("Filter"))
         .on_toggle_maybe(filter_toggle)
-        .size(crate::ui::style::text::UI_TITLE)
-        .text_size(crate::ui::style::text::UI_SMALL)
+        .size(pm::CHECK)
+        .text_size(ui_text::UI)
         .into();
     // An applied filter is the only thing worth clearing: an empty box is
     // already inert, so the ✕ shows up exactly when it does something.
     let clear_filter: Element<'_, Message> = if session.pattern.is_some() {
-        tooltip(
-            button(text(t!("×")).size(crate::ui::style::text::UI))
-                .on_press(msg(LayerWalkMsg::FilterClear))
-                .style(button::subtle)
-                .padding([2, 4]),
-            text(crate::tr!("layer-walk", "clear-filter")).size(crate::ui::style::text::UI_SMALL),
-            iced::widget::tooltip::Position::Bottom,
+        kit::tool_button(
+            kit::tool_icon(crate::ui::icons::CLOSE),
+            crate::tr!("layer-walk", "clear-filter"),
+            Some(msg(LayerWalkMsg::FilterClear)),
+            false,
         )
-        .into()
     } else {
         iced::widget::Space::new().width(Length::Fixed(0.0)).into()
     };
-    let tiny = |label: Cow<'static, str>, item: LayerWalkMenuItem| -> Element<'_, Message> {
-        button(
-            text(label)
-                .size(crate::ui::style::text::UI_SMALL)
-                .width(Fill)
-                .align_x(iced::Center),
-        )
-        .on_press(msg(LayerWalkMsg::MenuItem(item)))
-        .style(button::subtle)
-        .padding([3, 4])
-        .width(Length::Fixed(ACTION_W))
-        .into()
+    let action = |label: Cow<'static, str>, item: LayerWalkMenuItem| -> Element<'_, Message> {
+        kit::text_button(label, Some(msg(LayerWalkMsg::MenuItem(item))), false)
     };
     // The running total is the one number the walk cannot be read without:
     // how much of the drawing is on screen right now.
     let (shown, drawn) = visible_counts(rows, session);
-    let status = text(crate::tr!(
-        "layer-walk",
-        "visible-count",
-        visible = shown,
-        total = drawn
-    ))
-    .size(crate::ui::style::text::UI_SMALL)
-    .style(muted_style);
+    let status = kit::value_text(
+        crate::tr!(
+            "layer-walk",
+            "visible-count",
+            visible = shown,
+            total = drawn
+        ),
+        true,
+    );
     // Two lines, not eight controls on one: at 420 px the fields had no
     // visible edge and every button was a guess.
     let header = column![
-        row![select_btn, filter_combo_box, filter_box, clear_filter]
-            .spacing(4)
+        kit::band(
+            row![select_btn, filter_combo_box, filter_box, clear_filter]
+                .spacing(pm::TOOL_GAP)
+                .align_y(iced::Center),
+        ),
+        kit::band(
+            row![
+                filter_check,
+                action(t!("Select All"), LayerWalkMenuItem::SelectAll),
+                action(t!("Clear All"), LayerWalkMenuItem::ClearAll),
+                action(
+                    crate::tr!("layer-walk", "invert").into(),
+                    LayerWalkMenuItem::Invert
+                ),
+                iced::widget::Space::new().width(Fill),
+                status,
+            ]
+            .spacing(pm::TOOL_GAP)
             .align_y(iced::Center),
-        row![
-            filter_check,
-            tiny(t!("Select All"), LayerWalkMenuItem::SelectAll),
-            tiny(t!("Clear All"), LayerWalkMenuItem::ClearAll),
-            tiny(
-                crate::tr!("layer-walk", "invert").into(),
-                LayerWalkMenuItem::Invert
-            ),
-            iced::widget::Space::new().width(Fill),
-            status,
-        ]
-        .spacing(4)
-        .align_y(iced::Center),
-    ]
-    .spacing(4);
+        ),
+    ];
 
     // ── Column header ─────────────────────────────────────────────────────
     // `right` mirrors the cell: the count is right-aligned, so its header is
     // too, or the two edges never line up.
-    let sort_head = |label: Cow<'static, str>,
-                     col: LayerWalkSort,
-                     w: Length,
-                     right: bool|
-     -> Element<'_, Message> {
+    let sort_head = |label: Cow<'static, str>, col: LayerWalkSort, right: bool| {
+        let title = text(label)
+            .size(ui_text::UI)
+            .line_height(ui_text::line())
+            .font(kit::SEMIBOLD)
+            .wrapping(iced::widget::text::Wrapping::None);
         let mut content = if right {
-            row![
-                iced::widget::Space::new().width(Fill),
-                text(label)
-                    .size(crate::ui::style::text::UI_SMALL)
-                    .style(muted_style)
-            ]
+            row![iced::widget::Space::new().width(Fill), title]
         } else {
-            row![text(label)
-                .size(crate::ui::style::text::UI_SMALL)
-                .style(muted_style)]
+            row![title]
         }
-        .spacing(3)
+        .spacing(pm::TOOL_GAP)
         .align_y(iced::Center);
         if session.sort == col {
-            content = content.push(if session.sort_asc {
-                crate::ui::icons::themed_arrow_up(8.0)
-            } else {
-                crate::ui::icons::themed_arrow_down(8.0)
-            });
+            content = content.push(crate::ui::icons::themed_arrow_toggle(
+                session.sort_asc,
+                pm::CARET,
+            ));
         }
-        button(content)
+        let head: Element<'_, Message> = button(container(content).clip(true).center_y(Fill))
             .on_press(msg(LayerWalkMsg::Sort(col)))
-            .style(crate::ui::style::row_button::header_button_style)
-            .padding(Padding {
-                top: 0.0,
-                bottom: 0.0,
-                left: 2.0,
-                right: 2.0,
+            .style(|theme: &Theme, status| button::Style {
+                background: matches!(status, button::Status::Hovered | button::Status::Pressed)
+                    .then(|| Background::Color(chrome::hover(theme))),
+                text_color: chrome::text(theme),
+                ..Default::default()
             })
-            .width(w)
-            .into()
+            .padding(Padding::ZERO.right(pm::CELL_PAD_X))
+            .width(Fill)
+            .height(Fill)
+            .into();
+        head
+    };
+    // Each column's divider sizes it, as in the Layer Manager.
+    let header_cell = |head: Element<'a, Message>, width: f32, grab: usize| {
+        container(
+            row![
+                head,
+                kit::column_divider(Some(msg(LayerWalkMsg::ColumnGrab(grab))))
+            ]
+            .height(Fill),
+        )
+        .width(Length::Fixed(width))
+        .height(Length::Fixed(pm::ROW_H))
     };
     let header_grid = container(
         row![
-            sort_head(t!("Name"), LayerWalkSort::Name, Length::Fill, false),
-            text("").width(Length::Fixed(COL_SWATCH)),
-            sort_head(
-                t!("Objects"),
-                LayerWalkSort::Count,
-                Length::Fixed(COL_COUNT),
-                true
+            header_cell(
+                sort_head(t!("Name"), LayerWalkSort::Name, false),
+                col_w[0],
+                0
             ),
-            // The pin and the eye share one spacer here but two cells with a
-            // gap between them in the row, so the gap has to be added back or
-            // the header drifts 4 px left of every count.
-            text("").width(Length::Fixed(COL_PIN + COL_STATE + 4.0)),
+            iced::widget::Space::new().width(Length::Fixed(COL_SWATCH)),
+            header_cell(
+                sort_head(t!("Objects"), LayerWalkSort::Count, true),
+                col_w[1],
+                1
+            ),
         ]
-        .spacing(4)
+        .spacing(pm::TOOL_GAP)
         .align_y(iced::Center),
     )
     .style(|theme: &Theme| container::Style {
         background: Some(Background::Color(chrome::palette_bar(theme))),
-        border: Border {
-            color: chrome::border(theme),
-            width: pm::line(),
-            radius: 0.0.into(),
-        },
         ..Default::default()
     })
-    .padding([pm::TOOL_GAP, pm::CELL_PAD_X])
+    .height(Length::Fixed(pm::ROW_H))
+    .padding(Padding::ZERO.left(pm::CELL_PAD_X).right(pm::CELL_PAD_X))
     .width(Fill);
 
     // ── Rows ──────────────────────────────────────────────────────────────
@@ -907,24 +898,16 @@ fn view_content<'a>(
     let entries = Rc::new(menu_entries(rows, session, saved_filters));
     let drawn = visible_rows(rows, session);
     let list: Element<'_, Message> = if drawn.is_empty() {
-        container(
-            text(if session.pattern.is_some() {
-                crate::tr!("layer-walk", "no-matches")
-            } else {
-                crate::tr!("layer-walk", "no-layers")
-            })
-            .size(crate::ui::style::text::UI)
-            .style(muted_style),
-        )
-        .padding([6, 8])
-        .width(Fill)
-        .into()
+        kit::empty_state(if session.pattern.is_some() {
+            crate::tr!("layer-walk", "no-matches")
+        } else {
+            crate::tr!("layer-walk", "no-layers")
+        })
     } else {
         let mut col = column![].spacing(0);
-        for (position, (index, row)) in drawn.iter().enumerate() {
+        for (index, row) in drawn.iter() {
             col = col.push(walk_row(
                 row,
-                position,
                 sel.contains(row.name.as_str()),
                 held.contains(row.name.as_str()),
                 visible.contains(&row.name),
@@ -932,11 +915,13 @@ fn view_content<'a>(
                 matches.contains(index),
                 ctrl,
                 shift,
+                col_w,
                 Rc::clone(&entries),
             ));
         }
         scrollable(col)
             .id(iced::advanced::widget::Id::new(LIST_ID))
+            .style(kit::scroll_style)
             .width(Fill)
             .height(Fill)
             .into()
@@ -977,7 +962,7 @@ fn view_content<'a>(
             true
         ),
     ]
-    .spacing(6)
+    .spacing(pm::TOOL_GAP)
     .align_y(iced::Center);
 
     // The inline dialogs sit between the column header and the list: the
@@ -1005,34 +990,36 @@ fn view_content<'a>(
     if let Some(dialog) = dialog {
         grid = grid.push(
             container(dialog)
-                .padding([6, 8])
+                .padding([pm::TOOL_GAP, 0.0])
                 .width(Fill)
                 .align_x(iced::Center),
         );
     }
     let grid = container(grid.push(list).height(Fill))
-        .padding(Padding::ZERO.left(pm::GRID_INSET_L).right(pm::GRID_INSET_R))
+        .padding(Padding {
+            top: pm::TOOL_GAP,
+            bottom: 0.0,
+            left: pm::GRID_INSET_L,
+            right: pm::GRID_INSET_R,
+        })
         .width(Fill)
         .height(Fill);
     column![
-        container(header)
-            .padding([4, 8])
-            .style(|theme: &Theme| container::Style {
-                background: Some(Background::Color(chrome::palette_bar(theme))),
-                ..Default::default()
-            })
-            .width(Fill),
+        header,
         grid,
-    ]
-    .push(
         container(footer)
-            .padding([4, 8])
+            .padding(Padding {
+                top: pm::TOOL_GAP,
+                bottom: pm::TOOL_GAP,
+                left: pm::GRID_INSET_L,
+                right: pm::GRID_INSET_R,
+            })
             .style(|theme: &Theme| container::Style {
                 background: Some(Background::Color(chrome::palette_bar(theme))),
                 ..Default::default()
             })
             .width(Fill),
-    )
+    ]
     .height(Fill)
     .into()
 }
@@ -1043,9 +1030,9 @@ fn view_content<'a>(
 ///
 /// Alpha carries the walk state (the bundled UI font has no italic cut): a row
 /// the walk hides dims, a row off or frozen in the table is only muted.
+#[allow(clippy::too_many_arguments)]
 fn walk_row(
     row: &LayerWalkRow,
-    position: usize,
     is_selected: bool,
     is_held: bool,
     is_visible: bool,
@@ -1053,6 +1040,7 @@ fn walk_row(
     matches: bool,
     ctrl: bool,
     shift: bool,
+    col_w: [f32; 2],
     entries: Rc<Vec<MenuEntry>>,
 ) -> Element<'_, Message> {
     let dim = if !is_visible {
@@ -1076,24 +1064,25 @@ fn walk_row(
     // so a pin inside the row area would toggle hold *and* reselect the row.
     let left = mouse_area(
         row![
-            container(label.width(Fill)).width(Length::Fill).clip(true),
+            container(label.width(Fill))
+                .width(Length::Fixed(col_w[0]))
+                .clip(true),
             container(crate::ui::color_select::swatch(
                 crate::ui::window::layers::iced_color_from_acad(&row.color).scale_alpha(dim)
             ))
             .width(Length::Fixed(COL_SWATCH))
             .align_x(iced::Center),
-            tooltip(
+            kit::tooltip(
                 text(row.count.to_string())
                     .size(ui_text::UI)
-                    .line_height(crate::ui::style::text::line())
-                    .width(Length::Fixed(COL_COUNT))
+                    .line_height(ui_text::line())
+                    .width(Length::Fixed(col_w[1]))
                     .align_x(iced::Right),
-                text(crate::tr!("layer-walk", "count-tip", count = row.count))
-                    .size(crate::ui::style::text::UI_SMALL),
-                iced::widget::tooltip::Position::FollowCursor,
+                crate::tr!("layer-walk", "count-tip", count = row.count),
+                kit::TipPosition::FollowCursor,
             ),
         ]
-        .spacing(4)
+        .spacing(pm::TOOL_GAP)
         .align_y(iced::Center)
         .width(Fill),
     )
@@ -1115,10 +1104,10 @@ fn walk_row(
     let glyph: Element<'_, Message> = if is_held {
         container(crate::ui::icons::themed_primary(
             crate::ui::icons::PIN_ACTIVE,
-            ICON_SZ * 0.75,
+            pm::BAR_ICON,
         ))
-        .width(Length::Fixed(ICON_SZ + 4.0))
-        .height(Length::Fixed(ICON_SZ))
+        .width(Length::Fixed(COL_PIN))
+        .height(Length::Fixed(pm::ROW_ICON))
         .align_x(iced::Center)
         .align_y(iced::Center)
         .style(|theme: &Theme| container::Style {
@@ -1130,7 +1119,7 @@ fn walk_row(
     } else if is_hovered {
         container(crate::ui::icons::themed_secondary(
             crate::ui::icons::PIN,
-            ICON_SZ * 0.8,
+            pm::BAR_ICON,
         ))
         .width(Length::Fixed(COL_PIN))
         .align_x(iced::Center)
@@ -1141,15 +1130,14 @@ fn walk_row(
             .into()
     };
     let pin = mouse_area(
-        container(tooltip(
+        container(kit::tooltip(
             glyph,
-            text(if is_held {
+            if is_held {
                 crate::tr!("layer-walk", "pin-held-tip")
             } else {
                 crate::tr!("layer-walk", "pin-hold-tip")
-            })
-            .size(crate::ui::style::text::UI_SMALL),
-            iced::widget::tooltip::Position::FollowCursor,
+            },
+            kit::TipPosition::FollowCursor,
         ))
         .width(Length::Fixed(COL_PIN))
         .align_x(iced::Center),
@@ -1157,7 +1145,7 @@ fn walk_row(
     .on_press(msg(LayerWalkMsg::ToggleHold { name }))
     .interaction(iced::mouse::Interaction::Pointer);
     let cells = row![left, pin, state_cells(row, is_visible)]
-        .spacing(4)
+        .spacing(pm::TOOL_GAP)
         .align_y(iced::Center);
     let body = container(
         mouse_area(cells)
@@ -1175,18 +1163,16 @@ fn walk_row(
     .align_y(iced::Center)
     .padding(Padding::ZERO.left(pm::CELL_PAD_X).right(pm::CELL_PAD_X))
     .style(move |theme: &Theme| {
-        // Hover outranks selection outranks the zebra band, as in every
-        // palette list. The filter tint only applies to the zebra band.
+        // Hover outranks selection outranks the filter tint, as in every
+        // palette list; other rows lie on the palette body.
         let band = if is_hovered {
-            chrome::hover(theme)
+            Some(chrome::hover(theme))
         } else if is_selected {
-            chrome::row_selected(theme)
+            Some(chrome::row_selected(theme))
         } else if matches {
-            chrome::row_selected(theme).scale_alpha(MATCH_ALPHA)
-        } else if position.is_multiple_of(2) {
-            chrome::palette_body(theme)
+            Some(chrome::row_selected(theme).scale_alpha(MATCH_ALPHA))
         } else {
-            chrome::palette_bar(theme)
+            None
         };
         let text_color = if is_hovered || is_selected {
             chrome::strong(theme)
@@ -1194,7 +1180,7 @@ fn walk_row(
             chrome::text(theme)
         };
         container::Style {
-            background: Some(Background::Color(band)),
+            background: band.map(Background::Color),
             text_color: Some(text_color.scale_alpha(dim)),
             ..Default::default()
         }
@@ -1220,29 +1206,25 @@ fn state_cells<'a>(row: &LayerWalkRow, is_visible: bool) -> Element<'a, Message>
         crate::tr!("layer-walk", "eye-hidden")
     };
     let eye: Element<'a, Message> = if on_screen {
-        crate::ui::icons::themed(crate::ui::icons::layer_visible(true), ICON_SZ * 0.72)
+        crate::ui::icons::themed(crate::ui::icons::layer_visible(true), pm::BAR_ICON)
     } else {
-        crate::ui::icons::themed_disabled(crate::ui::icons::layer_visible(false), ICON_SZ * 0.72)
+        crate::ui::icons::themed_disabled(crate::ui::icons::layer_visible(false), pm::BAR_ICON)
     };
-    let mut state = row![tooltip(
-        eye,
-        text(tip).size(crate::ui::style::text::UI_SMALL),
-        iced::widget::tooltip::Position::FollowCursor
-    )]
-    .spacing(2)
-    .align_y(iced::Center);
+    let mut state = row![kit::tooltip(eye, tip, kit::TipPosition::FollowCursor)]
+        .spacing(pm::LINE * 2.0)
+        .align_y(iced::Center);
     if row.frozen {
-        state = state.push(tooltip(
-            crate::ui::icons::themed_disabled(crate::ui::icons::layer_freeze(true), ICON_SZ * 0.55),
-            text(crate::tr!("layer-walk", "frozen-tip")).size(crate::ui::style::text::UI_SMALL),
-            iced::widget::tooltip::Position::FollowCursor,
+        state = state.push(kit::tooltip(
+            crate::ui::icons::themed_disabled(crate::ui::icons::layer_freeze(true), pm::CARET),
+            crate::tr!("layer-walk", "frozen-tip"),
+            kit::TipPosition::FollowCursor,
         ));
     }
     if row.locked {
-        state = state.push(tooltip(
-            crate::ui::icons::themed_disabled(crate::ui::icons::layer_lock(true), ICON_SZ * 0.55),
-            text(crate::tr!("layer-walk", "locked-tip")).size(crate::ui::style::text::UI_SMALL),
-            iced::widget::tooltip::Position::FollowCursor,
+        state = state.push(kit::tooltip(
+            crate::ui::icons::themed_disabled(crate::ui::icons::layer_lock(true), pm::CARET),
+            crate::tr!("layer-walk", "locked-tip"),
+            kit::TipPosition::FollowCursor,
         ));
     }
     container(state.width(Length::Fixed(COL_STATE))).into()
@@ -1271,60 +1253,58 @@ fn row_menu(entries: Vec<MenuEntry>) -> Element<'static, Message> {
 /// The purge confirmation the footer's Purge button raises.
 pub fn purge_confirm_card(count: usize) -> Element<'static, Message> {
     card(column![
-        text(crate::tr!("layer-walk", "purge-question", count = count))
-            .size(crate::ui::style::text::UI_LARGE),
-        iced::widget::Space::new().height(6),
+        kit::value_text(
+            crate::tr!("layer-walk", "purge-question", count = count),
+            false
+        ),
         row![
-            dialog_btn(t!("Yes"), LayerWalkMsg::PurgeConfirm(true)),
-            dialog_btn(t!("No"), LayerWalkMsg::PurgeConfirm(false)),
+            dialog_btn(t!("Yes"), LayerWalkMsg::PurgeConfirm(true), true),
+            dialog_btn(t!("No"), LayerWalkMsg::PurgeConfirm(false), false),
         ]
-        .spacing(6),
+        .spacing(pm::TOOL_GAP),
     ])
 }
 
 /// The Inspect dialog: walk totals.
 pub fn inspect_card(total: usize, selected: usize, objects: usize) -> Element<'static, Message> {
     card(column![
-        text(crate::tr!("layer-walk", "inspect-total", count = total))
-            .size(crate::ui::style::text::UI_LARGE),
-        text(crate::tr!(
-            "layer-walk",
-            "inspect-selected",
-            count = selected
-        ))
-        .size(crate::ui::style::text::UI_LARGE),
-        text(crate::tr!("layer-walk", "inspect-objects", count = objects))
-            .size(crate::ui::style::text::UI_LARGE),
-        iced::widget::Space::new().height(6),
-        dialog_btn(t!("OK"), LayerWalkMsg::InspectClose),
+        kit::value_text(
+            crate::tr!("layer-walk", "inspect-total", count = total),
+            false
+        ),
+        kit::value_text(
+            crate::tr!("layer-walk", "inspect-selected", count = selected),
+            false
+        ),
+        kit::value_text(
+            crate::tr!("layer-walk", "inspect-objects", count = objects),
+            false
+        ),
+        dialog_btn(t!("OK"), LayerWalkMsg::InspectClose, true),
     ])
 }
 
+/// Width of an inline dialog.
+const CARD_W: f32 = 300.0;
+
+/// An inline dialog: the palette menu's frame around its lines.
 fn card(body: iced::widget::Column<'static, Message>) -> Element<'static, Message> {
-    container(body)
-        .padding(10)
-        .width(Length::Fixed(300.0))
-        .style(|theme: &Theme| container::Style {
-            background: Some(Background::Color(chrome::palette_body(theme))),
-            border: Border {
-                color: chrome::hover(theme),
-                width: 1.0,
-                radius: 4.0.into(),
-            },
-            ..Default::default()
-        })
+    container(body.spacing(pm::TOOL_GAP))
+        .padding(pm::GRID_INSET_L)
+        .width(Length::Fixed(CARD_W))
+        .style(crate::ui::palette_menu::frame_style)
         .into()
 }
 
-fn dialog_btn<'a>(label: Cow<'static, str>, message: LayerWalkMsg) -> Element<'a, Message> {
-    button(text(label).size(crate::ui::style::text::UI))
-        .on_press(msg(message))
-        .style(button::text)
-        .padding([4, 12])
-        .into()
+fn dialog_btn<'a>(
+    label: Cow<'static, str>,
+    message: LayerWalkMsg,
+    primary: bool,
+) -> Element<'a, Message> {
+    kit::text_button(label, Some(msg(message)), primary)
 }
 
-// ── Small buttons (mirroring the Layer Manager toolbar) ───────────────────
+// ── Footer controls ───────────────────────────────────────────────────────
 
 fn footer_check<'a>(
     label: impl Into<Cow<'static, str>>,
@@ -1335,11 +1315,12 @@ fn footer_check<'a>(
     checkbox(checked)
         .label(label)
         .on_toggle(move |on| msg(m(on)))
-        .size(crate::ui::style::text::UI_TITLE)
-        .text_size(crate::ui::style::text::UI_SMALL)
+        .size(pm::CHECK)
+        .text_size(ui_text::UI)
         .into()
 }
 
+/// A footer button: the kit's flat button with an icon and its label.
 fn footer_btn<'a>(
     icon: &'static [u8],
     label: impl Into<Cow<'static, str>>,
@@ -1347,35 +1328,23 @@ fn footer_btn<'a>(
     enabled: bool,
 ) -> Element<'a, Message> {
     let label: Cow<'static, str> = label.into();
-    let mut b = button(
+    button(
         row![
             if enabled {
-                crate::ui::icons::themed(icon, 12.0)
+                crate::ui::icons::themed(icon, pm::ROW_ICON)
             } else {
-                crate::ui::icons::themed_disabled(icon, 12.0)
+                crate::ui::icons::themed_disabled(icon, pm::ROW_ICON)
             },
-            text(label).size(crate::ui::style::text::UI),
+            text(label).size(ui_text::UI).line_height(ui_text::line()),
         ]
-        .spacing(5)
+        .spacing(pm::TOOL_GAP)
         .align_y(iced::Center),
     )
-    .style(move |theme: &Theme, status| button::Style {
-        background: Some(Background::Color(match status {
-            button::Status::Hovered if enabled => chrome::hover(theme),
-            _ => chrome::palette_bar(theme),
-        })),
-        text_color: if enabled {
-            chrome::text(theme)
-        } else {
-            chrome::muted(theme)
-        },
-        ..Default::default()
-    })
-    .padding([4, 10]);
-    if enabled {
-        b = b.on_press(msg(message));
-    }
-    b.into()
+    .on_press_maybe(enabled.then(|| msg(message)))
+    .style(kit::flat_button_style(false))
+    .height(Length::Fixed(pm::TOOL_H))
+    .padding([0.0, pm::CELL_PAD_X])
+    .into()
 }
 
 // ── Tests (pure logic; app-level behaviour tests live with the wiring) ──────

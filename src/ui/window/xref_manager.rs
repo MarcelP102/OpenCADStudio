@@ -71,12 +71,12 @@ fn tree_indent(depth: u32) -> iced::widget::Row<'static, crate::app::Message> {
     row
 }
 const TREE_FONT_SZ: f32 = ui_text::UI;
-/// A row's side padding, the grid's inset.
+/// A row's side padding: its text a cell padding in.
 const ROW_PAD: Padding = Padding {
     top: 0.0,
     bottom: 0.0,
-    left: pm::GRID_INSET_L,
-    right: pm::GRID_INSET_L,
+    left: pm::CELL_PAD_X,
+    right: pm::CELL_PAD_X,
 };
 /// A band of its own under the table (the missing-files notice).
 const BAND_PAD: Padding = Padding {
@@ -634,7 +634,8 @@ impl XrefManagerPanel {
         );
         // Table content width: column widths plus gutters, stretched to the
         // dock when wider so rows fill the panel; narrower docks sidescroll.
-        let table_w = (width - 2.0 * pm::GRID_INSET_L).max(self.table_content_width());
+        let table_w = (width - pm::GRID_INSET_L - pm::GRID_INSET_R - 2.0 * pm::CELL_PAD_X)
+            .max(self.table_content_width());
         // ── Toolbar: split-button groups per spec ───────────────────────
         // Attach ▾ (default DWG), Refresh ▾ (default Refresh), Change Path ▾.
         // The main button runs the default; the triangle opens the rest in an
@@ -957,7 +958,12 @@ impl XrefManagerPanel {
         // Thin external padding + darkest surface around the table, like the
         // properties panel content.
         let table_rows: Element<'_, Message> = container(table_rows)
-            .padding(Padding::ZERO.top(pm::TOOL_GAP))
+            .padding(Padding {
+                top: pm::TOOL_GAP,
+                bottom: 0.0,
+                left: pm::GRID_INSET_L,
+                right: pm::GRID_INSET_R,
+            })
             .width(Fill)
             .into();
 

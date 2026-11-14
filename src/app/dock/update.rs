@@ -298,7 +298,8 @@ impl OpenCADStudio {
                     }
                 };
             }
-            Some(DockDrag::Move { .. } | DockDrag::LayerColumn) | None => {}
+            Some(DockDrag::Move { .. } | DockDrag::LayerColumn(_) | DockDrag::WalkColumn(_))
+            | None => {}
             Some(
                 DockDrag::Width(_)
                 | DockDrag::Split { .. }
@@ -445,10 +446,28 @@ impl OpenCADStudio {
                 let pos = self.quick_properties_pos + (point - last);
                 self.quick_properties_pos = iced::Point::new(pos.x.max(0.0), pos.y.max(0.0));
             }
-            DockDrag::LayerColumn => {
+            DockDrag::LayerColumn(col) => {
                 let Some(last) = last else { return };
-                self.layer_name_col_w =
-                    (self.layer_name_col_w + point.x - last.x).clamp(60.0, 640.0);
+                let dx = point.x - last.x;
+                match col {
+                    None => {
+                        self.layer_name_col_w = (self.layer_name_col_w + dx).clamp(60.0, 640.0);
+                    }
+                    Some(col) => {
+                        let w = crate::ui::window::layers::column_width(&self.layer_col_w, col);
+                        self.layer_col_w.insert(
+                            col,
+                            (w + dx).clamp(crate::ui::window::layers::COL_MIN_W, 640.0),
+                        );
+                    }
+                }
+            }
+            DockDrag::WalkColumn(i) => {
+                let Some(last) = last else { return };
+                if let Some(w) = self.layer_walk_col_w.get_mut(i) {
+                    *w = (*w + point.x - last.x)
+                        .clamp(crate::ui::window::layer_walk::COL_MIN_W, 640.0);
+                }
             }
             DockDrag::Width(id) => {
                 let Some(last) = last else { return };

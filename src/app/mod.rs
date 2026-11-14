@@ -1793,6 +1793,11 @@ pub(super) struct OpenCADStudio {
     modal_dragging: bool,
     /// Layer Manager Name column width in px, adjusted by the divider drag.
     layer_name_col_w: f32,
+    /// Widths of the Layer Manager columns the user sized (the rest keep
+    /// their default).
+    layer_col_w: std::collections::HashMap<crate::ui::window::layers::LayerSortCol, f32>,
+    /// Widths of Layer Walk's name and object-count columns.
+    layer_walk_col_w: [f32; 2],
     /// How far the user has dragged the modal's corner resize grip from the
     /// dialog's natural size (added to its measured width/height). Reset
     /// with `modal_offset` so every dialog opens at its own size.
@@ -4402,6 +4407,8 @@ pub enum Message {
     CommandHistoryHeightReset,
     /// Start dragging the Layer Manager's Name-column divider.
     LayerNameColGrab,
+    /// Start dragging the divider after a Layer Manager column.
+    LayerColGrab(crate::ui::window::layers::LayerSortCol),
     /// Open or close the Layer Manager's column chooser.
     LayerColumnsMenu(bool),
     /// Show or hide a Layer Manager column.
@@ -6725,6 +6732,8 @@ impl OpenCADStudio {
             modal_drag_last: None,
             modal_dragging: false,
             layer_name_col_w: 130.0,
+            layer_col_w: std::collections::HashMap::new(),
+            layer_walk_col_w: crate::ui::window::layer_walk::DEFAULT_COL_W,
             modal_resize: iced::Vector::ZERO,
             modal_content_size: None,
             modal_resizing: false,

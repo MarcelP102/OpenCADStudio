@@ -1083,8 +1083,10 @@ pub enum DockDrag {
         start: (f32, f32, f32, f32),
         origin: Option<iced::Point>,
     },
-    /// Sizing the Layer Manager's Name column.
-    LayerColumn,
+    /// Sizing a Layer Manager column: the Name column (`None`) or another.
+    LayerColumn(Option<crate::ui::window::layers::LayerSortCol>),
+    /// Sizing a Layer Walk column: 0 the name, 1 the object count.
+    WalkColumn(usize),
     /// Moving the floating Quick Properties panel.
     QuickProperties,
 }
