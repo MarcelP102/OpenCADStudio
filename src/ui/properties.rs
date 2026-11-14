@@ -1403,6 +1403,13 @@ impl PropertiesPanel {
 
     // ── Lineweight row (combo_box) ────────────────────────────────────────
 
+    /// A lineweight combo with its list as wide as its longest value (at
+    /// least the field), as the linetype list is.
+    fn lw_menu<'a>(&self, combo: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+        let labels: Vec<String> = lw_options().iter().map(ToString::to_string).collect();
+        crate::ui::wide_menu::wide_menu(combo, self.list_width(labels.iter().map(String::as_str)))
+    }
+
     fn render_lw_row<'a>(&'a self, label: &'a str, lw: LineWeight) -> Element<'a, Message> {
         let selected = LwItem(lw);
         let combo = combo_box(
@@ -1424,7 +1431,7 @@ impl PropertiesPanel {
         .on_open(Message::PropColorPickerClose)
         .width(Length::Fill);
 
-        prop_row_widget(label, combo.into())
+        prop_row_widget(label, self.lw_menu(combo))
     }
 
     fn render_field_lw_row<'a>(
@@ -1456,7 +1463,7 @@ impl PropertiesPanel {
         .on_open(Message::PropColorPickerClose)
         .width(Length::Fill);
 
-        prop_row_widget(label, combo.into())
+        prop_row_widget(label, self.lw_menu(combo))
     }
 
     fn render_lw_varies_row<'a>(&'a self, label: &'a str) -> Element<'a, Message> {
@@ -1479,7 +1486,7 @@ impl PropertiesPanel {
         .on_open(Message::PropColorPickerClose)
         .width(Length::Fill);
 
-        prop_row_widget(label, combo.into())
+        prop_row_widget(label, self.lw_menu(combo))
     }
 
     fn render_field_lw_varies_row<'a>(
@@ -1509,7 +1516,7 @@ impl PropertiesPanel {
         .on_open(Message::PropColorPickerClose)
         .width(Length::Fill);
 
-        prop_row_widget(label, combo.into())
+        prop_row_widget(label, self.lw_menu(combo))
     }
 
     // ── Linetype row (combo_box) ──────────────────────────────────────────
