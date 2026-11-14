@@ -25,6 +25,10 @@ use iced::{
 // ── Row-height-derived constants ─────────────────────────────────────────
 /// Height of a property row: the palette grid's.
 const ROW_H: f32 = crate::ui::style::palette_metrics::ROW_H;
+/// Horizontal padding of an option in a choice row's list, and the list's
+/// own padding.
+const CHOICE_ITEM_PAD_X: f32 = 6.0;
+const CHOICE_POPUP_PAD: f32 = 2.0;
 /// Width of the Quick Properties panel.
 const QUICK_W: f32 = 260.0;
 const PATTERN_CARD_W: f32 = 158.0;
@@ -1086,7 +1090,7 @@ impl PropertiesPanel {
                 let caret = crate::ui::kit::on_selected_row(caret);
                 let head = container(
                     row![
-                        text(shown)
+                        crate::ui::kit::one_line(text(shown))
                             .size(ui_text::UI)
                             .line_height(crate::ui::style::text::line())
                             .width(Length::Fill),
@@ -1541,7 +1545,7 @@ impl PropertiesPanel {
         .style(crate::ui::kit::cell_button_style)
         .padding([0.0, crate::ui::style::palette_metrics::CELL_PAD_X]);
         let caret = crate::ui::kit::on_selected_row(caret);
-        let label_text = text(shown)
+        let label_text = crate::ui::kit::one_line(text(shown))
             .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fill);
@@ -1562,18 +1566,26 @@ impl PropertiesPanel {
         use crate::ui::dropdown_list::{DropdownList, DropdownRow};
         let mut rows = Vec::with_capacity(options.len());
         let mut selected = None;
+        // The list is as wide as its longest option, not the cell: a long
+        // option wrapped onto a second line in a narrow palette.
+        let mut widest = 0.0_f32;
         for (index, option) in options.iter().enumerate() {
             let is_current = !varies && option.as_str() == current;
             if is_current {
                 selected = Some(index);
             }
             let label = LocalizedChoice::new(option.clone()).to_string();
+            widest = widest.max(crate::ui::style::text_metrics::width(
+                &label,
+                ui_text::UI,
+                false,
+            ));
             let msg = Message::PropGeomChoiceChanged {
                 field,
                 value: option.clone(),
             };
             let btn = button(
-                text(label.clone())
+                crate::ui::kit::one_line(text(label.clone()))
                     .size(ui_text::UI)
                     .line_height(crate::ui::style::text::line()),
             )
@@ -1583,20 +1595,28 @@ impl PropertiesPanel {
             } else {
                 button::subtle
             })
-            .padding([2, 6])
+            .padding([2.0, CHOICE_ITEM_PAD_X])
             .width(Length::Fill);
             rows.push(DropdownRow::item(btn, label, msg));
         }
+        let popup_w = (widest
+            + 2.0 * CHOICE_ITEM_PAD_X
+            + 2.0 * CHOICE_POPUP_PAD
+            + 2.0 * crate::ui::style::palette_metrics::LINE
+            + crate::ui::style::palette_metrics::SCROLLBAR_W)
+            .ceil();
         let list = DropdownList::new(rows)
             .selected(selected)
             .select_first_by_default(selected.is_some())
             .on_escape(Message::PropChoiceDismiss { field, quick });
-        let popup = container(list).style(container::bordered_box).padding(2);
+        let popup = container(list)
+            .style(container::bordered_box)
+            .padding(CHOICE_POPUP_PAD);
 
         let value = crate::ui::color_select::editable_drop_down_below(
             head.into(),
             popup.into(),
-            None,
+            Some(Length::Fixed(popup_w)),
             Length::Shrink,
             Message::PropChoiceDismiss { field, quick },
             open,
@@ -1923,7 +1943,7 @@ impl PropertiesPanel {
             Err(_) => ("—".to_string(), true),
         };
         let value_label = container(
-            text(value_text)
+            crate::ui::kit::one_line(text(value_text))
                 .size(ui_text::UI)
                 .line_height(crate::ui::style::text::line())
                 .style(move |theme: &Theme| iced::widget::text::Style {
