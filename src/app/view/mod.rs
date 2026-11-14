@@ -3224,7 +3224,6 @@ bg={bg_ms:.1}ms n={view_count}"
                     self.active_tab,
                     self.hovered_doc_tab,
                     self.doc_tab_menu,
-                    self.doc_tab_layouts,
                     self.file_tabs_above_docks,
                 ),
                 viewport
@@ -3350,7 +3349,6 @@ bg={bg_ms:.1}ms n={view_count}"
                     self.active_tab,
                     self.hovered_doc_tab,
                     self.doc_tab_menu,
-                    self.doc_tab_layouts,
                     self.file_tabs_above_docks,
                 ));
             }
@@ -3647,12 +3645,14 @@ bg={bg_ms:.1}ms n={view_count}"
                 )
             });
 
+        let doc_tab_layouts_layer = self.doc_tab_layouts_layer();
         let composed = stack![
             main_ui,
             floating_layer,
             pinned_layer,
             ribbon_popup_layer,
             keytip_bar,
+            doc_tab_layouts_layer,
             dropdown_layer,
             search_layer,
             ribbon_menu_layer,
@@ -4186,6 +4186,35 @@ fn doc_tab_menu_items(
 /// The layouts of drawing `idx` shown under its hovered tab: Model and its
 /// paper layouts, a check on the current one; a pick switches drawing and
 /// layout.
+impl OpenCADStudio {
+    /// The open layouts list of a drawing tab: under the tab bar (and its
+    /// line), from the tab's left edge, kept inside the window. A press
+    /// anywhere else closes it and still reaches what is under it, so a
+    /// press on another tab switches to it at once.
+    fn doc_tab_layouts_layer(&self) -> Element<'_, Message> {
+        use crate::ui::style::palette_metrics as pm;
+        let layer = self.doc_tab_layouts.and_then(|idx| {
+            let tab = self.tabs.get(idx)?;
+            let bounds = crate::ui::wrap_bar::dropdown_bounds(&format!("DOC_TAB:{idx}"))?;
+            let items = doc_tab_layout_items(tab, idx, idx == self.active_tab);
+            let width = crate::ui::palette_menu::width(&items);
+            let x = bounds.x.min(self.win_size.0 - width).max(0.0);
+            let y = bounds.y + pm::TAB_H + pm::TAB_LINE;
+            let menu = container(crate::ui::palette_menu::menu(items))
+                .padding(iced::Padding::ZERO.top(y).left(x))
+                .width(Fill)
+                .height(Fill);
+            let close = crate::ui::kit::press_first(
+                Space::new().width(Fill).height(Fill),
+                iced::mouse::Button::Left,
+                Message::DocTabLayoutsClose,
+            );
+            Some(stack![close, menu].into())
+        });
+        layer.unwrap_or_else(|| Space::new().width(0).height(0).into())
+    }
+}
+
 fn doc_tab_layout_items(
     tab: &DocumentTab,
     idx: usize,
@@ -4236,7 +4265,6 @@ pub(super) fn doc_tab_bar<'a>(
     active_tab: usize,
     hovered_tab: Option<usize>,
     menu_open: bool,
-    layouts_open: Option<usize>,
     above_docks: bool,
 ) -> Element<'a, Message> {
     use crate::ui::palette_menu;
@@ -4317,22 +4345,12 @@ pub(super) fn doc_tab_bar<'a>(
 
         let has_current_path = tab.current_path.is_some();
         let has_other_drawings = drag_targets.len() > 1;
-        // Resting on the tab lists its layouts. The tab shows the whole
+        // Resting on the tab lists its layouts, in a layer of its own
+        // under the bar (`doc_tab_layouts_layer`). The tab shows the whole
         // file name, so it carries no tooltip.
-        let tab_target: Element<'_, Message> = if layouts_open == Some(idx) {
-            let layouts = doc_tab_layout_items(tab, idx, is_active);
-            let layouts_w = palette_menu::width(&layouts);
-            iced_aw::DropDown::new(tab_container, palette_menu::menu(layouts), true)
-                .alignment(iced_aw::drop_down::Alignment::Bottom)
-                .width(layouts_w)
-                .on_dismiss(Message::DocTabLayoutsClose)
-                .into()
-        } else {
-            tab_container.into()
-        };
         let tab_element: Element<'_, Message> = crate::ui::wrap_bar::PosReport::owned(
             format!("DOC_TAB:{idx}"),
-            ContextMenu::new(tab_target, move || {
+            ContextMenu::new(tab_container, move || {
                 doc_tab_context_menu(idx, has_current_path, has_other_drawings)
             }),
         )

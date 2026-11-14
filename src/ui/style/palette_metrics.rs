@@ -139,8 +139,9 @@ pub const MENU_ITEM_H: f32 = 22.0;
 pub const MENU_CHECK_W: f32 = 20.0;
 /// Horizontal padding of a menu item after the check column.
 pub const MENU_PAD_X: f32 = 10.0;
-/// Vertical padding of a menu frame.
-pub const MENU_PAD_Y: f32 = 4.0;
+/// Vertical padding of a menu frame: none, so the first and last items'
+/// highlights run up to the frame.
+pub const MENU_PAD_Y: f32 = 0.0;
 /// Height of a separator (a 1 px line in it).
 pub const MENU_SEPARATOR_H: f32 = 7.0;
 /// Width of a menu.
