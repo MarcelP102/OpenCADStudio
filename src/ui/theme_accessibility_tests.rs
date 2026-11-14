@@ -432,14 +432,11 @@ fn test_dropdowns_and_selection_overlays() {
 
 #[test]
 fn test_viewport_controls_toggle_buttons_contrast() {
+    use crate::ui::style::chrome;
     for theme in Theme::ALL {
-        let p = theme.palette();
-
-        // 1. Active Toggle Button (Grid & Snap):
-        // Background is primary.weak.color, icon uses primary.weak.text
-        let active_bg = p.primary.weak.color;
-        let active_icon = p.primary.weak.text;
-        let active_contrast = wcag_contrast(active_icon, active_bg);
+        // 1. Active toggle (grid, snap, outline): lit like a ribbon button,
+        // the icon in the strong text colour.
+        let active_contrast = wcag_contrast(chrome::strong(theme), chrome::lit(theme));
         assert!(
             active_contrast >= 3.0,
             "Theme {:?} active viewport toggle button icon ({:.2}:1) fails UI threshold (>=3.0:1)",
@@ -447,15 +444,23 @@ fn test_viewport_controls_toggle_buttons_contrast() {
             active_contrast
         );
 
-        // 2. Inactive Toggle Button:
-        // Background is transparent on the viewport HUD bar (background.base.color)
-        let inactive_icon = p.background.base.text;
-        let inactive_contrast = wcag_contrast(inactive_icon, p.background.base.color);
+        // 2. Inactive toggle: no background; the icon in the text colour on
+        // the bar (the theme background).
+        let inactive_contrast = wcag_contrast(chrome::text(theme), chrome::bar(theme));
         assert!(
             inactive_contrast >= 4.5,
             "Theme {:?} inactive viewport toggle button icon ({:.2}:1) fails WCAG AA (>=4.5:1)",
             theme,
             inactive_contrast
+        );
+
+        // 3. Hovered button: the text colour on the hover surface.
+        let hover_contrast = wcag_contrast(chrome::text(theme), chrome::hover(theme));
+        assert!(
+            hover_contrast >= 3.0,
+            "Theme {:?} hovered viewport button icon ({:.2}:1) fails UI threshold (>=3.0:1)",
+            theme,
+            hover_contrast
         );
     }
 }
