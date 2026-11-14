@@ -3646,6 +3646,7 @@ bg={bg_ms:.1}ms n={view_count}"
             });
 
         let doc_tab_layouts_layer = self.doc_tab_layouts_layer();
+        let doc_tab_menu_layer = self.doc_tab_menu_layer();
         let composed = stack![
             main_ui,
             floating_layer,
@@ -3653,6 +3654,7 @@ bg={bg_ms:.1}ms n={view_count}"
             ribbon_popup_layer,
             keytip_bar,
             doc_tab_layouts_layer,
+            doc_tab_menu_layer,
             dropdown_layer,
             search_layer,
             ribbon_menu_layer,
@@ -4187,6 +4189,33 @@ fn doc_tab_menu_items(
 /// paper layouts, a check on the current one; a pick switches drawing and
 /// layout.
 impl OpenCADStudio {
+    /// The open ☰ menu of the drawing-tab bar: under the bar (and its line),
+    /// its right edge on the ☰ button's, kept inside the window. A press
+    /// anywhere else closes it and still reaches what is under it.
+    fn doc_tab_menu_layer(&self) -> Element<'_, Message> {
+        use crate::ui::style::palette_metrics as pm;
+        let layer = self.doc_tab_menu.then_some(()).and_then(|()| {
+            let bounds = crate::ui::wrap_bar::dropdown_bounds(DOC_TAB_MENU_ID)?;
+            let items = doc_tab_menu_items(&self.tabs, self.active_tab, self.file_tabs_above_docks);
+            let width = crate::ui::palette_menu::width(&items);
+            let x = (bounds.x + bounds.width - width)
+                .min(self.win_size.0 - width)
+                .max(0.0);
+            let y = bounds.y + pm::TAB_H + pm::TAB_LINE;
+            let menu = container(crate::ui::palette_menu::menu(items))
+                .padding(iced::Padding::ZERO.top(y).left(x))
+                .width(Fill)
+                .height(Fill);
+            let close = crate::ui::kit::press_first(
+                Space::new().width(Fill).height(Fill),
+                iced::mouse::Button::Left,
+                Message::DocTabMenu(false, None),
+            );
+            Some(stack![close, menu].into())
+        });
+        layer.unwrap_or_else(|| Space::new().width(0).height(0).into())
+    }
+
     /// The open layouts list of a drawing tab: under the tab bar (and its
     /// line), from the tab's left edge, kept inside the window. A press
     /// anywhere else closes it and still reaches what is under it, so a
@@ -4214,6 +4243,10 @@ impl OpenCADStudio {
         layer.unwrap_or_else(|| Space::new().width(0).height(0).into())
     }
 }
+
+/// Where the drawing-tab bar's ☰ button reports its bounds, so its menu
+/// opens under it.
+const DOC_TAB_MENU_ID: &str = "DOC_TAB_MENU";
 
 fn doc_tab_layout_items(
     tab: &DocumentTab,
@@ -4391,18 +4424,9 @@ pub(super) fn doc_tab_bar<'a>(
     .height(iced::Length::Fixed(pm::TAB_H))
     .padding(0)
     .style(tab_bar_button_style);
-    // The menu is built only while it is open.
-    let (menu, menu_w): (Element<'_, Message>, f32) = if menu_open {
-        let items = doc_tab_menu_items(tabs, active_tab, above_docks);
-        let width = palette_menu::width(&items);
-        (palette_menu::menu(items), width)
-    } else {
-        (Space::new().into(), 0.0)
-    };
-    let menu_btn = iced_aw::DropDown::new(menu_btn, menu, menu_open)
-        .alignment(iced_aw::drop_down::Alignment::Bottom)
-        .width(menu_w)
-        .on_dismiss(Message::DocTabMenu(false, None));
+    // Its menu is a layer of its own under the bar (`doc_tab_menu_layer`),
+    // placed from where the button is drawn.
+    let menu_btn = crate::ui::wrap_bar::PosReport::new(DOC_TAB_MENU_ID, menu_btn);
 
     let tabs_row = Row::with_children(items)
         .spacing(pm::TAB_GAP)
