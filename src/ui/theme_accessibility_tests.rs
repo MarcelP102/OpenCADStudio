@@ -467,9 +467,7 @@ fn test_viewport_controls_toggle_buttons_contrast() {
 
 #[test]
 fn test_block_palette_contrast() {
-    use crate::ui::window::block_palette::{
-        block_card_border, block_card_colors, block_icon_button_text_color,
-    };
+    use crate::ui::window::block_palette::{block_card_border, block_card_colors};
     use iced::widget::button::Status as BtnStatus;
 
     use crate::ui::style::chrome;
@@ -602,27 +600,29 @@ fn test_block_palette_contrast() {
             theme
         );
 
-        // ── 5. Header icon buttons (glyphs inherit button text_color) ──
+        // ── 5. Toolbar icon buttons (kit flat buttons; glyphs inherit the
+        // button's text colour) ──
         // Resting buttons are transparent over the palette body.
-        let icon_rest = block_icon_button_text_color(theme, BtnStatus::Active);
-        assert_eq!(icon_rest, chrome::text(theme));
-        let icon_rest_contrast = wcag_contrast(icon_rest, chrome::palette_body(theme));
+        let flat = crate::ui::kit::flat_button_style(false);
+        let rest = flat(theme, BtnStatus::Active);
+        assert_eq!(rest.background, None);
+        let icon_rest_contrast = wcag_contrast(rest.text_color, chrome::palette_body(theme));
         assert!(
             icon_rest_contrast >= 4.5,
             "Theme {:?} block palette icon button ({:.2}:1) fails WCAG AA on dock background",
             theme,
             icon_rest_contrast
         );
-        // Hovered/pressed buttons sit on the hover surface with strong text.
+        // Hovered/pressed buttons sit on the hover surface.
         for status in [BtnStatus::Hovered, BtnStatus::Pressed] {
-            let icon_fg = block_icon_button_text_color(theme, status);
+            let style = flat(theme, status);
             assert_eq!(
-                icon_fg,
-                chrome::strong(theme),
-                "Theme {:?} hovered icon button must use strong text",
+                style.background,
+                Some(iced::Background::Color(chrome::hover(theme))),
+                "Theme {:?} hovered icon button must use the hover surface",
                 theme
             );
-            let c = wcag_contrast(icon_fg, chrome::hover(theme));
+            let c = wcag_contrast(style.text_color, chrome::hover(theme));
             assert!(
                 c >= 4.5,
                 "Theme {:?} hovered icon button ({:.2}:1) fails WCAG AA on hovered background",

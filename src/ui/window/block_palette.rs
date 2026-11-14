@@ -1448,14 +1448,6 @@ pub(crate) fn block_card_border(theme: &Theme, is_placing: bool) -> Color {
     }
 }
 
-/// Icon colour of the palette's toolbar buttons.
-pub(crate) fn block_icon_button_text_color(theme: &Theme, status: button::Status) -> Color {
-    match status {
-        button::Status::Hovered | button::Status::Pressed => chrome::strong(theme),
-        _ => chrome::text(theme),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
