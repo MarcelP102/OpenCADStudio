@@ -41,9 +41,12 @@ pub fn flat_button_style(active: bool) -> impl Fn(&Theme, button::Status) -> but
                 },
                 radius: BUTTON_RADIUS.into(),
             },
+            // Lit or hovered, the glyph takes the strong text: the plain
+            // text colour is too faint on the hover surface in some light
+            // themes (WCAG AA).
             text_color: if matches!(status, button::Status::Disabled) {
                 chrome::muted(theme)
-            } else if active {
+            } else if active || hovered {
                 chrome::strong(theme)
             } else {
                 chrome::text(theme)
