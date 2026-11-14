@@ -1295,18 +1295,14 @@ impl LayerPanel {
             crate::tr!("modal", "layer-manager"),
             chrome,
         );
-        // Inside the pallet's 1 px border on either side.
-        let body = self.view_content(name_col_w, (width - 2.0 * pm::LINE).max(0.0), active_vp);
+        // No border of its own: docked it runs up to the strip and the
+        // drawing as every palette does; floating, its frame draws one.
+        let body = self.view_content(name_col_w, width, active_vp);
         container(column![title_bar, body])
             .width(Length::Fixed(width))
             .height(Length::Fill)
             .style(|theme: &Theme| container::Style {
                 background: Some(Background::Color(chrome::palette_body(theme))),
-                border: Border {
-                    color: chrome::edge(theme),
-                    width: pm::LINE,
-                    radius: 0.0.into(),
-                },
                 ..Default::default()
             })
             .into()
@@ -1460,7 +1456,7 @@ impl LayerPanel {
                 ..Default::default()
             })
             .height(pm::ROW_H + 2.0 * pm::LINE)
-            .padding(Padding::ZERO.left(pm::GRID_INSET_L).right(pm::GRID_INSET_L))
+            .padding(Padding::ZERO.left(pm::CELL_PAD_X).right(pm::CELL_PAD_X))
             .width(Length::Fill);
         // A right-click on the header chooses the columns.
         let col_header =
@@ -1536,18 +1532,29 @@ impl LayerPanel {
         // pallet (the zero-height spacer), so the header's grey band and
         // borders always run to the pallet's edge; a narrower pallet scrolls
         // the table sideways while the toolbar stays put.
+        // The table sits inside the palette's insets, as the bands above it
+        // do.
         let grid = column![
             col_header,
             table,
             iced::widget::Space::new()
-                .width(Length::Fixed(table_w))
+                .width(Length::Fixed(
+                    (table_w - pm::GRID_INSET_L - pm::GRID_INSET_R).max(0.0)
+                ))
                 .height(0),
         ]
         .height(Length::Fill);
         let grid = scrollable(grid)
             .direction(iced::widget::scrollable::Direction::Horizontal(
-                iced::widget::scrollable::Scrollbar::new(),
+                iced::widget::scrollable::Scrollbar::new()
+                    .width(pm::SCROLL_THUMB_W)
+                    .scroller_width(pm::SCROLL_THUMB_W),
             ))
+            .style(kit::scroll_style)
+            .width(Length::Fill)
+            .height(Length::Fill);
+        let grid = container(grid)
+            .padding(Padding::ZERO.left(pm::GRID_INSET_L).right(pm::GRID_INSET_R))
             .width(Length::Fill)
             .height(Length::Fill);
         if self.columns_menu {
@@ -2431,7 +2438,7 @@ fn layer_row<'a>(
                 text_color: Some(chrome::text(theme)),
                 ..Default::default()
             })
-            .padding(Padding::ZERO.left(pm::GRID_INSET_L).right(pm::GRID_INSET_L))
+            .padding(Padding::ZERO.left(pm::CELL_PAD_X).right(pm::CELL_PAD_X))
             .height(Length::Fixed(ROW_H))
             .width(Fill),
     )
