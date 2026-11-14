@@ -129,10 +129,9 @@ impl<'a> TreeRow<'a> {
         }
         let muted = self.muted;
         cells = cells.push(
-            label(self.label)
+            super::one_line(label(self.label))
                 .size(text::UI)
                 .line_height(text::line())
-                .wrapping(iced::widget::text::Wrapping::None)
                 .width(Length::Fill)
                 .style(move |theme: &Theme| iced::widget::text::Style {
                     color: Some(if muted {

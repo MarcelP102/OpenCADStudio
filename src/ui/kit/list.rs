@@ -93,11 +93,10 @@ pub fn column_divider<'a>(on_resize: Option<Message>) -> Element<'a, Message> {
 pub fn column_header<'a>(columns: Vec<Column>) -> Element<'a, Message> {
     let count = columns.len();
     let cells = columns.into_iter().enumerate().map(|(i, c)| {
-        let mut title = row![label(c.title)
+        let mut title = row![super::one_line(label(c.title))
             .size(text::UI)
             .line_height(text::line())
-            .font(super::SEMIBOLD)
-            .wrapping(iced::widget::text::Wrapping::None)]
+            .font(super::SEMIBOLD)]
         .spacing(pm::TOOL_GAP)
         .align_y(iced::Center);
         if let Some(descending) = c.sort {

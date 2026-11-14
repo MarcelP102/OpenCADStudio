@@ -825,11 +825,10 @@ impl XrefManagerPanel {
         ];
         for (i, label) in headers.into_iter().enumerate() {
             header_row = header_row.push(
-                text(label)
+                kit::one_line(text(label))
                     .size(ui_text::UI)
                     .line_height(crate::ui::style::text::line())
                     .font(kit::SEMIBOLD)
-                    .wrapping(iced::widget::text::Wrapping::None)
                     .width(Length::Fixed(self.col_widths[i])),
             );
             if i + 1 < self.col_widths.len() {
@@ -1561,15 +1560,16 @@ fn xref_row<'a>(
         .padding(0);
         name_cell = name_cell.push(arrow);
     }
-    let name_text: Element<'_, Message> = text(name)
+    let name_text: Element<'_, Message> = kit::one_line(text(name))
         .size(ui_text::UI)
         .line_height(crate::ui::style::text::line())
+        .width(Fill)
         .into();
     name_cell = name_cell.push(name_text);
     let gutter = || iced::widget::Space::new().width(Length::Fixed(COL_GUTTER));
     let status_cell: Element<'_, Message> = row![
         container(status_icon(entry.status)).align_y(iced::Center),
-        text(status_text(entry.status))
+        kit::one_line(text(status_text(entry.status)))
             .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Fill),
@@ -1583,22 +1583,22 @@ fn xref_row<'a>(
         gutter(),
         status_cell,
         gutter(),
-        text(format_size(entry.size_bytes))
+        kit::one_line(text(format_size(entry.size_bytes)))
             .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[2])),
         gutter(),
-        text(type_text(entry))
+        kit::one_line(text(type_text(entry)))
             .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[3])),
         gutter(),
-        text(format_date(entry.modified))
+        kit::one_line(text(format_date(entry.modified)))
             .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[4])),
         gutter(),
-        text(entry.saved_path.clone())
+        kit::one_line(text(entry.saved_path.clone()))
             .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[5])),
@@ -1665,9 +1665,10 @@ fn tree_row(
         .align_y(iced::Center),
     );
     cells = cells.push(
-        text(entry.name.clone())
+        kit::one_line(text(entry.name.clone()))
             .size(TREE_FONT_SZ)
-            .line_height(crate::ui::style::text::line()),
+            .line_height(crate::ui::style::text::line())
+            .width(Fill),
     );
     // #49: messages carry stable identity.
     let row_id = XrefRowId::of(entry.key, &entry.saved_path);
@@ -1704,9 +1705,10 @@ fn tree_host_row(display: DisplayRow, host_name: &str) -> Element<'_, Message> {
     cells =
         cells.push(container(crate::ui::icons::themed_home(pm::ROW_ICON)).align_y(iced::Center));
     cells = cells.push(
-        text(name)
+        kit::one_line(text(name))
             .size(TREE_FONT_SZ)
-            .line_height(crate::ui::style::text::line()),
+            .line_height(crate::ui::style::text::line())
+            .width(Fill),
     );
     container(cells.spacing(pm::TOOL_GAP).width(Fill))
         .style(row_style(false))
@@ -1738,9 +1740,10 @@ fn host_row<'a>(
             .push(iced::widget::Space::new().width(Length::Fixed(INDENT_W * display.depth as f32)));
     }
     name_cell = name_cell.push({
-        let name_text: Element<'_, Message> = text(name)
+        let name_text: Element<'_, Message> = kit::one_line(text(name))
             .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
+            .width(Fill)
             .into();
         name_text
     });
@@ -1748,27 +1751,27 @@ fn host_row<'a>(
     let content = row![
         name_cell.width(Length::Fixed(cw[0])),
         gutter(),
-        text(crate::t!("Opened"))
+        kit::one_line(text(crate::t!("Opened")))
             .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[1])),
         gutter(),
-        text("—")
+        kit::one_line(text("—"))
             .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[2])),
         gutter(),
-        text(crate::t!("Current"))
+        kit::one_line(text(crate::t!("Current")))
             .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[3])),
         gutter(),
-        text("—")
+        kit::one_line(text("—"))
             .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[4])),
         gutter(),
-        text(saved)
+        kit::one_line(text(saved))
             .size(ui_text::UI)
             .line_height(crate::ui::style::text::line())
             .width(Length::Fixed(cw[5])),

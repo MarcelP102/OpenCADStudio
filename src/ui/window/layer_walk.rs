@@ -1050,11 +1050,11 @@ fn walk_row(
     } else {
         UNDERLYING_ALPHA
     };
-    // One line, cut at the cell: a long name wrapped into the rows below.
-    let mut label = text(crate::ui::text_util::elide(&row.name, 48))
+    // One line, cut with "…" at the cell: a long name wrapped into the
+    // rows below.
+    let mut label = kit::one_line(text(row.name.as_str()))
         .size(ui_text::UI)
-        .line_height(crate::ui::style::text::line())
-        .wrapping(iced::widget::text::Wrapping::None);
+        .line_height(crate::ui::style::text::line());
     if matches && !is_selected {
         label = label.font(iced::Font::DEFAULT.weight(iced::font::Weight::Semibold));
     }

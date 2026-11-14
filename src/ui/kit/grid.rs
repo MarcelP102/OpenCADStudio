@@ -26,6 +26,13 @@ pub const SEMIBOLD: iced::Font = iced::Font {
     ..iced::Font::DEFAULT
 };
 
+/// `text` on one line, cut with "…" where its cell ends: a cell's text
+/// never wraps onto a second line over the rows below.
+pub fn one_line(text: iced::widget::Text<'_>) -> iced::widget::Text<'_> {
+    text.wrapping(iced::widget::text::Wrapping::None)
+        .ellipsis(iced::advanced::text::Ellipsis::End)
+}
+
 /// Vertical padding of a text input or combo filling a grid cell: a whole
 /// pixel, so the `UI_LINE` text box plus a 1 px border fills the row.
 pub const FIELD_PAD_Y: f32 = ((pm::ROW_H - text::UI_LINE - 2.0 * pm::LINE) / 2.0).floor();
@@ -54,10 +61,9 @@ fn vline<'a>() -> Element<'a, Message> {
 
 /// Name text: muted when the value is read-only.
 pub fn name_text<'a>(name: impl Into<String>) -> Element<'a, Message> {
-    label(name.into())
+    one_line(label(name.into()))
         .size(text::UI)
         .line_height(text::line())
-        .wrapping(iced::widget::text::Wrapping::None)
         .style(|theme: &Theme| iced::widget::text::Style {
             color: Some(chrome::text(theme)),
         })
@@ -66,10 +72,9 @@ pub fn name_text<'a>(name: impl Into<String>) -> Element<'a, Message> {
 
 /// Value text: muted for read-only values and *VARIES*.
 pub fn value_text<'a>(value: impl Into<String>, muted: bool) -> Element<'a, Message> {
-    label(value.into())
+    one_line(label(value.into()))
         .size(text::UI)
         .line_height(text::line())
-        .wrapping(iced::widget::text::Wrapping::None)
         .style(move |theme: &Theme| iced::widget::text::Style {
             color: Some(if muted {
                 chrome::muted(theme)

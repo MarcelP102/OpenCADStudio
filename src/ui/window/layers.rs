@@ -1891,11 +1891,10 @@ fn sortable_header<'a>(
     active: Option<LayerSortCol>,
     asc: bool,
 ) -> Element<'a, Message> {
-    let mut content = row![text(label)
+    let mut content = row![kit::one_line(text(label))
         .size(ui_text::UI)
         .line_height(ui_line())
-        .font(kit::SEMIBOLD)
-        .wrapping(iced::widget::text::Wrapping::None)]
+        .font(kit::SEMIBOLD)]
     .spacing(pm::TOOL_GAP)
     .align_y(iced::Center);
     if active == Some(col) {
@@ -2163,18 +2162,19 @@ fn layer_row<'a>(
             .width(Length::Fixed(name_col_w))
             .into()
     } else {
-        // ~6 px per glyph at the 10 px row font — track the column width.
+        // Roughly the characters that fit the column (~6 px a glyph): a
+        // longer name gets its full text as a tooltip.
         let name_budget = ((name_col_w / 6.0) as usize).max(8);
-        // One line, cut at the cell: the glyph estimate can run over a narrow
-        // column, and a wrapped name spilled into the rows below (#2251).
+        // One line, cut with "…" at the cell: a wrapped name spilled into
+        // the rows below (#2251).
         // A click selects the row like the rest of it (Ctrl/Shift extend);
         // a double click or F2 renames (#2610).
         let name_btn = mouse_area(
             container(
-                text(crate::ui::text_util::elide(&layer.name, name_budget))
+                kit::one_line(text(layer.name.as_str()))
                     .size(ui_text::UI)
                     .line_height(ui_line())
-                    .wrapping(iced::widget::text::Wrapping::None),
+                    .width(Fill),
             )
             .clip(true)
             .padding(kit::FIELD_PAD)
@@ -2242,7 +2242,7 @@ fn layer_row<'a>(
             LINETYPE_MENU_W,
         )
     } else {
-        text(layer.linetype.as_str())
+        kit::one_line(text(layer.linetype.as_str()))
             .size(ui_text::UI)
             .line_height(ui_line())
             .style(muted_style)
@@ -2266,7 +2266,7 @@ fn layer_row<'a>(
         .input_style(cell_field_style)
         .into()
     } else {
-        text(cur_lw_item.to_string())
+        kit::one_line(text(cur_lw_item.to_string()))
             .size(ui_text::UI)
             .line_height(ui_line())
             .style(muted_style)
@@ -2306,7 +2306,7 @@ fn layer_row<'a>(
     }
 
     // Objects: the count, and how many sit inside blocks when some do.
-    let objects_text = text(layer.objects.to_string())
+    let objects_text = kit::one_line(text(layer.objects.to_string()))
         .size(ui_text::UI)
         .line_height(ui_line())
         .width(w(LayerSortCol::Objects))
