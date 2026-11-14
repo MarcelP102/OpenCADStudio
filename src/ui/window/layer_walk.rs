@@ -889,12 +889,12 @@ fn view_content<'a>(
         background: Some(Background::Color(chrome::palette_bar(theme))),
         border: Border {
             color: chrome::border(theme),
-            width: 1.0,
+            width: pm::line(),
             radius: 0.0.into(),
         },
         ..Default::default()
     })
-    .padding([4, 8])
+    .padding([pm::TOOL_GAP, pm::CELL_PAD_X])
     .width(Fill);
 
     // ── Rows ──────────────────────────────────────────────────────────────
@@ -999,7 +999,22 @@ fn view_content<'a>(
         None
     };
 
-    let mut col = column![
+    // The list (its column header, an inline dialog, the rows) sits inside
+    // the palette's insets, as the bands above it do.
+    let mut grid = column![header_grid];
+    if let Some(dialog) = dialog {
+        grid = grid.push(
+            container(dialog)
+                .padding([6, 8])
+                .width(Fill)
+                .align_x(iced::Center),
+        );
+    }
+    let grid = container(grid.push(list).height(Fill))
+        .padding(Padding::ZERO.left(pm::GRID_INSET_L).right(pm::GRID_INSET_R))
+        .width(Fill)
+        .height(Fill);
+    column![
         container(header)
             .padding([4, 8])
             .style(|theme: &Theme| container::Style {
@@ -1007,28 +1022,19 @@ fn view_content<'a>(
                 ..Default::default()
             })
             .width(Fill),
-        header_grid,
-    ];
-    if let Some(dialog) = dialog {
-        col = col.push(
-            container(dialog)
-                .padding([6, 8])
-                .width(Fill)
-                .align_x(iced::Center),
-        );
-    }
-    col.push(list)
-        .push(
-            container(footer)
-                .padding([4, 8])
-                .style(|theme: &Theme| container::Style {
-                    background: Some(Background::Color(chrome::palette_bar(theme))),
-                    ..Default::default()
-                })
-                .width(Fill),
-        )
-        .height(Fill)
-        .into()
+        grid,
+    ]
+    .push(
+        container(footer)
+            .padding([4, 8])
+            .style(|theme: &Theme| container::Style {
+                background: Some(Background::Color(chrome::palette_bar(theme))),
+                ..Default::default()
+            })
+            .width(Fill),
+    )
+    .height(Fill)
+    .into()
 }
 
 /// One row: name, colour swatch, object count, hold pin and the walk's eye.
@@ -1056,9 +1062,11 @@ fn walk_row(
     } else {
         UNDERLYING_ALPHA
     };
+    // One line, cut at the cell: a long name wrapped into the rows below.
     let mut label = text(crate::ui::text_util::elide(&row.name, 48))
         .size(ui_text::UI)
-        .line_height(crate::ui::style::text::line());
+        .line_height(crate::ui::style::text::line())
+        .wrapping(iced::widget::text::Wrapping::None);
     if matches && !is_selected {
         label = label.font(iced::Font::DEFAULT.weight(iced::font::Weight::Semibold));
     }
@@ -1068,7 +1076,7 @@ fn walk_row(
     // so a pin inside the row area would toggle hold *and* reselect the row.
     let left = mouse_area(
         row![
-            container(label.width(Fill)).width(Length::Fill),
+            container(label.width(Fill)).width(Length::Fill).clip(true),
             container(crate::ui::color_select::swatch(
                 crate::ui::window::layers::iced_color_from_acad(&row.color).scale_alpha(dim)
             ))
@@ -1165,12 +1173,7 @@ fn walk_row(
     .width(Fill)
     .height(Length::Fixed(ROW_H))
     .align_y(iced::Center)
-    .padding(Padding {
-        top: 0.0,
-        bottom: 0.0,
-        left: pm::GRID_INSET_L,
-        right: pm::GRID_INSET_R,
-    })
+    .padding(Padding::ZERO.left(pm::CELL_PAD_X).right(pm::CELL_PAD_X))
     .style(move |theme: &Theme| {
         // Hover outranks selection outranks the zebra band, as in every
         // palette list. The filter tint only applies to the zebra band.
