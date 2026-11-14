@@ -14,7 +14,12 @@ pub fn palette<'a>(
     bands: impl Into<Element<'a, Message>>,
     width: f32,
 ) -> Element<'a, Message> {
-    container(column![title_bar, container(bands).height(Length::Fill)])
+    // Each band keeps a tool gap above it; the first one gets the rest of
+    // the top inset, so it sits as far from the title bar as from the left.
+    let bands = container(bands)
+        .height(Length::Fill)
+        .padding(Padding::ZERO.top(pm::TOP_INSET - pm::TOOL_GAP));
+    container(column![title_bar, bands])
         .width(Length::Fixed(width))
         .height(Length::Fill)
         .style(|theme: &Theme| container::Style {

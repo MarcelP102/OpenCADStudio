@@ -86,6 +86,9 @@ pub const CELL_PAD_X: f32 = 4.0;
 pub const CARET: f32 = 10.0;
 /// Gap between controls at the top of a palette (object list, toolbar).
 pub const TOOL_GAP: f32 = 4.0;
+/// Room above a palette's first band, under its title bar: as wide as the
+/// left inset.
+pub const TOP_INSET: f32 = GRID_INSET_L;
 /// Height of the object list combo and the toolbar buttons above the grid.
 pub const TOOL_H: f32 = 22.0;
 /// Icon size in a toolbar button and in a list or tree row.
@@ -111,6 +114,8 @@ pub const TAB_GAP: f32 = 1.0;
 pub const TAB_PAD_X: f32 = 10.0;
 /// Gap between a tab's dirty dot, name and ×.
 pub const TAB_INNER_GAP: f32 = 6.0;
+/// The line a docked palette's resize band shows under the pointer.
+pub const DIVIDER_LINE: f32 = 2.0;
 /// Size of the dirty dot.
 pub const DIRTY_DOT: f32 = 6.0;
 /// Width of the + and ☰ buttons in the tab bar.

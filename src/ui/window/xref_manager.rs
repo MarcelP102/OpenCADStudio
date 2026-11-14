@@ -1065,7 +1065,18 @@ impl XrefManagerPanel {
         )
         .on_press(Message::XrefSplitGrab)
         .interaction(iced::mouse::Interaction::ResizingVertically);
-        let mut content = column![title_bar, toolbar, table_title, table_rows, split];
+        // The toolbar band keeps a tool gap above it; the rest of the top
+        // inset puts it as far from the title bar as from the left.
+        let top_inset =
+            iced::widget::Space::new().height(Length::Fixed(pm::TOP_INSET - pm::TOOL_GAP));
+        let mut content = column![
+            title_bar,
+            top_inset,
+            toolbar,
+            table_title,
+            table_rows,
+            split
+        ];
         if let Some(notice) = notice {
             content = content.push(notice);
         }

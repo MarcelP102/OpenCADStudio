@@ -1267,26 +1267,34 @@ fn dock_divider(
     side: crate::app::config::DockSide,
 ) -> Element<'static, Message> {
     use crate::ui::style::{chrome, palette_metrics as pm};
-    // The grab band reads as part of the palette: its body colour, with the
-    // 1 px edge line against the drawing.
-    let body = container(Space::new())
-        .width(Length::Fixed(DOCK_DIVIDER_W - pm::LINE))
-        .height(Fill)
-        .style(|theme: &Theme| container::Style {
-            background: Some(Background::Color(chrome::palette_body(theme))),
-            ..Default::default()
-        });
-    let edge = container(Space::new())
-        .width(Length::Fixed(pm::LINE))
-        .height(Fill)
-        .style(|theme: &Theme| container::Style {
-            background: Some(Background::Color(chrome::edge(theme))),
-            ..Default::default()
-        });
-    let line: Element<'static, Message> = match side {
-        crate::app::config::DockSide::Left => row![body, edge].into(),
-        crate::app::config::DockSide::Right => row![edge, body].into(),
+    // The grab band reads as part of the palette: its body colour. Only
+    // under the pointer does its line show, in the accent, against the
+    // drawing.
+    let band = |lit: bool| -> Element<'static, Message> {
+        let body = container(Space::new())
+            .width(Length::Fixed(DOCK_DIVIDER_W - pm::DIVIDER_LINE))
+            .height(Fill)
+            .style(|theme: &Theme| container::Style {
+                background: Some(Background::Color(chrome::palette_body(theme))),
+                ..Default::default()
+            });
+        let edge = container(Space::new())
+            .width(Length::Fixed(pm::DIVIDER_LINE))
+            .height(Fill)
+            .style(move |theme: &Theme| container::Style {
+                background: Some(Background::Color(if lit {
+                    chrome::accent(theme)
+                } else {
+                    chrome::palette_body(theme)
+                })),
+                ..Default::default()
+            });
+        match side {
+            crate::app::config::DockSide::Left => row![body, edge].into(),
+            crate::app::config::DockSide::Right => row![edge, body].into(),
+        }
     };
+    let line = iced::widget::hover(band(false), band(true));
     let grab = Message::Dock(crate::ui::dock::DockMsg::ResizeGrab(id));
     let reset = Message::Dock(crate::ui::dock::DockMsg::WidthReset(id));
     mouse_area(line)

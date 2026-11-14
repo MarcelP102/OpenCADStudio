@@ -352,7 +352,7 @@ const SEARCH_W: f32 = 170.0;
 const SEARCH_W_COMPACT: f32 = 120.0;
 /// The toolbar band: the palette's insets, a tool gap above and below.
 const TOOLBAR_PAD: Padding = Padding {
-    top: pm::TOOL_GAP,
+    top: pm::TOP_INSET,
     bottom: pm::TOOL_GAP,
     left: pm::GRID_INSET_L,
     right: pm::GRID_INSET_R,

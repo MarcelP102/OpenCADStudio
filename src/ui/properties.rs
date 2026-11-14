@@ -857,7 +857,7 @@ impl PropertiesPanel {
         )
         .width(Length::Fill)
         .padding(Padding {
-            top: crate::ui::style::palette_metrics::TOOL_GAP,
+            top: crate::ui::style::palette_metrics::TOP_INSET,
             bottom: crate::ui::style::palette_metrics::TOOL_GAP,
             left: crate::ui::style::palette_metrics::GRID_INSET_L,
             right: crate::ui::style::palette_metrics::GRID_INSET_R,
