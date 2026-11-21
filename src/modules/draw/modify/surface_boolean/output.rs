@@ -48,7 +48,12 @@ impl Out {
 /// The template's common data for a new object: appearance, layer, owner and
 /// XDATA; never its handle, extension dictionary or reactors.
 pub fn fresh_common(template: &EntityType) -> EntityCommon {
-    let mut c = template.common().clone();
+    fresh(template.common())
+}
+
+/// `common` for a new object: no handle, extension dictionary or reactors.
+pub fn fresh(common: &EntityCommon) -> EntityCommon {
+    let mut c = common.clone();
     c.handle = Handle::NULL;
     c.xdictionary_handle = None;
     c.reactors.clear();
@@ -192,13 +197,7 @@ pub fn hatch_path(l: &[Oriented], outer: bool) -> BoundaryPath {
                     let (s, e) = (oriented_start(o), oriented_end(o));
                     // A point just along the travel direction tells which way.
                     let next = o.0.point_at(if o.1 { 0.01 } else { 0.99 });
-                    crate::scene::boundary::exact_boundary_edge(
-                        Some(&o.0),
-                        s,
-                        e,
-                        next,
-                        o.0.is_closed(),
-                    )
+                    crate::scene::exact_boundary_edge(Some(&o.0), s, e, next, o.0.is_closed())
                 })
                 .collect();
         }
@@ -250,14 +249,30 @@ pub fn hatch_result(src: &Hatch, template: &EntityType, faces: &[Face], frame: &
     h.elevation = frame.elevation;
     h.is_associative = false;
     h.seed_points.clear();
+    normal_style_for_holes(&mut h, faces);
     Out::Entity(EntityType::Hatch(Box::new(h)))
 }
 
-/// Results for `faces` styled like `template`: a hatch for a hatch template,
-/// outlines for anything else.
+/// The result's paths are exactly its area, read even-odd: an Ignore or
+/// Outer style would fill a hole the operation made, so a result with holes
+/// draws in Normal style.
+pub fn normal_style_for_holes(h: &mut Hatch, faces: &[Face]) {
+    if faces.iter().any(|f| f.loops.len() > 1) {
+        h.style = document::entities::HatchStyleType::Normal;
+    }
+}
+
+/// Results for `faces` of the template's kind: a hatch stays one hatch, a
+/// REGION one REGION per face, a filled 2D SOLID (which holds four corners
+/// at most) a solid-fill hatch; anything else gives outlines.
 pub fn results(template: &EntityType, faces: &[Face], frame: &Frame) -> Vec<Out> {
     match template {
         EntityType::Hatch(h) => vec![hatch_result(h, template, faces, frame)],
+        EntityType::Region(_) => faces
+            .iter()
+            .filter_map(|f| region_out(template, f, frame))
+            .collect(),
+        EntityType::Solid(_) => vec![hatch_result(&Hatch::solid(), template, faces, frame)],
         _ => outline_results(template, faces, frame),
     }
 }

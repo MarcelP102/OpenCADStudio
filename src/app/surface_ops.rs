@@ -43,8 +43,10 @@ impl super::OpenCADStudio {
         Task::none()
     }
 
+    /// The selected shapes, as the planner counts them.
     fn surface_boolean_selection(&self, i: usize) -> Vec<Handle> {
-        self.tabs[i].scene.selected_handles_in_order()
+        let scene = &self.tabs[i].scene;
+        sb::shape_handles(&scene.document, &scene.selected_handles_in_order())
     }
 
     fn surface_boolean_gather(&mut self, op: Op, count: usize) {
@@ -69,8 +71,7 @@ impl super::OpenCADStudio {
         match handles.len() {
             0 => return Task::none(),
             1 => {
-                self.command_line
-                    .push_info(crate::t!(SELECT_MORE_PROMPT).as_ref());
+                // The gather shows the prompt.
                 self.surface_boolean_gather(op, 1);
                 return Task::none();
             }

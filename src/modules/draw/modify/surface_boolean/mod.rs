@@ -42,17 +42,13 @@ impl Op {
         }
     }
 
-    /// The command for `name` (a command name or its alias).
+    /// The command named `name`. Aliases (AS, CS, IS) live in `ocad.pgp`
+    /// and reach the dispatcher already expanded.
     pub fn parse(name: &str) -> Option<Op> {
-        match name
-            .trim()
-            .trim_start_matches(['_', '.'])
-            .to_ascii_uppercase()
-            .as_str()
-        {
-            "ADDSURFACE" | "AS" => Some(Op::Add),
-            "CLIPSURFACE" | "CS" => Some(Op::Clip),
-            "INTERSECTSURFACE" | "IS" => Some(Op::Intersect),
+        match name {
+            "ADDSURFACE" => Some(Op::Add),
+            "CLIPSURFACE" => Some(Op::Clip),
+            "INTERSECTSURFACE" => Some(Op::Intersect),
             _ => None,
         }
     }
@@ -249,22 +245,28 @@ fn frame_of(entities: &[EntityType], extent: f64) -> Frame {
     Frame::new([0.0, 0.0, 1.0], z, extent)
 }
 
-/// Validate the whole selection before anything changes. Errors are
-/// user-facing sentences.
-pub(crate) fn validate(doc: &Document, handles: &[Handle]) -> Result<Selection, String> {
+/// The selected objects that count as shapes: each once, without the
+/// associative hatches whose boundary is selected too (a window selection
+/// picks both; such a hatch follows the result instead).
+pub fn shape_handles(doc: &Document, handles: &[Handle]) -> Vec<Handle> {
     let mut unique: Vec<Handle> = Vec::new();
     for h in handles {
         if !unique.contains(h) {
             unique.push(*h);
         }
     }
-    // A selected associative hatch whose boundary is selected too (a window
-    // selection picks both) is not a shape of its own: it follows the result.
     let snapshot = unique.clone();
     unique.retain(|h| match doc.get_entity(*h) {
         Some(EntityType::Hatch(hatch)) => !(hatch.is_associative && follows_any(hatch, &snapshot)),
         _ => true,
     });
+    unique
+}
+
+/// Validate the whole selection before anything changes. Errors are
+/// user-facing sentences.
+pub(crate) fn validate(doc: &Document, handles: &[Handle]) -> Result<Selection, String> {
+    let unique = shape_handles(doc, handles);
     let mut entities = Vec::new();
     for h in &unique {
         let Some(e) = doc.get_entity(*h) else {
@@ -330,32 +332,48 @@ pub(crate) fn validate(doc: &Document, handles: &[Handle]) -> Result<Selection, 
     Ok(Selection { items, frame })
 }
 
-/// The paths of `hatch` the operation does not touch: those that follow
-/// objects outside the selection, and those that follow no object at all.
-fn untouched_paths(hatch: &Hatch, sel: &Selection) -> Vec<BoundaryPath> {
-    let selected: Vec<Handle> = sel.items.iter().map(|i| i.handle).collect();
-    hatch
-        .paths
-        .iter()
-        .filter(|p| !p.boundary_handles.iter().any(|b| selected.contains(b)))
-        .cloned()
-        .collect()
+/// A hatch whose selected boundary object disappears or becomes a hatch
+/// itself. Its other paths may still bound a surface: which ones stay is
+/// settled once the whole plan is known (see [`settle_hatches`]).
+fn release(hatch: &Hatch, plan: &mut EditPlan) {
+    plan.hatches.push(HatchUpdate {
+        hatch: Box::new(hatch.clone()),
+        bound: Vec::new(),
+        kept: hatch.paths.clone(),
+    });
 }
 
-/// A hatch whose selected boundary object disappears or becomes a hatch
-/// itself. Its other paths still bound a surface, so it keeps them; only a
-/// hatch with nothing left is erased.
-fn release(hatch: &Hatch, sel: &Selection, plan: &mut EditPlan) {
-    let kept = untouched_paths(hatch, sel);
-    if kept.is_empty() {
-        plan.removals.push(hatch.common.handle);
-    } else {
-        plan.hatches.push(HatchUpdate {
-            hatch: Box::new(hatch.clone()),
-            bound: Vec::new(),
-            kept,
-        });
-    }
+/// Once every replacement and removal is planned: each hatch keeps only the
+/// paths that follow no object the plan changes (objects outside the
+/// selection, selected objects left as they are, or no object at all). New
+/// result loops are the outermost boundary only when nothing else stays, and
+/// a released hatch with nothing left is erased.
+fn settle_hatches(plan: &mut EditPlan) {
+    let touched: std::collections::HashSet<Handle> = plan
+        .replacements
+        .iter()
+        .map(|r| r.handle)
+        .chain(plan.removals.iter().copied())
+        .collect();
+    let outermost = document::entities::BoundaryPathFlags::OUTERMOST.bits();
+    let mut erased = Vec::new();
+    plan.hatches.retain_mut(|u| {
+        u.kept
+            .retain(|p| !p.boundary_handles.iter().any(|b| touched.contains(b)));
+        if !u.kept.is_empty() {
+            for (path, _) in &mut u.bound {
+                path.flags = document::entities::BoundaryPathFlags::from_bits(
+                    path.flags.bits() & !outermost,
+                );
+            }
+        }
+        let empty = u.bound.is_empty() && u.kept.is_empty();
+        if empty && !u.hatch.common.handle.is_null() {
+            erased.push(u.hatch.common.handle);
+        }
+        !empty
+    });
+    plan.removals.extend(erased);
 }
 
 /// The loops of `faces` in the order outline results are written: each outer
@@ -399,14 +417,12 @@ fn follow(
     sel: &Selection,
     keep: bool,
 ) -> HatchUpdate {
+    // Which of the old paths stay is settled with the whole plan.
     let kept = if keep {
-        untouched_paths(hatch, sel)
+        hatch.paths.clone()
     } else {
         Vec::new()
     };
-    // The result loops are the outermost boundary only when no other path
-    // (e.g. one of an unselected object) stays.
-    let outermost = kept.is_empty();
     // A hatch facing the other way keeps its own normal, so its kept paths
     // stay valid: the new paths are written in its coordinates.
     let n = sel.frame.normal;
@@ -416,7 +432,7 @@ fn follow(
         .into_iter()
         .zip(refs)
         .map(|((l, outer), r)| {
-            let mut path = output::hatch_path(l, outer && outermost);
+            let mut path = output::hatch_path(l, outer);
             if flipped {
                 reframe(&mut path, &sel.frame, &target, true);
             }
@@ -429,6 +445,7 @@ fn follow(
         hatch.elevation = sel.frame.elevation;
     }
     hatch.seed_points.clear();
+    output::normal_style_for_holes(&mut hatch, faces);
     HatchUpdate {
         hatch: Box::new(hatch),
         bound,
@@ -456,7 +473,7 @@ fn push_replacement(
                 .collect();
             plan.hatches.push(follow(h, faces, refs, sel, true));
         } else {
-            release(h, sel, plan);
+            release(h, plan);
         }
     }
     plan.replacements.push(Replacement {
@@ -473,13 +490,6 @@ fn op_err(e: String) -> String {
     .into_owned()
 }
 
-fn overlaps_bounds(a: &Brep, b: &Brep, frame: &Frame) -> bool {
-    match (shape::bounds(a, frame), shape::bounds(b, frame)) {
-        (Some(x), Some(y)) => shape::bounds_overlap(x, y, frame.linear),
-        _ => false,
-    }
-}
-
 /// CLIPSURFACE: every object loses the area of all selected closed shapes
 /// above it, and closed shapes are split along every open path above them.
 /// An open path loses its parts inside the closed shapes above it. All from
@@ -487,32 +497,31 @@ fn overlaps_bounds(a: &Brep, b: &Brep, frame: &Frame) -> bool {
 pub(crate) fn plan_clip(sel: &Selection) -> Result<EditPlan, String> {
     let n = sel.items.len();
     let frame = &sel.frame;
-    // Above item i: the union of the closed shapes, and the open paths.
-    let mut area_above: Vec<Option<Brep>> = vec![None; n];
-    let mut knives_above: Vec<Vec<Vec<ocs_geom::geom2d::Curve>>> = vec![Vec::new(); n];
+    let mut plan = EditPlan::default();
+    let (mut changed, mut removed) = (0, 0);
+    // Top → bottom, gathering what lies above: the union of the closed
+    // shapes (with its box) and the open paths. The topmost object has
+    // nothing above it and stays as it is.
+    let mut above: Option<Brep> = None;
+    let mut above_box: Option<[f64; 4]> = None;
+    let mut knives: Vec<Vec<ocs_geom::geom2d::Curve>> = Vec::new();
     for i in (0..n.saturating_sub(1)).rev() {
-        let above = &sel.items[i + 1];
-        knives_above[i] = knives_above[i + 1].clone();
-        area_above[i] = area_above[i + 1].clone();
-        if let Some(path) = above.path() {
-            knives_above[i].push(path.clone());
-        } else if let Some(a) = above.closed_area() {
-            area_above[i] = Some(match area_above[i].take() {
+        let up = &sel.items[i + 1];
+        if let Some(path) = up.path() {
+            knives.push(path.clone());
+        } else if let Some(a) = up.closed_area() {
+            above = Some(match above.take() {
                 None => a.clone(),
                 Some(acc) => shape::boolean(&acc, a, BooleanOp::Union)
                     .map_err(op_err)?
                     .unwrap_or(acc),
             });
+            above_box = above.as_ref().and_then(|b| shape::bounds(b, frame));
         }
-    }
-    let mut plan = EditPlan::default();
-    let (mut changed, mut removed) = (0, 0);
-    for (i, item) in sel.items.iter().enumerate().take(n.saturating_sub(1)) {
+        let item = &sel.items[i];
         if let Some(path) = item.path() {
             // An open path keeps its parts outside the closed shapes above.
-            let Some(above) = &area_above[i] else {
-                continue;
-            };
+            let Some(above) = &above else { continue };
             let boundary = shape::boundary(above, frame);
             if shape::clip_path(path, &boundary, true, frame).is_empty() {
                 continue; // Nothing of it is covered.
@@ -534,8 +543,12 @@ pub(crate) fn plan_clip(sel: &Selection) -> Result<EditPlan, String> {
         let Some(area) = &item.shape.area else {
             continue;
         };
-        let (rest, covered) = match &area_above[i] {
-            Some(above) if overlaps_bounds(area, above, frame) => {
+        let near = match (above_box, shape::bounds(area, frame)) {
+            (Some(x), Some(y)) => shape::bounds_overlap(x, y, frame.linear),
+            _ => false,
+        };
+        let (rest, covered) = match &above {
+            Some(above) if near => {
                 let covered = shape::boolean(area, above, BooleanOp::Intersect)
                     .map_err(op_err)?
                     .is_some();
@@ -551,16 +564,15 @@ pub(crate) fn plan_clip(sel: &Selection) -> Result<EditPlan, String> {
             _ => (Some(area.clone()), false),
         };
         let Some(rest) = rest else {
-            // Fully covered: the object goes, and with it every hatch that has
-            // no other boundary left.
+            // Fully covered: the object goes, and its hatches lose it.
             plan.removals.push(item.handle);
             for h in &item.hatches {
-                release(h, sel, &mut plan);
+                release(h, &mut plan);
             }
             removed += 1;
             continue;
         };
-        let cut = shape::split(&rest, &knives_above[i], frame);
+        let cut = shape::split(&rest, &knives, frame);
         if !covered && cut.is_none() {
             continue; // No overlap and no cut through it.
         }
@@ -570,6 +582,7 @@ pub(crate) fn plan_clip(sel: &Selection) -> Result<EditPlan, String> {
         push_replacement(&mut plan, sel, item, &faces, &hatches);
         changed += 1;
     }
+    settle_hatches(&mut plan);
     plan.summary = if changed + removed == 0 {
         t("Clip Surface: the selected shapes do not overlap; nothing changed.")
     } else {
@@ -680,7 +693,7 @@ pub(crate) fn plan_add(sel: &Selection) -> Result<EditPlan, String> {
             .find(|i| !sel.items[*i].hatches.is_empty());
         for &i in g.iter().filter(|i| Some(**i) != keeper) {
             for h in &sel.items[i].hatches {
-                release(h, sel, &mut plan);
+                release(h, &mut plan);
             }
         }
         let kept: Vec<&Hatch> = keeper
@@ -690,6 +703,7 @@ pub(crate) fn plan_add(sel: &Selection) -> Result<EditPlan, String> {
         plan.removals
             .extend(g[1..].iter().map(|i| sel.items[*i].handle));
     }
+    settle_hatches(&mut plan);
     plan.summary = if groups.is_empty() {
         nothing_added()
     } else {
@@ -856,7 +870,7 @@ pub(crate) fn plan_intersect(sel: &Selection) -> Result<EditPlan, String> {
                 .map(|k| ResultRef::Addition(first + k))
                 .collect();
             let mut update = follow(h, &faces, refs, sel, false);
-            update.hatch.common = output::fresh_common(&EntityType::Hatch(update.hatch.clone()));
+            update.hatch.common = output::fresh(&update.hatch.common);
             plan.hatches.push(update);
         }
         plan.additions.extend(results);

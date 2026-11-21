@@ -493,12 +493,94 @@ fn an_elliptical_edge_gives_a_region() {
 }
 
 #[test]
-fn aliases_parse() {
-    assert_eq!(Op::parse("as"), Some(Op::Add));
-    assert_eq!(Op::parse("_CS"), Some(Op::Clip));
-    assert_eq!(Op::parse("IS"), Some(Op::Intersect));
+fn command_names_parse() {
+    assert_eq!(Op::parse("ADDSURFACE"), Some(Op::Add));
+    assert_eq!(Op::parse("CLIPSURFACE"), Some(Op::Clip));
     assert_eq!(Op::parse("INTERSECTSURFACE"), Some(Op::Intersect));
     assert_eq!(Op::parse("CIRCLE"), None);
+}
+
+/// A sliver over the top of a unioned circle: the circle's edge is an arc
+/// whose samples miss its top, and the boxes must still overlap.
+#[test]
+fn an_overlap_near_an_arcs_extreme_is_found() {
+    let mut doc = Document::new();
+    let sliver = add(&mut doc, rect(-0.5, 9.99, 0.5, 10.5, 1));
+    let a = add(&mut doc, circle(0., 0., 10.));
+    let b = add(&mut doc, circle(15., 0., 10.));
+    let p = plan(Op::Clip, &doc, &[sliver, a, b]).unwrap();
+    assert!(
+        p.replacements.iter().any(|r| r.handle == sliver),
+        "the sliver is clipped"
+    );
+}
+
+/// A REGION stays a REGION and a filled 2D SOLID stays filled.
+#[test]
+fn regions_and_solids_keep_their_kind() {
+    use document::entities::{Region, Solid};
+    let mut doc = Document::new();
+    let s1 = add(
+        &mut doc,
+        EntityType::Solid(Solid::new(
+            Vector3::new(0., 0., 0.),
+            Vector3::new(4., 0., 0.),
+            Vector3::new(0., 4., 0.),
+            Vector3::new(4., 4., 0.),
+        )),
+    );
+    let s2 = add(&mut doc, rect(2., 2., 6., 6., 2));
+    let p = plan(Op::Add, &doc, &[s1, s2]).unwrap();
+    let EntityType::Hatch(h) = entity(&p.replacements[0].results[0]) else {
+        panic!("a filled solid gives a fill")
+    };
+    assert!(h.is_solid);
+
+    let sel = validate(&doc, &[s1, s2]).unwrap();
+    let faces = shape::faces(sel.items[0].shape.area.as_ref().unwrap(), &sel.frame);
+    let out = output::results(&EntityType::Region(Region::new()), &faces, &sel.frame);
+    assert!(matches!(out.as_slice(), [Out::Region { .. }]));
+}
+
+/// An Ignore-style hatch fills over its islands: its area is the outer
+/// loop, and a hole the clip makes is drawn as a hole.
+#[test]
+fn an_ignore_style_hatch_is_clipped_as_drawn() {
+    use document::entities::HatchStyleType;
+    let mut doc = Document::new();
+    let mut h = solid_hatch(0., 0., 10., 10.);
+    h.paths.push(rect_path(1., 1., 2., 2., None)); // island, filled over
+    h.style = HatchStyleType::Ignore;
+    let base = add(&mut doc, EntityType::Hatch(Box::new(h)));
+    let cutter = add(&mut doc, rect(4., 4., 6., 6., 2));
+    let p = plan(Op::Clip, &doc, &[base, cutter]).unwrap();
+    let EntityType::Hatch(out) = entity(&p.replacements[0].results[0]) else {
+        panic!()
+    };
+    assert_eq!(out.paths.len(), 2, "outer loop and the new hole only");
+    assert_eq!(out.style, HatchStyleType::Normal, "the hole must show");
+}
+
+/// A hatch filling C (topmost, unchanged) with island A: covering A keeps
+/// the hatch and C's path.
+#[test]
+fn a_hatch_keeps_the_path_of_a_selected_object_left_unchanged() {
+    let mut doc = Document::new();
+    let a = add(&mut doc, rect(5., 5., 8., 8., 1));
+    let mut h = Hatch::solid();
+    h.is_associative = true;
+    let hatch = add(&mut doc, EntityType::Hatch(Box::new(h)));
+    let c = add(&mut doc, rect(0., 0., 20., 20., 2));
+    if let Some(EntityType::Hatch(h)) = doc.get_entity_mut(hatch) {
+        h.paths.push(rect_path(0., 0., 20., 20., Some(c)));
+        h.paths.push(rect_path(5., 5., 8., 8., Some(a)));
+    }
+    let p = plan(Op::Clip, &doc, &[a, c]).unwrap();
+    assert_eq!(p.removals, vec![a], "only A goes, not the hatch");
+    let u = &p.hatches[0];
+    assert_eq!(u.hatch.common.handle, hatch);
+    assert_eq!(u.kept.len(), 1);
+    assert_eq!(u.kept[0].boundary_handles, vec![c]);
 }
 
 // ── Associative hatches follow their boundary's result ────────────────────

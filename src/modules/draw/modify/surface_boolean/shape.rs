@@ -6,7 +6,7 @@
 //! for ADDSURFACE, also a region closed by the chord from end to start.
 //! Results are read back from the regions' faces as loops of exact curves.
 
-use document::entities::BoundaryEdge;
+use document::entities::{BoundaryEdge, HatchStyleType};
 use document::EntityType;
 use ocs_geom::geom2d::vec::Vec2;
 use ocs_geom::geom2d::{
@@ -185,7 +185,7 @@ pub(crate) fn shape_of(entity: &EntityType, frame: &Frame) -> Result<Shape, Reje
                 return Err(Reject::Unsupported);
             }
             let plane = crate::entities::curve::ocs_plane(h.normal, h.elevation);
-            let mut acc: Option<Brep> = None;
+            let mut loops: Vec<Vec<Curve>> = Vec::with_capacity(h.paths.len());
             for path in &h.paths {
                 let curves: Vec<Curve> = path
                     .edges
@@ -207,8 +207,30 @@ pub(crate) fn shape_of(entity: &EntityType, frame: &Frame) -> Result<Shape, Reje
                     })
                     .collect::<Option<_>>()
                     .ok_or(Reject::Degenerate)?;
-                let curves = into_frame(&plane, curves, frame)?;
-                let Some(loop_region) = region(frame, &[curves]) else {
+                loops.push(into_frame(&plane, curves, frame)?);
+            }
+            // The area as drawn: nesting depth decides which loops count
+            // (Normal: all, alternating; Outer: the two outermost levels;
+            // Ignore: the outermost only).
+            let depth = |k: usize| {
+                let p = loops[k].first().map(start_of);
+                p.map_or(0, |p| {
+                    (0..loops.len())
+                        .filter(|&m| m != k && inside(&loops[m], p, frame))
+                        .count()
+                })
+            };
+            let max_depth = match h.style {
+                HatchStyleType::Ignore => 0,
+                HatchStyleType::Outer => 1,
+                _ => usize::MAX,
+            };
+            let mut acc: Option<Brep> = None;
+            for (k, l) in loops.iter().enumerate() {
+                if depth(k) > max_depth {
+                    continue;
+                }
+                let Some(loop_region) = region(frame, std::slice::from_ref(l)) else {
                     continue;
                 };
                 acc = Some(match acc {
@@ -724,7 +746,14 @@ pub(crate) fn bounds(b: &Brep, frame: &Frame) -> Option<[f64; 4]> {
             out[3] = out[3].max(p[1]);
         }
     }
-    out[0].is_finite().then_some(out)
+    if !out[0].is_finite() {
+        return None;
+    }
+    // Samples can fall short of a curve's true extreme (by up to ~2% of an
+    // arc's radius at this density): pad so the box always contains it. A
+    // box too large only costs a Boolean; one too small would miss an overlap.
+    let pad = 0.03 * (out[2] - out[0]).max(out[3] - out[1]) + frame.linear;
+    Some([out[0] - pad, out[1] - pad, out[2] + pad, out[3] + pad])
 }
 
 pub(crate) fn bounds_overlap(a: [f64; 4], b: [f64; 4], eps: f64) -> bool {
