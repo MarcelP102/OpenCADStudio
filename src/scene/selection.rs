@@ -81,7 +81,10 @@ impl Scene {
         }
         self.selected_constraint = None;
         self.table_cells = None;
-        let expanded = self.expanded_with_leaders(handles);
+        let expanded = crate::app::layer_fill::apply::with_layer_fills(
+            &self.document,
+            self.expanded_with_leaders(handles),
+        );
         let mut changed = false;
         for handle in expanded {
             if self.selected.insert(handle) {
@@ -98,7 +101,12 @@ impl Scene {
         if handles.is_empty() {
             return;
         }
-        let doomed: HashSet<Handle> = self.expanded_with_leaders(handles).into_iter().collect();
+        let doomed: HashSet<Handle> = crate::app::layer_fill::apply::with_layer_fills(
+            &self.document,
+            self.expanded_with_leaders(handles),
+        )
+        .into_iter()
+        .collect();
         let mut changed = false;
         for handle in &doomed {
             changed |= self.selected.remove(handle);
@@ -135,7 +143,10 @@ impl Scene {
     pub fn select_entity(&mut self, handle: Handle, exclusive: bool) {
         self.selected_constraint = None;
         self.table_cells = None;
-        let handles = self.handles_expanded_for_leader_annotations(&[handle]);
+        let handles = crate::app::layer_fill::apply::with_layer_fills(
+            &self.document,
+            self.handles_expanded_for_leader_annotations(&[handle]),
+        );
         let mut changed = false;
 
         if exclusive {
@@ -282,10 +293,12 @@ impl Scene {
     pub(crate) fn replace_selection(&mut self, selected: HashSet<Handle>) {
         self.selected_constraint = None;
         let handles: Vec<Handle> = selected.iter().copied().collect();
-        let selected: HashSet<Handle> = self
-            .handles_expanded_for_leader_annotations(&handles)
-            .into_iter()
-            .collect();
+        let selected: HashSet<Handle> = crate::app::layer_fill::apply::with_layer_fills(
+            &self.document,
+            self.handles_expanded_for_leader_annotations(&handles),
+        )
+        .into_iter()
+        .collect();
 
         if self.selected != selected {
             let mut seen = HashSet::default();
@@ -310,7 +323,10 @@ impl Scene {
 
     /// Remove a single entity from the selection (Shift+click subtractive pick).
     pub fn deselect_entity(&mut self, handle: Handle) {
-        let handles = self.handles_expanded_for_leader_annotations(&[handle]);
+        let handles = crate::app::layer_fill::apply::with_layer_fills(
+            &self.document,
+            self.handles_expanded_for_leader_annotations(&[handle]),
+        );
         let mut changed = false;
 
         for handle in handles {

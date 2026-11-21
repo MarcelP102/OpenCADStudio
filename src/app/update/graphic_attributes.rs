@@ -793,6 +793,12 @@ impl OpenCADStudio {
                 .as_ref(),
             );
         }
+        // A shape and its layer fill are selected together: the shape's
+        // fill is replaced, the fill itself is not converted a second time.
+        let (selected, layer_filled) = crate::app::layer_fill::apply::split_layer_fills(
+            &self.tabs[i].scene.document,
+            &selected,
+        );
         let selected = selected.as_slice();
         let pending = self.begin_undo(
             i,
@@ -811,6 +817,7 @@ impl OpenCADStudio {
             }
         }
         changed |= self.replace_graphic_fills(i, value, selected);
+        self.mark_fills_overridden(i, &layer_filled);
         if changed {
             self.tabs[i].dirty = true;
             self.refresh_properties();

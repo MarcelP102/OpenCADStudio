@@ -71,6 +71,7 @@ impl OpenCADStudio {
         self.tabs[i]
             .layers
             .sync_with_viewports(&doc_layers, vp_info);
+        self.sync_layer_fill_column(i);
         let groups = self.layer_group_names(i);
         self.tabs[i].layers.set_groups(groups);
         self.sync_ribbon_layers();

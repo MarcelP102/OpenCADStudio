@@ -36,7 +36,8 @@ impl OpenCADStudio {
         // Ordinary drawables, viewports and raster images use targeted
         // entity/object deltas. Block sentinels and novel layers retain
         // the structure snapshot fallback.
-        let delta_safe = self.delta_add_safe(i, &entity);
+        let delta_safe = self.delta_add_safe(i, &entity)
+            && !self.layer_fill_may_apply(i, &entity, preserve_commit_layer);
         let pending = self.begin_undo(i, label, 1, delta_safe);
         let is_associative_dimension = matches!(
             crate::entities::dimension::as_dimension(&entity),
@@ -62,6 +63,7 @@ impl OpenCADStudio {
         if let Some(handle) = committed {
             self.apply_continuous_constraints(i, &[handle]);
             self.notify_entities_committed(i, &[handle]);
+            self.auto_fill_committed(i, &[handle]);
         }
         self.tabs[i].dirty = true;
         let prompt = self.tabs[i].active_cmd.as_ref().map(|c| c.prompt());
@@ -100,6 +102,10 @@ impl OpenCADStudio {
             .cloned();
         let delta_safe =
             symbol_names.is_none() && entities.iter().all(|entity| self.delta_add_safe(i, entity));
+        let delta_safe = delta_safe
+            && !entities
+                .iter()
+                .any(|entity| self.layer_fill_may_apply(i, entity, preserve_commit_layer));
         let pending = self.begin_undo(i, label, entities.len(), delta_safe);
         if let Some(names) = symbol_names {
             let retained = self.tabs[i]
@@ -124,6 +130,7 @@ impl OpenCADStudio {
         }
         self.apply_continuous_constraints(i, &committed);
         self.notify_entities_committed(i, &committed);
+        self.auto_fill_committed(i, &committed);
         self.tabs[i].dirty = true;
         self.tabs[i].scene.clear_preview_wire();
         let prompt = self.tabs[i].active_cmd.as_ref().map(|c| c.prompt());
@@ -163,6 +170,10 @@ impl OpenCADStudio {
             .cloned();
         let delta_safe =
             symbol_names.is_none() && entities.iter().all(|entity| self.delta_add_safe(i, entity));
+        let delta_safe = delta_safe
+            && !entities
+                .iter()
+                .any(|entity| self.layer_fill_may_apply(i, entity, preserve_commit_layer));
         let pending = self.begin_undo(i, label, entities.len(), delta_safe);
         if let Some(names) = symbol_names {
             let retained = self.tabs[i]
@@ -186,6 +197,7 @@ impl OpenCADStudio {
             committed.extend(handle);
         }
         self.apply_continuous_constraints(i, &committed);
+        self.auto_fill_committed(i, &committed);
         self.tabs[i].dirty = true;
         self.tabs[i].scene.clear_preview_wire();
         self.tabs[i].active_cmd = None;
@@ -250,6 +262,8 @@ impl OpenCADStudio {
         };
         let delta_safe =
             text_field.is_none() && !attribute_fields && self.delta_add_safe(i, &entity);
+        let delta_safe =
+            delta_safe && !self.layer_fill_may_apply(i, &entity, preserve_commit_layer);
         let field_value = match &entity {
             document::EntityType::MText(m) => m.value.clone(),
             document::EntityType::AttributeDefinition(a) => a.default_value.clone(),
@@ -296,6 +310,7 @@ impl OpenCADStudio {
         }
         if let Some(handle) = committed {
             self.apply_continuous_constraints(i, &[handle]);
+            self.auto_fill_committed(i, &[handle]);
         }
         self.tabs[i].dirty = true;
         self.tabs[i].scene.clear_preview_wire();
@@ -1522,6 +1537,7 @@ impl OpenCADStudio {
         }
         if finish {
             self.finish_live_entity_history(i, handle);
+            self.auto_fill_live_entity(i, handle);
             self.tabs[i].scene.clear_preview_wire();
             self.tabs[i].active_cmd = None;
             self.tabs[i].snap_result = None;
@@ -1540,6 +1556,7 @@ impl OpenCADStudio {
         // vertices. Close the deferred history image and UI state
         // without publishing a redundant Modified delta.
         self.finish_live_entity_history(i, handle);
+        self.auto_fill_live_entity(i, handle);
         self.tabs[i].scene.clear_preview_wire();
         self.tabs[i].active_cmd = None;
         self.tabs[i].snap_result = None;

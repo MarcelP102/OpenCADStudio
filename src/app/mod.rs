@@ -68,6 +68,7 @@ pub(crate) mod text_match;
 mod geographic_location;
 pub(crate) mod helpers;
 mod history;
+pub(crate) mod layer_fill;
 mod layer_filter_store;
 mod layer_filters;
 #[doc(hidden)]

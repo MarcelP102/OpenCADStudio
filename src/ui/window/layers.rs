@@ -56,6 +56,8 @@ pub enum LayerSortCol {
     Description,
     /// How many objects are on the layer, block contents included.
     Objects,
+    /// The fill closed shapes drawn on the layer get (FILLBYLAYER).
+    Fill,
 }
 
 impl LayerSortCol {
@@ -73,6 +75,7 @@ impl LayerSortCol {
             Self::Transparency => "Transparency",
             Self::Description => "Description",
             Self::Objects => "Objects",
+            Self::Fill => "Fill",
         }
     }
 
@@ -89,6 +92,7 @@ impl LayerSortCol {
             Self::Transparency => t!("Transp."),
             Self::Description => t!("Description"),
             Self::Objects => t!("Objects"),
+            Self::Fill => t!("Fill"),
         }
     }
 
@@ -100,6 +104,7 @@ impl LayerSortCol {
             Self::Transparency => COL_TRANS,
             Self::Description => COL_DESC,
             Self::Objects => COL_OBJECTS,
+            Self::Fill => COL_FILL,
             _ => COL_ICON,
         }
     }
@@ -107,7 +112,7 @@ impl LayerSortCol {
 
 /// The columns after Name that can be moved and hidden, in their default
 /// order.
-const COLUMNS: [LayerSortCol; 10] = [
+const COLUMNS: [LayerSortCol; 11] = [
     LayerSortCol::On,
     LayerSortCol::Freeze,
     LayerSortCol::Lock,
@@ -116,6 +121,7 @@ const COLUMNS: [LayerSortCol; 10] = [
     LayerSortCol::Linetype,
     LayerSortCol::Lineweight,
     LayerSortCol::Transparency,
+    LayerSortCol::Fill,
     LayerSortCol::Objects,
     LayerSortCol::Description,
 ];
@@ -381,6 +387,8 @@ pub struct Layer {
     /// Objects on the layer, and how many of them are inside blocks.
     pub objects: usize,
     pub in_blocks: usize,
+    /// The layer's fill style as the Fill column shows it.
+    pub fill: String,
     /// Freeze state per-viewport, indexed parallel to LayerPanel::vp_cols.
     pub vp_frozen: Vec<bool>,
     /// Colour override per-viewport, parallel to `vp_frozen`.
@@ -407,6 +415,7 @@ impl Layer {
             description: String::new(),
             objects: 0,
             in_blocks: 0,
+            fill: FILL_NONE.to_string(),
             vp_frozen: vec![],
             vp_colors: vec![],
             vp_overridden: vec![],
@@ -440,6 +449,10 @@ pub struct LayerPanel {
     /// they were counted for, so they are counted again only after a change.
     pub counts: std::collections::HashMap<String, (usize, usize)>,
     pub counts_key: Option<(u64, u64)>,
+    /// Fill style per layer (lower-case name → what the Fill column shows),
+    /// and the choices its list offers.
+    pub fills: std::collections::HashMap<String, String>,
+    pub fill_options: Vec<String>,
     /// What the filter tree was last worked out from: the selection's layers,
     /// the layer table, the filters the drawing keeps and the ribbon setting.
     pub tree_key: Option<u64>,
@@ -516,6 +529,8 @@ impl Default for LayerPanel {
             description_edit: None,
             counts: Default::default(),
             counts_key: None,
+            fills: Default::default(),
+            fill_options: Vec::new(),
             tree_key: None,
             keys_active: false,
             current_layer: "0".to_string(),
@@ -1133,6 +1148,7 @@ impl LayerPanel {
                     description: l.description.clone(),
                     objects: 0,
                     in_blocks: 0,
+                    fill: FILL_NONE.to_string(),
                     vp_frozen,
                     vp_colors,
                     vp_overridden,
@@ -1141,6 +1157,7 @@ impl LayerPanel {
             .collect();
 
         self.apply_counts();
+        self.apply_fills();
         // Re-resolve the selection against the rebuilt rows by name.
         self.selected = anchor_name.and_then(|n| self.layers.iter().position(|l| l.name == n));
         self.selected_multi = multi_names
@@ -1174,6 +1191,31 @@ impl LayerPanel {
                 .unwrap_or_default();
             layer.objects = objects;
             layer.in_blocks = in_blocks;
+        }
+    }
+
+    /// Take the fill style per layer (lower-case name → shown text) and the
+    /// choices the Fill column offers.
+    pub fn set_fills(
+        &mut self,
+        fills: std::collections::HashMap<String, String>,
+        options: Vec<String>,
+    ) {
+        self.fills = fills;
+        self.fill_options = options;
+        self.apply_fills();
+        if self.sort_col == Some(LayerSortCol::Fill) {
+            self.apply_sort();
+        }
+    }
+
+    fn apply_fills(&mut self) {
+        for layer in &mut self.layers {
+            layer.fill = self
+                .fills
+                .get(&layer.name.to_lowercase())
+                .cloned()
+                .unwrap_or_else(|| FILL_NONE.to_string());
         }
     }
 
@@ -1228,6 +1270,7 @@ impl LayerPanel {
                     .to_lowercase()
                     .cmp(&b.description.to_lowercase()),
                 LayerSortCol::Objects => a.objects.cmp(&b.objects),
+                LayerSortCol::Fill => a.fill.to_lowercase().cmp(&b.fill.to_lowercase()),
             };
             // Stable tie-break by name so equal keys keep a predictable order.
             let ord = ord.then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
@@ -1484,6 +1527,7 @@ impl LayerPanel {
                 col_w,
                 &columns,
                 self.eye_on(&layer.name),
+                &self.fill_options,
             );
             let (name, groups, in_group) = (
                 layer.name.clone(),
@@ -2067,6 +2111,7 @@ fn layer_row<'a>(
     col_w: &HashMap<LayerSortCol, f32>,
     columns: &[LayerSortCol],
     eye_on: bool,
+    fill_options: &'a [String],
 ) -> Element<'a, Message> {
     let w = |col: LayerSortCol| Length::Fixed(column_width(col_w, col));
     // #22: messages carry the layer name (resolved at dispatch time) so a
@@ -2285,6 +2330,18 @@ fn layer_row<'a>(
         desc_cell = desc_cell.id(description_input_id());
     }
 
+    // Fill: what closed shapes drawn on the layer are filled with.
+    let lname_fill = lname.clone();
+    let fill_cell: Element<'_, Message> =
+        iced::widget::pick_list(Some(layer.fill.clone()), fill_options, |value: &String| {
+            value.clone()
+        })
+        .on_select(move |choice| Message::LayerFillSet(lname_fill.clone(), choice))
+        .text_size(ui_text::UI)
+        .padding(kit::FIELD_PAD)
+        .width(w(LayerSortCol::Fill))
+        .into();
+
     // Objects: the count, and how many sit inside blocks when some do.
     let objects_text = kit::one_line(text(layer.objects.to_string()))
         .size(ui_text::UI)
@@ -2352,6 +2409,7 @@ fn layer_row<'a>(
         (LayerSortCol::Transparency, trans_cell.into()),
         (LayerSortCol::Description, desc_cell.into()),
         (LayerSortCol::Objects, objects_cell),
+        (LayerSortCol::Fill, fill_cell),
     ];
     for col in columns {
         if let Some(at) = cells.iter().position(|(c, _)| c == col) {
@@ -2572,6 +2630,9 @@ const COL_DESC: f32 = 200.0;
 /// The filter tree beside the table.
 const TREE_W: f32 = 210.0;
 const COL_OBJECTS: f32 = 60.0;
+const COL_FILL: f32 = 90.0;
+/// What the Fill column shows for a layer without a fill style.
+pub const FILL_NONE: &str = "None";
 /// The status column (current, used, empty).
 const COL_STATUS: f32 = 36.0;
 /// The eye button at the row's end.

@@ -4946,6 +4946,7 @@ impl OpenCADStudio {
             }
 
             Message::LayerTransparencyCommit => self.on_layer_transparency_commit(),
+            Message::LayerFillSet(layer, choice) => self.on_layer_fill_set(&layer, &choice),
 
             Message::LayerDescriptionEdit(name, s) => {
                 let i = self.active_tab;

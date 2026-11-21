@@ -893,6 +893,9 @@ impl OpenCADStudio {
         if let Some(t) = self.dispatch_blockvars(cmd, i) {
             return Some(t);
         }
+        if let Some(t) = self.dispatch_layer_fill(cmd, i) {
+            return Some(t);
+        }
         if let Some(t) = self.dispatch_styleprops(cmd, i) {
             return Some(t);
         }

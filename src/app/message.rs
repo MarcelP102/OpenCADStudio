@@ -1055,6 +1055,8 @@ pub enum Message {
     LayerTransparencyEdit(String, String),
     /// Enter in the transparency field applies the typed value.
     LayerTransparencyCommit,
+    /// Layer Manager Fill column: (layer name, None / Solid / pattern name).
+    LayerFillSet(String, String),
     /// Typing in a layer's description: (layer name, text).
     LayerDescriptionEdit(String, String),
     LayerDescriptionCommit,
