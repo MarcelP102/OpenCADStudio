@@ -2798,6 +2798,21 @@ impl OpenCADStudio {
                 return Some(self.solid_boolean(BoolOp::Union));
             }
 
+            // ── 2D surface Booleans ────────────────────────────────────────
+            "ADDSURFACE" | "CLIPSURFACE" | "INTERSECTSURFACE" => {
+                use crate::modules::draw::modify::surface_boolean::Op;
+                if let Some(op) = Op::parse(cmd) {
+                    return Some(self.surface_boolean_start(op));
+                }
+            }
+
+            "ADDSURFACEAPPLY" | "CLIPSURFACEAPPLY" | "INTERSECTSURFACEAPPLY" => {
+                use crate::modules::draw::modify::surface_boolean::Op;
+                if let Some(op) = Op::parse(cmd.trim_end_matches("APPLY")) {
+                    return Some(self.surface_boolean_apply(op));
+                }
+            }
+
             "INTERSECT" => {
                 use crate::modules::model::boolean_cmd::BoolOp;
                 if !self.intersect_ready() {

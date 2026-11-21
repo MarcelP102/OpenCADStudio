@@ -643,7 +643,7 @@ fn stored_arc_angles(start: f64, end: f64, counter_clockwise: bool, whole: bool)
     (stored_start, stored_start + sweep)
 }
 
-fn exact_boundary_edge(
+pub(crate) fn exact_boundary_edge(
     curve: Option<&Curve>,
     start: [f64; 2],
     end: [f64; 2],

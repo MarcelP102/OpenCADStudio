@@ -30,6 +30,7 @@ pub mod setbylayer;
 pub mod spline_ops;
 pub mod splinedit;
 pub mod stretch;
+pub mod surface_boolean;
 pub mod torient;
 pub mod translate;
 pub mod trim;

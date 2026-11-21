@@ -415,7 +415,7 @@ Generated from the command registry of OpenCADStudio `main` (commit f664c42, 202
 |---|---|---|
 | `PRINTALL` | — | Triggers batch print sequence for all sheets in drawing. |
 
-### Modify (64)
+### Modify (67)
 
 | Command | Aliases | Description |
 |---|---|---|
@@ -427,6 +427,7 @@ Generated from the command registry of OpenCADStudio `main` (commit f664c42, 202
 | `3DMIRROR` | — | 3DMIRROR [X\|Y\|Z] — add a mirror of the selected solid across a plane. |
 | `3DMOVE` | — | Interactive 3D transformation triad with axis locking. Displays a 3D move coordinate gizmo to constrain translation st along X, Y, or Z axes. |
 | `3DROTATE` | — | Rotates solids around X, Y, or Z gimbal rings. Displays 3D rotation gizmo rings to constrain rotation around a specific coordinate axis in space. |
+| `ADDSURFACE` | `AS` | Merges overlapping or edge-sharing closed 2D shapes (polylines, circles, ellipses, splines, hatches, 2D solids, regions) into one surface on exact geometry. The result keeps the bottommost shape's properties, kind, handle and drawing-order slot; holes stay holes. An open path is closed by the line from its end to its start. *Tip:* Select at least two shapes, then press Enter; one undo step. |
 | `ALIGN` | `AL` | Aligns objects with other objects in 2D or 3D using 1, 2, or 3 source/destination reference point pairs. *Tip:* Combines Move, Rotate, and Scale into a single operation. At the prompt "Scale objects based on alignment points?", select Yes. |
 | `ALIGN3D` | — | Alias token for 3DALIGN. † |
 | `ALIGNBOTTOM` | — | Aligns the selected objects to the bottom edge of their combined extents. † |
@@ -441,6 +442,7 @@ Generated from the command registry of OpenCADStudio `main` (commit f664c42, 202
 | `BREAK` | `BR` | Breaks the selected object between two specified points or splits it at a single point. *Tip:* To break an object cleanly at one point, select the object, type F (First point), click the split point, and enter @. |
 | `CHAMFER` | `CHA` | Bevels or chamfers the corners of two intersecting lines by distances or angle. *Tip:* Specify distance with D. Distance 0,0 produces an instant sharp corne just like Fillet R 0. |
 | `CHSPACE` | — | Transfers selected objects between Model Space and Paper Space while automatically scaling them to match the viewport. *Tip:* Allows moving title blocks, notes, or detail callouts between paper space and model space with zero scale distortion. |
+| `CLIPSURFACE` | `CS` | Cuts every selected closed 2D shape by the selected shapes above it in the drawing order (never the selection order); the topmost stays. An open path above splits the shapes below it; an open path below loses its covered part. Fully covered shapes are erased. *Tip:* Associative hatches follow the clipped outlines. |
 | `COPY` | `CO`, `CP` | Duplicates selected objects across one or multiple destination points (also alias CP). *Tip:* OCS defaults to multiple copy mode. Type A while copying to quickly create an array of copies along a line. |
 | `COPYBASE` | — | Menu: Copy with Base Point. |
 | `DRAWORDER` | `DR` | Changes the visual display and plotting order of overlapping objects (Bring to Front, Send to Back, Above, Under). *Tip:* Use "Bring to front" for text and dimensions over hatch patterns. Use TEXTTOFRONT to handle all annotations at once. |
@@ -457,6 +459,7 @@ Generated from the command registry of OpenCADStudio `main` (commit f664c42, 202
 | `FLATTEN` | — | Converts 3D geometry and rogue non-zero Z elevations into 2D flat projections on the current UCS plane. *Tip:* Essential when working with survey or Revit DWG exports where lines sit at varying elevations and refuse to fillet or hatch. |
 | `HATCHEDIT` | `HE` | Modifies an existing hatch pattern, angle, scale, origin point, or boundary associativity. *Tip:* Double-clicking any hatch pattern in the drawing automatically launches this command or the Hatch Editor contextual ribbon. |
 | `HATCHTOBACK` | `HB` | Sends all hatch objects behind all other drawing geometry automatically. *Tip:* The counterpart to TEXTTOFRONT. Instantly fixes drawings where hatching covers walls, lines, or notes. |
+| `INTERSECTSURFACE` | `IS` | Creates a new object for every area where two or more selected closed 2D shapes overlap; overlap areas never stack. Each takes everything from the bottommost shape covering it (layer, colour, linetype, lineweight, transparency, XDATA and its kind, so a hatch gives a hatch). The parts of open paths inside the shapes are kept too. *Tip:* Reports "Selected shapes have no common surface." when nothing overlaps. |
 | `JOIN` | `J` | Combines collinear lines, arcs, polylines, and splines into a single unified object. *Tip:* Objects must have touching endpoints or be collinear. Quickly turns fragmented lines into a single continuous polyline. |
 | `JUSTIFYTEXT` | — | Menu: Text Justify. |
 | `LENGTHEN` | `LEN` | Changes the length of objects and the included angle of arcs. *Tip:* Options include Delta (DE), Percent (P), Total (T), and Dynamic (DY). Total lets you set the final exact length directly. |

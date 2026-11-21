@@ -375,6 +375,9 @@ fn command_category(name: &str) -> &'static str {
         "ALIGN",
         "ADDVERTEX",
         "DELVERTEX",
+        "ADDSURFACE",
+        "CLIPSURFACE",
+        "INTERSECTSURFACE",
     ]
     .contains(&name)
     {

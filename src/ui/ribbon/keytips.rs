@@ -398,6 +398,7 @@ const CODES: &[(&str, &str, &str)] = &[
     ("draw", "ERASE", "ER"),
     ("draw", "EXPLODE", "EX"),
     ("draw", "OFFSET", "OF"),
+    ("draw", "surface_boolean", "SB"),
     ("modify_extension", "SETBYLAYER", "SL"),
     ("modify_extension", "LENGTHEN", "LE"),
     ("modify_extension", "PEDIT", "EP"),

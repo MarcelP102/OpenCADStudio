@@ -47,6 +47,7 @@ pub enum SubmenuId {
     RecentInput,
     Clipboard,
     DrawOrder,
+    Surface,
     Isolate,
     SnapOverrides,
     SavedFilters,
@@ -815,6 +816,18 @@ fn idle_rows(
                 ),
             ],
             open: open_submenu == Some(SubmenuId::DrawOrder),
+        });
+        // 2D surface Booleans on the selected closed shapes.
+        rows.push(MenuRow::Submenu {
+            id: SubmenuId::Surface,
+            label: t!("Surface").into_owned(),
+            icon: command_icon("ADDSURFACE"),
+            items: vec![
+                cmd(t!("Add Surface").into_owned(), "ADDSURFACE"),
+                cmd(t!("Clip Surface").into_owned(), "CLIPSURFACE"),
+                cmd(t!("Intersect Surface").into_owned(), "INTERSECTSURFACE"),
+            ],
+            open: open_submenu == Some(SubmenuId::Surface),
         });
         rows.push(MenuRow::Separator);
     } else if let Some(id) = selected_constraint {

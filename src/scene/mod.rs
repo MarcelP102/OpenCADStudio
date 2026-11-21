@@ -64,7 +64,7 @@ mod block_base_point_tests;
 mod block_definition_handles_tests;
 #[cfg(test)]
 mod block_solid_fill_tests;
-mod boundary;
+pub(crate) mod boundary;
 mod camera_ops;
 #[cfg(test)]
 mod dwg_edit_after_open_tests;

@@ -40,7 +40,7 @@ impl CadModule for DrawModule {
         };
         use modify::{
             array, copy, delete, explode, fillet, mirror, offset, rotate, scale, stretch,
-            translate, trim,
+            surface_boolean, translate, trim,
         };
         use properties::match_prop;
 
@@ -116,6 +116,12 @@ impl CadModule for DrawModule {
                         delete::tool().into(),
                         explode::tool().into(),
                         offset::tool().into(),
+                        RibbonItem::Dropdown {
+                            id: surface_boolean::DROPDOWN_ID,
+                            icon: surface_boolean::ICON,
+                            items: surface_boolean::DROPDOWN_ITEMS.to_vec(),
+                            default: "ADDSURFACE",
+                        },
                     ],
                 },
                 RibbonGroup {

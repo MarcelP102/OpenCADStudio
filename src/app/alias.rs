@@ -87,7 +87,7 @@ const WEB_ALIAS_KEY: &str = "opencadstudio.aliases";
 /// MLR / MLAL / QL dropped); version 15 TS (TABLESTYLE) and CT (CTABLESTYLE);
 /// version 16 dropped WO (WIPEOUT has no alias); version 17 DDLTYPE
 /// (LINETYPE); version 19 DST, DDIM and DIMSTY (DIMSTYLE).
-const DEFAULT_ALIASES_VERSION: u32 = 19;
+const DEFAULT_ALIASES_VERSION: u32 = 20;
 
 #[cfg(target_arch = "wasm32")]
 const WEB_ALIAS_VERSION_KEY: &str = "opencadstudio.aliases.version";
@@ -127,6 +127,7 @@ fn introduced_at(version: u32) -> &'static [(&'static str, &'static str)] {
         15 => &[("TS", "TABLESTYLE"), ("CT", "CTABLESTYLE")],
         17 => &[("DDLTYPE", "LINETYPE")],
         19 => &[("DST", "DIMSTYLE"), ("DDIM", "DIMSTYLE"), ("DIMSTY", "DIMSTYLE")],
+        20 => &[("AS", "ADDSURFACE"), ("CS", "CLIPSURFACE"), ("IS", "INTERSECTSURFACE")],
         _ => &[],
     }
 }
