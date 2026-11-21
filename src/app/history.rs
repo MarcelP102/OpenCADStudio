@@ -119,7 +119,7 @@ impl OpenCADStudio {
             .unwrap_or_else(|| fallback.to_string())
     }
 
-    fn clear_redo_history(&mut self, i: usize) {
+    pub(super) fn clear_redo_history(&mut self, i: usize) {
         let discarded = self.tabs[i].history.take_redo();
         defer_history_drop(discarded);
     }

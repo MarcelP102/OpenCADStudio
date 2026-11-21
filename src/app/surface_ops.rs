@@ -110,6 +110,8 @@ impl super::OpenCADStudio {
                 // written the step is dropped, so the previous command stays.
                 if wrote {
                     self.undo_steps_reported(1, false);
+                    // The partial step must not come back with REDO.
+                    self.clear_redo_history(i);
                 } else {
                     self.discard_last_undo_entry(i);
                 }
@@ -250,5 +252,196 @@ impl super::OpenCADStudio {
             *wrote = true;
         }
         Ok(select)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app::OpenCADStudio;
+    use document::entities::{
+        BoundaryEdge, BoundaryPath, Circle, Hatch, LwPolyline, LwVertex, PolylineEdge,
+    };
+    use document::objects::ObjectType;
+    use document::types::{Vector2, Vector3};
+    use document::{EntityType, Handle};
+
+    fn app() -> OpenCADStudio {
+        let mut app = OpenCADStudio::new_for_test();
+        app.automation_op(r#"{"op":"new"}"#);
+        app
+    }
+
+    fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> EntityType {
+        let mut p = LwPolyline::new();
+        for (x, y) in [(x0, y0), (x1, y0), (x1, y1), (x0, y1)] {
+            p.vertices.push(LwVertex::new(Vector2::new(x, y)));
+        }
+        p.is_closed = true;
+        EntityType::LwPolyline(p)
+    }
+
+    fn circle(x: f64, y: f64, r: f64) -> EntityType {
+        let mut c = Circle::new();
+        c.center = Vector3::new(x, y, 0.0);
+        c.radius = r;
+        EntityType::Circle(c)
+    }
+
+    fn add(app: &mut OpenCADStudio, e: EntityType) -> Handle {
+        let i = app.active_tab;
+        app.tabs[i].scene.add_entity(e)
+    }
+
+    fn select(app: &mut OpenCADStudio, handles: &[Handle]) {
+        let i = app.active_tab;
+        app.tabs[i].scene.deselect_all();
+        for h in handles {
+            app.tabs[i].scene.select_entity(*h, false);
+        }
+    }
+
+    fn run(app: &mut OpenCADStudio, cmd: &str) {
+        let line = serde_json::json!({ "op": "run", "cmd": cmd }).to_string();
+        app.automation_op(&line);
+    }
+
+    fn handles(app: &OpenCADStudio) -> Vec<Handle> {
+        let i = app.active_tab;
+        let mut v: Vec<Handle> = app.tabs[i]
+            .scene
+            .document
+            .entities()
+            .map(|e| e.common().handle)
+            .collect();
+        v.sort();
+        v
+    }
+
+    fn entity(app: &OpenCADStudio, h: Handle) -> EntityType {
+        app.tabs[app.active_tab]
+            .scene
+            .document
+            .get_entity(h)
+            .cloned()
+            .expect("entity")
+    }
+
+    /// Effective drawing-order key: a sort-table entry, else the handle.
+    fn draw_key(app: &OpenCADStudio, h: Handle) -> u64 {
+        let doc = &app.tabs[app.active_tab].scene.document;
+        doc.objects
+            .values()
+            .filter_map(|o| match o {
+                ObjectType::SortEntitiesTable(t) => Some(t),
+                _ => None,
+            })
+            .flat_map(|t| {
+                t.entries()
+                    .map(|e| (e.entity_handle, e.sort_handle))
+                    .collect::<Vec<_>>()
+            })
+            .find(|(e, _)| *e == h)
+            .map_or(h.value(), |(_, s)| s.value())
+    }
+
+    #[test]
+    fn clip_by_alias_is_one_undo_step_and_selects_the_results() {
+        let mut app = app();
+        let base = add(&mut app, rect(0., 0., 10., 10.));
+        let hole = add(&mut app, circle(5., 5., 2.));
+        let before = handles(&app);
+        select(&mut app, &[hole, base]);
+        run(&mut app, "CS");
+        let after = handles(&app);
+        assert_eq!(after.len(), 3, "outline, hole outline and the circle");
+        let new: Vec<Handle> = after
+            .iter()
+            .copied()
+            .filter(|h| !before.contains(h))
+            .collect();
+        assert_eq!(new.len(), 1);
+        // The source keeps its handle; the hole is a new two-bulge outline
+        // drawn just above it, still under the circle that cut it.
+        assert!(matches!(entity(&app, base), EntityType::LwPolyline(p) if p.vertices.len() == 4));
+        assert!(matches!(entity(&app, new[0]), EntityType::LwPolyline(p) if p.vertices.len() == 2));
+        assert!(
+            draw_key(&app, base) < draw_key(&app, new[0])
+                && draw_key(&app, new[0]) < draw_key(&app, hole)
+        );
+        let i = app.active_tab;
+        let mut selected: Vec<Handle> = app.tabs[i].scene.selected.iter().copied().collect();
+        selected.sort();
+        let mut want = vec![base, new[0]];
+        want.sort();
+        assert_eq!(selected, want, "only the results are selected");
+
+        app.undo_active_tab();
+        assert_eq!(handles(&app), before, "one undo restores the drawing");
+        assert!(matches!(entity(&app, base), EntityType::LwPolyline(p) if p.vertices.len() == 4));
+    }
+
+    #[test]
+    fn intersect_gives_the_piece_its_own_associative_hatch() {
+        let mut app = app();
+        let a = add(&mut app, rect(0., 0., 4., 4.));
+        let mut hatch = Hatch::solid();
+        let mut path = BoundaryPath::new();
+        let mut pe = PolylineEdge::new(Vec::new(), true);
+        for (x, y) in [(0., 0.), (4., 0.), (4., 4.), (0., 4.)] {
+            pe.add_vertex(Vector2::new(x, y), 0.0);
+        }
+        path.edges.push(BoundaryEdge::Polyline(pe));
+        path.boundary_handles = vec![a];
+        hatch.paths.push(path);
+        hatch.is_associative = true;
+        let h = add(&mut app, EntityType::Hatch(Box::new(hatch)));
+        let b = add(&mut app, rect(2., 2., 6., 6.));
+        let before = handles(&app);
+        select(&mut app, &[b, a]);
+        run(&mut app, "INTERSECTSURFACE");
+        let new: Vec<Handle> = handles(&app)
+            .into_iter()
+            .filter(|x| !before.contains(x))
+            .collect();
+        assert_eq!(new.len(), 2, "the piece and its hatch: {new:?}");
+        let (piece, piece_hatch) = match (entity(&app, new[0]), entity(&app, new[1])) {
+            (EntityType::Hatch(_), _) => (new[1], new[0]),
+            _ => (new[0], new[1]),
+        };
+        let EntityType::Hatch(ph) = entity(&app, piece_hatch) else {
+            panic!("expected a hatch")
+        };
+        assert!(ph.is_associative);
+        assert_eq!(ph.paths[0].boundary_handles, vec![piece]);
+        assert!(
+            draw_key(&app, piece_hatch) < draw_key(&app, piece),
+            "the hatch sits below its outline"
+        );
+        let EntityType::Hatch(orig) = entity(&app, h) else {
+            panic!()
+        };
+        assert_eq!(
+            orig.paths[0].boundary_handles,
+            vec![a],
+            "the source hatch is untouched"
+        );
+        app.undo_active_tab();
+        assert_eq!(handles(&app), before);
+    }
+
+    #[test]
+    fn one_shape_keeps_the_command_asking_for_more() {
+        let mut app = app();
+        let a = add(&mut app, rect(0., 0., 4., 4.));
+        add(&mut app, rect(2., 2., 6., 6.));
+        let before = handles(&app);
+        select(&mut app, &[a]);
+        run(&mut app, "ADDSURFACE");
+        let i = app.active_tab;
+        assert!(
+            app.tabs[i].active_cmd.is_some(),
+            "still gathering the selection"
+        );
+        assert_eq!(handles(&app), before, "nothing changed");
     }
 }

@@ -474,7 +474,7 @@ fn merge_pair(a: &Oriented, b: &Oriented, tol: f64) -> Option<Oriented> {
             let len = (e[0] - s[0]).hypot(e[1] - s[1]);
             let ahead = (m[0] - s[0]) * (e[0] - m[0]) + (m[1] - s[1]) * (e[1] - m[1]) > 0.0;
             (len > tol && cross.abs() <= tol * len && ahead)
-                .then(|| (Curve::Line(Line { start: s, end: e }), true))
+                .then_some((Curve::Line(Line { start: s, end: e }), true))
         }
         _ => None,
     }
