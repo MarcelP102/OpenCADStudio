@@ -462,6 +462,8 @@ pub struct LayerPanel {
     /// and the choices its list offers.
     pub fills: std::collections::HashMap<String, (String, AcadColor)>,
     pub fill_options: Vec<String>,
+    /// The Fill column's list on the selected row, like the linetype list.
+    pub fill_combo: combo_box::State<String>,
     /// The row whose Fill color list is open.
     pub fill_color_picker_row: Option<String>,
     /// What the filter tree was last worked out from: the selection's layers,
@@ -542,6 +544,7 @@ impl Default for LayerPanel {
             counts_key: None,
             fills: Default::default(),
             fill_options: Vec::new(),
+            fill_combo: combo_box::State::new(Vec::new()),
             fill_color_picker_row: None,
             tree_key: None,
             keys_active: false,
@@ -1215,6 +1218,9 @@ impl LayerPanel {
         options: Vec<String>,
     ) {
         self.fills = fills;
+        if self.fill_options != options {
+            self.fill_combo = combo_box::State::new(options.clone());
+        }
         self.fill_options = options;
         self.apply_fills();
         if matches!(
@@ -1545,7 +1551,7 @@ impl LayerPanel {
                 col_w,
                 &columns,
                 self.eye_on(&layer.name),
-                &self.fill_options,
+                is_anchor.then_some(&self.fill_combo),
                 self.fill_color_picker_row.as_deref() == Some(layer.name.as_str()),
             );
             let (name, groups, in_group) = (
@@ -2130,7 +2136,7 @@ fn layer_row<'a>(
     col_w: &HashMap<LayerSortCol, f32>,
     columns: &[LayerSortCol],
     eye_on: bool,
-    fill_options: &'a [String],
+    fill_combo: Option<&'a combo_box::State<String>>,
     fill_color_open: bool,
 ) -> Element<'a, Message> {
     let w = |col: LayerSortCol| Length::Fixed(column_width(col_w, col));
@@ -2352,15 +2358,30 @@ fn layer_row<'a>(
 
     // Fill: what closed shapes drawn on the layer are filled with.
     let lname_fill = lname.clone();
-    let fill_cell: Element<'_, Message> =
-        iced::widget::pick_list(Some(layer.fill.clone()), fill_options, |value: &String| {
-            value.clone()
-        })
-        .on_select(move |choice| Message::LayerFillSet(lname_fill.clone(), choice))
-        .text_size(ui_text::UI)
+    // Fill: shown and picked as the linetype is: a list on the selected
+    // row, plain text on the others.
+    let fill_cell: Element<'_, Message> = if let Some(state) = fill_combo {
+        combo_box(
+            state,
+            t!("fill").as_ref(),
+            Some(&layer.fill),
+            move |choice: String| Message::LayerFillSet(lname_fill.clone(), choice),
+        )
+        .size(ui_text::UI)
+        .line_height(ui_line())
         .padding(kit::FIELD_PAD)
         .width(w(LayerSortCol::Fill))
-        .into();
+        .input_style(cell_field_style)
+        .menu_style(kit::pick_menu_style)
+        .into()
+    } else {
+        kit::one_line(text(layer.fill.as_str()))
+            .size(ui_text::UI)
+            .line_height(ui_line())
+            .style(muted_style)
+            .width(w(LayerSortCol::Fill))
+            .into()
+    };
 
     // Fill color: the fill's own colour, picked as the line colour is (no
     // ByLayer: this is where the layer's colour is set). A style stored as
