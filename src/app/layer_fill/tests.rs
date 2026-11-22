@@ -529,3 +529,21 @@ fn a_fill_colour_that_is_not_a_colour_changes_nothing() {
         Some(document::types::Color::ByLayer)
     );
 }
+
+#[test]
+fn a_new_fill_style_starts_with_the_layer_colour_never_bylayer() {
+    let mut app = fresh();
+    let _ = app.run_command_line("-LAYER M Roof C 30 Roof ");
+    let i = app.active_tab;
+    let _ = app.update(Message::LayerFillSet("Roof".into(), "Solid".into()));
+    assert_eq!(
+        store::read(&app.tabs[i].scene.document, "Roof").map(|fill| fill.color),
+        Some(document::types::Color::Index(30))
+    );
+    let _ = app.dispatch_command("LAYERFILL Roof Solid color=ByLayer");
+    assert_eq!(
+        store::read(&app.tabs[i].scene.document, "Roof").map(|fill| fill.color),
+        Some(document::types::Color::Index(30)),
+        "ByLayer is not a fill colour"
+    );
+}

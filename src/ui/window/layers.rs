@@ -2362,17 +2362,23 @@ fn layer_row<'a>(
         .width(w(LayerSortCol::Fill))
         .into();
 
-    // Fill color: the fill's own colour, ByLayer or any other; a layer
-    // without a fill style has none to pick.
+    // Fill color: the fill's own colour, picked as the line colour is (no
+    // ByLayer: this is where the layer's colour is set). A style stored as
+    // ByLayer shows the layer's colour. A layer without a fill style has none.
     let fill_color_cell: Element<'_, Message> = match layer.fill_color {
         Some(color) => {
+            let color = match color {
+                AcadColor::ByLayer | AcadColor::ByBlock => layer.color,
+                other => other,
+            };
             let lname_pick = lname.clone();
             container(crate::ui::color_select::color_selector_with_name(
                 color,
                 None,
                 fill_color_open,
                 crate::ui::color_select::ColorExtras {
-                    by_layer: true,
+                    by_layer: false,
+                    by_block: false,
                     flat: true,
                     ..Default::default()
                 },

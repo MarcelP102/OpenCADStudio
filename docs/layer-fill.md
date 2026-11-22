@@ -19,7 +19,8 @@ Status: proof of concept on a feature branch. Off by default (`FILLBYLAYER 0`).
 | `FILLBYLAYERRESET` | Give the selected shapes their layer's fill again. |
 
 The Layer Manager has a Fill column (None, Solid or a pattern) and a Fill
-color column (ByLayer, the standard colours or Select Color...). A change of a
+color column, the same colour list as the layer's Color column (standard
+colours or Select Color..., no ByLayer). A change of a
 layer's style, in the column or with `LAYERFILL`, reaches every fill that
 follows the layer in the same undo step; a layer set to None loses those
 fills. A fill changed in the Graphic Attributes palette is marked as changed
@@ -27,7 +28,8 @@ fills. A fill changed in the Graphic Attributes palette is marked as changed
 
 A layer name with spaces goes in double quotes. `.` is the current layer.
 `color=<colour>` gives the fill its own colour, apart from the layer's line
-colour: `ByLayer`, an index 1–255 or `r,g,b`, for example
+colour: an index 1–255 or `r,g,b` (never ByLayer; a new style starts with
+the layer's own colour), for example
 `LAYERFILL Walls Solid color=200,180,120`.
 
 ## Where the data lives

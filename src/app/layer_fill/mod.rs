@@ -33,13 +33,11 @@ fn words(text: &str) -> Vec<String> {
 }
 
 /// Parse `None | Solid | <pattern> [scale] [angle] [transparency]` onto `base`.
-/// A fill colour as typed: `ByLayer`, an index 1–255, or `r,g,b`.
+/// A fill colour as typed: an index 1–255 or `r,g,b`. No ByLayer: the
+/// fill colour is itself part of the layer's settings.
 fn parse_color(text: &str) -> Option<document::types::Color> {
     use document::types::Color;
     let text = text.trim();
-    if text.eq_ignore_ascii_case("bylayer") {
-        return Some(Color::ByLayer);
-    }
     if let Ok(index) = text.parse::<u8>() {
         return (index >= 1).then_some(Color::Index(index));
     }
@@ -66,7 +64,7 @@ fn parse_fill(base: Option<LayerFill>, words: &[String]) -> Result<LayerFill, St
         {
             Some(value) => {
                 fill.color = parse_color(value).ok_or_else(|| {
-                    format!("LAYERFILL: \"{value}\" is not a colour (ByLayer, 1-255 or r,g,b).")
+                    format!("LAYERFILL: \"{value}\" is not a colour (1-255 or r,g,b).")
                 })?;
             }
             None => positional.push(word.clone()),
@@ -231,12 +229,13 @@ impl OpenCADStudio {
                 found
             }
         };
-        let current = store::read(&self.tabs[i].scene.document, &layer);
         if words.len() < 2 {
+            let stored = store::read(&self.tabs[i].scene.document, &layer);
             self.command_line
-                .push_output(&describe(&layer, current.as_ref()));
+                .push_output(&describe(&layer, stored.as_ref()));
             return;
         }
+        let current = Some(self.layer_fill_or_new(i, &layer));
         match parse_fill(current, &words[1..]) {
             Ok(fill) => {
                 self.set_layer_fill(i, &layer, Some(&fill));
@@ -272,7 +271,7 @@ impl OpenCADStudio {
     /// other properties of the style (colour, scale, angle) are kept.
     pub(in crate::app) fn on_layer_fill_set(&mut self, layer: &str, choice: &str) -> Task<Message> {
         let i = self.active_tab;
-        let current = store::read(&self.tabs[i].scene.document, layer);
+        let current = Some(self.layer_fill_or_new(i, layer));
         match parse_fill(current, &[choice.to_string()]) {
             Ok(fill) if fill.kind == FillKind::None => {
                 let _ = self.set_layer_fill(i, layer, None);
@@ -314,6 +313,19 @@ impl OpenCADStudio {
                 Some(layer)
             };
         Task::none()
+    }
+
+    /// The layer's fill style, or a new one whose colour is the layer's own
+    /// colour (a fill colour is concrete, never ByLayer).
+    fn layer_fill_or_new(&self, i: usize, layer: &str) -> LayerFill {
+        let document = &self.tabs[i].scene.document;
+        store::read(document, layer).unwrap_or_else(|| LayerFill {
+            color: document
+                .layers
+                .get(layer)
+                .map_or(document::types::Color::Index(7), |record| record.color),
+            ..LayerFill::default()
+        })
     }
 
     /// Hand the Layer Manager the fill style per layer and the choices of
