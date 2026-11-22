@@ -18,13 +18,17 @@ Status: proof of concept on a feature branch. Off by default (`FILLBYLAYER 0`).
 | `FILLBYLAYERAPPLY [layer ...\|*]` | Fill closed shapes already in the drawing (current space) on these layers; `*` is every layer with a fill style. |
 | `FILLBYLAYERRESET` | Give the selected shapes their layer's fill again. |
 
-The Layer Manager has a Fill column (None, Solid or a pattern). A change of a
+The Layer Manager has a Fill column (None, Solid or a pattern) and a Fill
+color column (ByLayer, the standard colours or Select Color...). A change of a
 layer's style, in the column or with `LAYERFILL`, reaches every fill that
 follows the layer in the same undo step; a layer set to None loses those
 fills. A fill changed in the Graphic Attributes palette is marked as changed
 (`OCS_FILL = 2`) and keeps its own style until `FILLBYLAYERRESET`.
 
 A layer name with spaces goes in double quotes. `.` is the current layer.
+`color=<colour>` gives the fill its own colour, apart from the layer's line
+colour: `ByLayer`, an index 1–255 or `r,g,b`, for example
+`LAYERFILL Walls Solid color=200,180,120`.
 
 ## Where the data lives
 
@@ -74,9 +78,11 @@ stays fast on large drawings. The palette code is unchanged.
 - `PLINE` builds its polyline live and closes its undo step when it ends. Its
   fill is a second undo step: the first undo removes the fill, the second the
   polyline.
-- The Layer Manager's Fill column picks None, Solid or a pattern. Colour,
-  background, scale, angle and transparency are set with `LAYERFILL` for now;
-  the dialog for them is still to come.
+- The Layer Manager's Fill and Fill color columns pick the pattern and the
+  fill colour. Background, scale, angle and transparency are set with
+  `LAYERFILL` for now; the dialog for them is still to come.
+- A saved Layer Manager column layout from before this branch shows the new
+  columns at the end, after Description.
 - A shape and its marked fill select as one (`with_layer_fills`, called where
   the selection expands leaders), so erase, move, copy and the Properties
   palette act on both. Clicking the fill selects the shape too; to remove only

@@ -58,6 +58,8 @@ pub enum LayerSortCol {
     Objects,
     /// The fill closed shapes drawn on the layer get (FILLBYLAYER).
     Fill,
+    /// The colour of that fill, separate from the layer's line colour.
+    FillColor,
 }
 
 impl LayerSortCol {
@@ -76,6 +78,7 @@ impl LayerSortCol {
             Self::Description => "Description",
             Self::Objects => "Objects",
             Self::Fill => "Fill",
+            Self::FillColor => "FillColor",
         }
     }
 
@@ -93,6 +96,7 @@ impl LayerSortCol {
             Self::Description => t!("Description"),
             Self::Objects => t!("Objects"),
             Self::Fill => t!("Fill"),
+            Self::FillColor => t!("Fill color"),
         }
     }
 
@@ -105,6 +109,7 @@ impl LayerSortCol {
             Self::Description => COL_DESC,
             Self::Objects => COL_OBJECTS,
             Self::Fill => COL_FILL,
+            Self::FillColor => COL_COLOR,
             _ => COL_ICON,
         }
     }
@@ -112,7 +117,7 @@ impl LayerSortCol {
 
 /// The columns after Name that can be moved and hidden, in their default
 /// order.
-const COLUMNS: [LayerSortCol; 11] = [
+const COLUMNS: [LayerSortCol; 12] = [
     LayerSortCol::On,
     LayerSortCol::Freeze,
     LayerSortCol::Lock,
@@ -122,6 +127,7 @@ const COLUMNS: [LayerSortCol; 11] = [
     LayerSortCol::Lineweight,
     LayerSortCol::Transparency,
     LayerSortCol::Fill,
+    LayerSortCol::FillColor,
     LayerSortCol::Objects,
     LayerSortCol::Description,
 ];
@@ -389,6 +395,8 @@ pub struct Layer {
     pub in_blocks: usize,
     /// The layer's fill style as the Fill column shows it.
     pub fill: String,
+    /// The fill's own colour; `None` when the layer has no fill style.
+    pub fill_color: Option<AcadColor>,
     /// Freeze state per-viewport, indexed parallel to LayerPanel::vp_cols.
     pub vp_frozen: Vec<bool>,
     /// Colour override per-viewport, parallel to `vp_frozen`.
@@ -416,6 +424,7 @@ impl Layer {
             objects: 0,
             in_blocks: 0,
             fill: FILL_NONE.to_string(),
+            fill_color: None,
             vp_frozen: vec![],
             vp_colors: vec![],
             vp_overridden: vec![],
@@ -451,8 +460,10 @@ pub struct LayerPanel {
     pub counts_key: Option<(u64, u64)>,
     /// Fill style per layer (lower-case name → what the Fill column shows),
     /// and the choices its list offers.
-    pub fills: std::collections::HashMap<String, String>,
+    pub fills: std::collections::HashMap<String, (String, AcadColor)>,
     pub fill_options: Vec<String>,
+    /// The row whose Fill color list is open.
+    pub fill_color_picker_row: Option<String>,
     /// What the filter tree was last worked out from: the selection's layers,
     /// the layer table, the filters the drawing keeps and the ribbon setting.
     pub tree_key: Option<u64>,
@@ -531,6 +542,7 @@ impl Default for LayerPanel {
             counts_key: None,
             fills: Default::default(),
             fill_options: Vec::new(),
+            fill_color_picker_row: None,
             tree_key: None,
             keys_active: false,
             current_layer: "0".to_string(),
@@ -1149,6 +1161,7 @@ impl LayerPanel {
                     objects: 0,
                     in_blocks: 0,
                     fill: FILL_NONE.to_string(),
+                    fill_color: None,
                     vp_frozen,
                     vp_colors,
                     vp_overridden,
@@ -1198,24 +1211,25 @@ impl LayerPanel {
     /// choices the Fill column offers.
     pub fn set_fills(
         &mut self,
-        fills: std::collections::HashMap<String, String>,
+        fills: std::collections::HashMap<String, (String, AcadColor)>,
         options: Vec<String>,
     ) {
         self.fills = fills;
         self.fill_options = options;
         self.apply_fills();
-        if self.sort_col == Some(LayerSortCol::Fill) {
+        if matches!(
+            self.sort_col,
+            Some(LayerSortCol::Fill | LayerSortCol::FillColor)
+        ) {
             self.apply_sort();
         }
     }
 
     fn apply_fills(&mut self) {
         for layer in &mut self.layers {
-            layer.fill = self
-                .fills
-                .get(&layer.name.to_lowercase())
-                .cloned()
-                .unwrap_or_else(|| FILL_NONE.to_string());
+            let fill = self.fills.get(&layer.name.to_lowercase());
+            layer.fill = fill.map_or_else(|| FILL_NONE.to_string(), |(text, _)| text.clone());
+            layer.fill_color = fill.map(|(_, color)| *color);
         }
     }
 
@@ -1271,6 +1285,10 @@ impl LayerPanel {
                     .cmp(&b.description.to_lowercase()),
                 LayerSortCol::Objects => a.objects.cmp(&b.objects),
                 LayerSortCol::Fill => a.fill.to_lowercase().cmp(&b.fill.to_lowercase()),
+                LayerSortCol::FillColor => a
+                    .fill_color
+                    .map(color_sort_key)
+                    .cmp(&b.fill_color.map(color_sort_key)),
             };
             // Stable tie-break by name so equal keys keep a predictable order.
             let ord = ord.then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
@@ -1528,6 +1546,7 @@ impl LayerPanel {
                 &columns,
                 self.eye_on(&layer.name),
                 &self.fill_options,
+                self.fill_color_picker_row.as_deref() == Some(layer.name.as_str()),
             );
             let (name, groups, in_group) = (
                 layer.name.clone(),
@@ -2112,6 +2131,7 @@ fn layer_row<'a>(
     columns: &[LayerSortCol],
     eye_on: bool,
     fill_options: &'a [String],
+    fill_color_open: bool,
 ) -> Element<'a, Message> {
     let w = |col: LayerSortCol| Length::Fixed(column_width(col_w, col));
     // #22: messages carry the layer name (resolved at dispatch time) so a
@@ -2342,6 +2362,38 @@ fn layer_row<'a>(
         .width(w(LayerSortCol::Fill))
         .into();
 
+    // Fill color: the fill's own colour, ByLayer or any other; a layer
+    // without a fill style has none to pick.
+    let fill_color_cell: Element<'_, Message> = match layer.fill_color {
+        Some(color) => {
+            let lname_pick = lname.clone();
+            container(crate::ui::color_select::color_selector_with_name(
+                color,
+                None,
+                fill_color_open,
+                crate::ui::color_select::ColorExtras {
+                    by_layer: true,
+                    flat: true,
+                    ..Default::default()
+                },
+                move |color| Message::LayerFillColorSet(lname_pick.clone(), color),
+                Message::LayerFillColorPickerToggle(lname.clone()),
+                Message::OpenColorWindow(
+                    crate::app::ColorPickTarget::LayerFill(lname.clone()),
+                    color,
+                ),
+            ))
+            .width(w(LayerSortCol::FillColor))
+            .into()
+        }
+        None => kit::one_line(text("—"))
+            .size(ui_text::UI)
+            .line_height(ui_line())
+            .style(muted_style)
+            .width(w(LayerSortCol::FillColor))
+            .into(),
+    };
+
     // Objects: the count, and how many sit inside blocks when some do.
     let objects_text = kit::one_line(text(layer.objects.to_string()))
         .size(ui_text::UI)
@@ -2410,6 +2462,7 @@ fn layer_row<'a>(
         (LayerSortCol::Description, desc_cell.into()),
         (LayerSortCol::Objects, objects_cell),
         (LayerSortCol::Fill, fill_cell),
+        (LayerSortCol::FillColor, fill_color_cell),
     ];
     for col in columns {
         if let Some(at) = cells.iter().position(|(c, _)| c == col) {

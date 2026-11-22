@@ -2495,6 +2495,8 @@ pub enum ColorPickTarget {
     RibbonLayer(String),
     /// A layer's colour, by layer name.
     Layer(String),
+    /// The colour of a layer's fill style, by layer name.
+    LayerFill(String),
     /// A layer's colour override in one layout viewport.
     LayerViewport(String, document::Handle),
     /// A saved layer-state layer's colour, by editor row index.

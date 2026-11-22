@@ -33,8 +33,46 @@ fn words(text: &str) -> Vec<String> {
 }
 
 /// Parse `None | Solid | <pattern> [scale] [angle] [transparency]` onto `base`.
+/// A fill colour as typed: `ByLayer`, an index 1–255, or `r,g,b`.
+fn parse_color(text: &str) -> Option<document::types::Color> {
+    use document::types::Color;
+    let text = text.trim();
+    if text.eq_ignore_ascii_case("bylayer") {
+        return Some(Color::ByLayer);
+    }
+    if let Ok(index) = text.parse::<u8>() {
+        return (index >= 1).then_some(Color::Index(index));
+    }
+    let parts: Vec<u8> = text
+        .split(',')
+        .map(|part| part.trim().parse::<u8>())
+        .collect::<Result<_, _>>()
+        .ok()?;
+    match parts[..] {
+        [r, g, b] => Some(Color::Rgb { r, g, b }),
+        _ => None,
+    }
+}
+
 fn parse_fill(base: Option<LayerFill>, words: &[String]) -> Result<LayerFill, String> {
     let mut fill = base.unwrap_or_default();
+    // `color=<colour>` may stand anywhere; the rest is positional.
+    let mut positional = Vec::new();
+    for word in words {
+        let lower = word.to_ascii_lowercase();
+        match lower
+            .strip_prefix("color=")
+            .or_else(|| lower.strip_prefix("kleur="))
+        {
+            Some(value) => {
+                fill.color = parse_color(value).ok_or_else(|| {
+                    format!("LAYERFILL: \"{value}\" is not a colour (ByLayer, 1-255 or r,g,b).")
+                })?;
+            }
+            None => positional.push(word.clone()),
+        }
+    }
+    let words = positional.as_slice();
     let Some(kind) = words.first() else {
         return Err("LAYERFILL: enter None, Solid or a pattern name.".into());
     };
@@ -84,8 +122,9 @@ fn parse_fill(base: Option<LayerFill>, words: &[String]) -> Result<LayerFill, St
 fn describe(layer: &str, fill: Option<&LayerFill>) -> String {
     match fill {
         Some(fill) if fill.kind != FillKind::None => format!(
-            "LAYERFILL {layer}: {}, scale {}, angle {}, transparency {}%",
+            "LAYERFILL {layer}: {}, colour {}, scale {}, angle {}, transparency {}%",
             fill.summary(),
+            crate::ui::color_select::color_display_name(fill.color),
             fill.scale,
             fill.angle_deg,
             fill.transparency
@@ -246,6 +285,37 @@ impl OpenCADStudio {
         Task::none()
     }
 
+    /// Layer Manager Fill color column (or the Select Color window): give the
+    /// layer's fill its own colour. Fills that follow the layer take it in the
+    /// same undo step.
+    pub(in crate::app) fn on_layer_fill_color_set(
+        &mut self,
+        layer: &str,
+        color: document::types::Color,
+    ) -> Task<Message> {
+        let i = self.active_tab;
+        self.tabs[i].layers.fill_color_picker_row = None;
+        let Some(mut fill) = store::read(&self.tabs[i].scene.document, layer) else {
+            return Task::none();
+        };
+        fill.color = color;
+        let _ = self.set_layer_fill(i, layer, Some(&fill));
+        Task::none()
+    }
+
+    pub(in crate::app) fn on_layer_fill_color_toggle(&mut self, layer: String) -> Task<Message> {
+        let i = self.active_tab;
+        let panel = &mut self.tabs[i].layers;
+        panel.color_picker_row = None;
+        panel.fill_color_picker_row =
+            if panel.fill_color_picker_row.as_deref() == Some(layer.as_str()) {
+                None
+            } else {
+                Some(layer)
+            };
+        Task::none()
+    }
+
     /// Hand the Layer Manager the fill style per layer and the choices of
     /// its Fill column.
     pub(in crate::app) fn sync_layer_fill_column(&mut self, i: usize) {
@@ -255,7 +325,8 @@ impl OpenCADStudio {
             .iter()
             .filter_map(|layer| {
                 let fill = store::read(document, &layer.name)?;
-                (fill.kind != FillKind::None).then(|| (layer.name.to_lowercase(), fill.summary()))
+                (fill.kind != FillKind::None)
+                    .then(|| (layer.name.to_lowercase(), (fill.summary(), fill.color)))
             })
             .collect();
         let mut options = vec![

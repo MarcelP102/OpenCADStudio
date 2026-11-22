@@ -4854,6 +4854,7 @@ impl OpenCADStudio {
                     return Task::none();
                 };
                 let panel = &mut self.tabs[i].layers;
+                panel.fill_color_picker_row = None;
                 if panel.color_picker_row.as_deref() == Some(name.as_str()) {
                     panel.color_picker_row = None;
                     panel.color_full_palette = false;
@@ -4947,6 +4948,8 @@ impl OpenCADStudio {
 
             Message::LayerTransparencyCommit => self.on_layer_transparency_commit(),
             Message::LayerFillSet(layer, choice) => self.on_layer_fill_set(&layer, &choice),
+            Message::LayerFillColorSet(layer, color) => self.on_layer_fill_color_set(&layer, color),
+            Message::LayerFillColorPickerToggle(layer) => self.on_layer_fill_color_toggle(layer),
 
             Message::LayerDescriptionEdit(name, s) => {
                 let i = self.active_tab;

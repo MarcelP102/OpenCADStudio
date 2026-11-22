@@ -474,3 +474,58 @@ fn a_fill_changed_in_the_palette_keeps_its_own_style_until_reset() {
     assert!(fills[0].is_solid);
     assert_eq!(apply::hatch_mark(fills[0]), Some(FOLLOWS_LAYER));
 }
+
+#[test]
+fn the_fill_has_its_own_colour_apart_from_the_line_colour() {
+    let mut app = walls(true);
+    let _ = app.run_command_line("RECTANG 0,0 10,4");
+    let i = app.active_tab;
+    let _ = app.dispatch_command("LAYERFILL Walls Solid color=200,180,120");
+    let tan = document::types::Color::Rgb {
+        r: 200,
+        g: 180,
+        b: 120,
+    };
+    assert_eq!(
+        store::read(&app.tabs[i].scene.document, "Walls").map(|fill| fill.color),
+        Some(tan)
+    );
+    let fills = hatches(&app);
+    assert_eq!(fills.len(), 1);
+    assert_eq!(
+        fills[0].common.color, tan,
+        "the existing fill takes the colour"
+    );
+    let rectangle = rectangle(&app);
+    let line_colour = app.tabs[i]
+        .scene
+        .document
+        .get_entity(rectangle)
+        .map(|shape| shape.common().color);
+    assert_eq!(line_colour, Some(document::types::Color::ByLayer));
+    // The Layer Manager column sets it too, as one undo step.
+    let _ = app.update(Message::LayerFillColorSet(
+        "Walls".into(),
+        document::types::Color::Index(3),
+    ));
+    assert_eq!(
+        hatches(&app)[0].common.color,
+        document::types::Color::Index(3)
+    );
+    let _ = app.update(Message::Undo);
+    assert_eq!(hatches(&app)[0].common.color, tan);
+    // A shape drawn now gets the fill colour straight away.
+    let _ = app.run_command_line("CIRCLE 30,0 3");
+    assert!(hatches(&app).iter().all(|hatch| hatch.common.color == tan));
+}
+
+#[test]
+fn a_fill_colour_that_is_not_a_colour_changes_nothing() {
+    let mut app = walls(false);
+    let i = app.active_tab;
+    let _ = app.dispatch_command("LAYERFILL Walls Solid color=purple-ish");
+    assert_eq!(
+        store::read(&app.tabs[i].scene.document, "Walls").map(|fill| fill.color),
+        Some(document::types::Color::ByLayer)
+    );
+}

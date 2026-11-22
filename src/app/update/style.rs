@@ -1051,6 +1051,9 @@ impl OpenCADStudio {
                     None => None,
                 }
             }
+            Some(crate::app::ColorPickTarget::LayerFill(layer)) => {
+                return self.on_layer_fill_color_set(&layer, color);
+            }
             Some(crate::app::ColorPickTarget::LayerViewport(layer, viewport)) => {
                 self.set_layer_viewport_color(self.active_tab, &layer, viewport, color);
                 None

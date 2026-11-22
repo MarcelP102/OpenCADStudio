@@ -1057,6 +1057,10 @@ pub enum Message {
     LayerTransparencyCommit,
     /// Layer Manager Fill column: (layer name, None / Solid / pattern name).
     LayerFillSet(String, String),
+    /// Layer Manager Fill color column: (layer name, colour of its fill).
+    LayerFillColorSet(String, document::types::Color),
+    /// Open or close the Fill color list of a Layer Manager row.
+    LayerFillColorPickerToggle(String),
     /// Typing in a layer's description: (layer name, text).
     LayerDescriptionEdit(String, String),
     LayerDescriptionCommit,
