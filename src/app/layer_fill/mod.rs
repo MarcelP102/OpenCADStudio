@@ -131,6 +131,29 @@ fn describe(layer: &str, fill: Option<&LayerFill>) -> String {
     }
 }
 
+/// The Fill column's choices: None, Solid and every hatch pattern.
+fn fill_choices() -> &'static [String] {
+    static CHOICES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    CHOICES.get_or_init(|| {
+        let mut options = vec![
+            crate::ui::window::layers::FILL_NONE.to_string(),
+            "Solid".to_string(),
+        ];
+        options.extend(
+            crate::scene::model::hatch_patterns::catalog()
+                .iter()
+                .filter(|entry| {
+                    matches!(
+                        entry.gpu,
+                        crate::scene::model::hatch_model::HatchPattern::Pattern(_)
+                    )
+                })
+                .map(|entry| entry.name.clone()),
+        );
+        options
+    })
+}
+
 impl OpenCADStudio {
     /// LAYERFILL, FILLBYLAYERRESET and FILLBYLAYERAPPLY. `None` for any
     /// other command.
@@ -296,22 +319,7 @@ impl OpenCADStudio {
                     .then(|| (layer.name.to_lowercase(), (fill.summary(), fill.color)))
             })
             .collect();
-        let mut options = vec![
-            crate::ui::window::layers::FILL_NONE.to_string(),
-            "Solid".to_string(),
-        ];
-        options.extend(
-            crate::scene::model::hatch_patterns::catalog()
-                .iter()
-                .filter(|entry| {
-                    matches!(
-                        entry.gpu,
-                        crate::scene::model::hatch_model::HatchPattern::Pattern(_)
-                    )
-                })
-                .map(|entry| entry.name.clone()),
-        );
-        self.tabs[i].layers.set_fills(fills, options);
+        self.tabs[i].layers.set_fills(fills, fill_choices());
     }
 
     /// Set (or with `None` remove) a layer's fill style as one undo step.

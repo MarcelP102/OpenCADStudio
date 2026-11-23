@@ -613,6 +613,9 @@ impl OpenCADStudio {
         let i = self.active_tab;
         self.refresh_layer_tree(i);
         self.refresh_layer_highlight(i);
+        // Whichever way the layers were refreshed (open, undo, layout), the
+        // Fill columns read the styles the drawing holds now.
+        self.sync_layer_fill_column(i);
         let scene = &self.tabs[i].scene;
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         for layer in scene.document.layers.iter() {

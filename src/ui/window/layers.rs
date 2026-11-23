@@ -1215,13 +1215,18 @@ impl LayerPanel {
     pub fn set_fills(
         &mut self,
         fills: std::collections::HashMap<String, (String, AcadColor)>,
-        options: Vec<String>,
+        options: &[String],
     ) {
+        // Called on every Layer Manager refresh: nothing to do unless a
+        // style changed (or the choices were never set).
+        if self.fills == fills && self.fill_options == options {
+            return;
+        }
         self.fills = fills;
         if self.fill_options != options {
-            self.fill_combo = combo_box::State::new(options.clone());
+            self.fill_options = options.to_vec();
+            self.fill_combo = combo_box::State::new(self.fill_options.clone());
         }
-        self.fill_options = options;
         self.apply_fills();
         if matches!(
             self.sort_col,

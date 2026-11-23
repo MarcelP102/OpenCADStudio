@@ -662,3 +662,38 @@ fn a_shape_without_fill_is_l_on_a_layer_without_fill_and_c_on_one_with() {
         Some(FillMode::ByLayer)
     );
 }
+
+#[test]
+fn the_fill_columns_are_filled_however_the_layers_were_refreshed() {
+    let mut app = fresh();
+    let i = app.active_tab;
+    // A style already in the drawing (as after opening a file): no command
+    // here refreshes the Layer Manager.
+    let mut layer = document::tables::Layer::new("Walls");
+    layer.handle = app.tabs[i].scene.document.allocate_handle();
+    let _ = app.tabs[i].scene.document.layers.add(layer);
+    assert!(store::write(
+        &mut app.tabs[i].scene.document,
+        "Walls",
+        Some(&LayerFill::default())
+    ));
+    app.show_layers = true;
+    app.dock.float(crate::ui::dock::FloatPanel::new(
+        crate::ui::dock::PanelId::Layers,
+        50.0,
+        50.0,
+        1300.0,
+        700.0,
+    ));
+    let doc_layers = app.tabs[i].scene.document.layers.clone();
+    app.tabs[i]
+        .layers
+        .sync_with_viewports(&doc_layers, Vec::new());
+    assert!(app.tabs[i].layers.fill_options.is_empty());
+    app.refresh_layer_counts();
+    let panel = &app.tabs[i].layers;
+    assert!(panel.fill_options.len() > 2, "None, Solid and the patterns");
+    assert!(panel.fill_options.iter().any(|option| option == "ANSI31"));
+    let walls = panel.layers.iter().find(|row| row.name == "Walls").unwrap();
+    assert_eq!(walls.fill, "Solid");
+}
