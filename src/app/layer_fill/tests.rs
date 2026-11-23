@@ -10,18 +10,13 @@ fn fresh() -> OpenCADStudio {
     app
 }
 
-/// A drawing with layer `Walls` current, its fill style solid, FILLBYLAYER on.
-fn walls(fill_by_layer: bool) -> OpenCADStudio {
+/// A drawing with layer `Walls` current and its fill style solid.
+fn walls() -> OpenCADStudio {
     let mut app = fresh();
     let _ = app.run_command_line("-LAYER M Walls ");
     let i = app.active_tab;
     assert_eq!(app.tabs[i].active_layer, "Walls");
     assert!(app.set_layer_fill(i, "Walls", Some(&LayerFill::default())));
-    let _ = app.dispatch_command(if fill_by_layer {
-        "FILLBYLAYER 1"
-    } else {
-        "FILLBYLAYER 0"
-    });
     app
 }
 
@@ -68,7 +63,7 @@ fn sort_key(app: &OpenCADStudio, handle: Handle) -> u64 {
 
 #[test]
 fn a_rectangle_on_a_layer_with_a_fill_style_is_filled_behind_its_lines() {
-    let mut app = walls(true);
+    let mut app = walls();
     let _ = app.run_command_line("RECTANG 0,0 10,4");
     let shapes = shapes(&app);
     assert_eq!(shapes.len(), 1);
@@ -98,7 +93,7 @@ fn a_rectangle_on_a_layer_with_a_fill_style_is_filled_behind_its_lines() {
 
 #[test]
 fn one_undo_removes_shape_and_fill_and_redo_brings_both_back() {
-    let mut app = walls(true);
+    let mut app = walls();
     let _ = app.run_command_line("RECTANG 0,0 10,4");
     assert_eq!(
         app.tabs[app.active_tab].scene.document.entities().count(),
@@ -118,8 +113,9 @@ fn one_undo_removes_shape_and_fill_and_redo_brings_both_back() {
 }
 
 #[test]
-fn nothing_is_filled_while_fillbylayer_is_off() {
-    let mut app = walls(false);
+fn nothing_is_filled_on_a_layer_whose_fill_is_none() {
+    let mut app = walls();
+    let _ = app.dispatch_command("LAYERFILL Walls None");
     let _ = app.run_command_line("RECTANG 0,0 10,4");
     let _ = app.run_command_line("CIRCLE 20,0 3");
     assert_eq!(shapes(&app).len(), 2);
@@ -128,7 +124,7 @@ fn nothing_is_filled_while_fillbylayer_is_off() {
 
 #[test]
 fn circles_are_filled_and_open_shapes_and_other_layers_are_not() {
-    let mut app = walls(true);
+    let mut app = walls();
     let _ = app.run_command_line("CIRCLE 20,0 3");
     assert_eq!(hatches(&app).len(), 1);
     let _ = app.run_command_line("LINE 0,0 5,5 ");
@@ -140,7 +136,7 @@ fn circles_are_filled_and_open_shapes_and_other_layers_are_not() {
 
 #[test]
 fn the_fill_takes_the_pattern_scale_and_transparency_of_the_layer() {
-    let mut app = walls(true);
+    let mut app = walls();
     let i = app.active_tab;
     let style = LayerFill {
         kind: FillKind::Pattern,
@@ -187,21 +183,6 @@ fn only_drawing_commands_with_closed_shapes_fill() {
 }
 
 #[test]
-fn fillbylayer_is_kept_with_the_drawing_and_refuses_other_values() {
-    let mut app = fresh();
-    let i = app.active_tab;
-    assert!(!apply::fill_by_layer(&app.tabs[i].scene.document));
-    let _ = app.dispatch_command("FILLBYLAYER 2");
-    assert!(!apply::fill_by_layer(&app.tabs[i].scene.document));
-    let _ = app.dispatch_command("SETVAR FILLBYLAYER 1");
-    assert!(apply::fill_by_layer(&app.tabs[i].scene.document));
-    assert_eq!(
-        crate::io::drawing_variable(&app.tabs[i].scene.document, apply::FILLBYLAYER).as_deref(),
-        Some("1")
-    );
-}
-
-#[test]
 fn layerfill_sets_a_layer_style_as_one_undo_step() {
     let mut app = fresh();
     let _ = app.run_command_line("-LAYER M Walls ");
@@ -241,7 +222,7 @@ fn a_hatch_the_user_made_carries_no_mark() {
 
 #[test]
 fn styles_and_marks_survive_saving_as_dxf_and_dwg() {
-    let mut app = walls(true);
+    let mut app = walls();
     let _ = app.run_command_line("RECTANG 0,0 10,4");
     let document = &app.tabs[app.active_tab].scene.document;
     for extension in ["dxf", "dwg"] {
@@ -255,7 +236,6 @@ fn styles_and_marks_survive_saving_as_dxf_and_dwg() {
             Some(FillKind::Solid),
             "{extension}: layer style"
         );
-        assert!(apply::fill_by_layer(&loaded), "{extension}: FILLBYLAYER");
         let marks: Vec<_> = loaded.entities().filter_map(apply::fill_mark).collect();
         assert_eq!(marks, vec![FOLLOWS_LAYER], "{extension}: fill mark");
         let _ = std::fs::remove_dir_all(&dir);
@@ -291,16 +271,29 @@ fn user_hatch(app: &mut OpenCADStudio) -> Handle {
         ),
     ));
     app.tabs[i].scene.deselect_all();
-    hatches(app)
+    // The palette marks its fill as custom; a hatch from HATCH or an older
+    // drawing carries no mark at all.
+    let mut hatch = hatches(app)
         .into_iter()
-        .find(|hatch| apply::fill_mark(&EntityType::Hatch(Box::new((*hatch).clone()))).is_none())
-        .map(|hatch| hatch.common.handle)
-        .expect("the user's hatch")
+        .find(|hatch| {
+            hatch
+                .paths
+                .iter()
+                .any(|path| path.boundary_handles.contains(&square))
+        })
+        .cloned()
+        .expect("the user's hatch");
+    hatch.common.extended_data.remove_record(apply::FILL_APP);
+    let handle = hatch.common.handle;
+    app.tabs[i]
+        .scene
+        .update_entity(EntityType::Hatch(Box::new(hatch)));
+    handle
 }
 
 #[test]
 fn selecting_the_shape_selects_its_fill_and_the_other_way_round() {
-    let mut app = walls(true);
+    let mut app = walls();
     let _ = app.run_command_line("RECTANG 0,0 10,4");
     let users = user_hatch(&mut app);
     let i = app.active_tab;
@@ -319,7 +312,7 @@ fn selecting_the_shape_selects_its_fill_and_the_other_way_round() {
 
 #[test]
 fn erasing_the_shape_erases_its_fill_and_leaves_the_users_hatch() {
-    let mut app = walls(true);
+    let mut app = walls();
     let _ = app.run_command_line("RECTANG 0,0 10,4");
     let users = user_hatch(&mut app);
     let i = app.active_tab;
@@ -337,7 +330,7 @@ fn erasing_the_shape_erases_its_fill_and_leaves_the_users_hatch() {
 
 #[test]
 fn a_copy_of_the_shape_gets_its_own_fill() {
-    let mut app = walls(true);
+    let mut app = walls();
     let _ = app.run_command_line("RECTANG 0,0 10,4");
     let i = app.active_tab;
     let rectangle = rectangle(&app);
@@ -370,7 +363,7 @@ fn a_copy_of_the_shape_gets_its_own_fill() {
 
 #[test]
 fn a_new_layer_style_reaches_the_fills_that_follow_it_in_one_undo_step() {
-    let mut app = walls(true);
+    let mut app = walls();
     let _ = app.run_command_line("RECTANG 0,0 10,4");
     let users = user_hatch(&mut app);
     let i = app.active_tab;
@@ -404,10 +397,12 @@ fn a_new_layer_style_reaches_the_fills_that_follow_it_in_one_undo_step() {
 
 #[test]
 fn fillbylayerapply_fills_shapes_drawn_before() {
-    let mut app = walls(false);
+    let mut app = walls();
+    let _ = app.dispatch_command("LAYERFILL Walls None");
     let _ = app.run_command_line("RECTANG 0,0 10,4");
     let _ = app.run_command_line("CIRCLE 20,0 3");
     assert!(hatches(&app).is_empty());
+    let _ = app.dispatch_command("LAYERFILL Walls Solid");
     let _ = app.dispatch_command("FILLBYLAYERAPPLY Walls");
     assert_eq!(hatches(&app).len(), 2);
     let _ = app.dispatch_command("FILLBYLAYERAPPLY Walls");
@@ -418,7 +413,7 @@ fn fillbylayerapply_fills_shapes_drawn_before() {
 
 #[test]
 fn a_style_change_on_a_thousand_shapes_takes_under_a_second() {
-    let mut app = walls(false);
+    let mut app = walls();
     let i = app.active_tab;
     for n in 0..1000 {
         let x = f64::from(n % 40) * 20.0;
@@ -445,7 +440,7 @@ fn a_style_change_on_a_thousand_shapes_takes_under_a_second() {
 
 #[test]
 fn a_fill_changed_in_the_palette_keeps_its_own_style_until_reset() {
-    let mut app = walls(true);
+    let mut app = walls();
     let _ = app.run_command_line("RECTANG 0,0 10,4");
     let i = app.active_tab;
     let rectangle = rectangle(&app);
@@ -477,7 +472,7 @@ fn a_fill_changed_in_the_palette_keeps_its_own_style_until_reset() {
 
 #[test]
 fn the_fill_has_its_own_colour_apart_from_the_line_colour() {
-    let mut app = walls(true);
+    let mut app = walls();
     let _ = app.run_command_line("RECTANG 0,0 10,4");
     let i = app.active_tab;
     let _ = app.dispatch_command("LAYERFILL Walls Solid color=200,180,120");
@@ -521,7 +516,7 @@ fn the_fill_has_its_own_colour_apart_from_the_line_colour() {
 
 #[test]
 fn a_fill_colour_that_is_not_a_colour_changes_nothing() {
-    let mut app = walls(false);
+    let mut app = walls();
     let i = app.active_tab;
     let _ = app.dispatch_command("LAYERFILL Walls Solid color=purple-ish");
     assert_eq!(
@@ -545,5 +540,125 @@ fn a_new_fill_style_starts_with_the_layer_colour_never_bylayer() {
         store::read(&app.tabs[i].scene.document, "Roof").map(|fill| fill.color),
         Some(document::types::Color::Index(30)),
         "ByLayer is not a fill colour"
+    );
+}
+
+fn palette(
+    app: &mut OpenCADStudio,
+    message: crate::ui::window::graphic_attributes::GraphicAttributesMsg,
+) {
+    let _ = app.update(Message::GraphicAttributes(message));
+}
+
+use crate::ui::window::graphic_attributes::{GraphicAttribute, GraphicAttributesMsg as Ga};
+
+#[test]
+fn with_nothing_selected_a_custom_fill_is_what_new_shapes_get() {
+    let mut app = walls();
+    let _ = app.run_command_line("-LAYER M Empty ");
+    // L: Empty has no fill style, so nothing is filled.
+    let _ = app.run_command_line("RECTANG 0,0 10,4");
+    assert!(hatches(&app).is_empty());
+    // C: the palette's own fill, here solid red.
+    palette(&mut app, Ga::Fill(GraphicAttribute::Solid));
+    palette(&mut app, Ga::FillColor(document::types::Color::Index(1)));
+    assert!(!app.graphic_attributes.creation_fill.by_layer);
+    let _ = app.run_command_line("RECTANG 20,0 30,4");
+    let fills = hatches(&app);
+    assert_eq!(fills.len(), 1);
+    assert!(fills[0].is_solid);
+    assert_eq!(fills[0].common.color, document::types::Color::Index(1));
+    assert_eq!(apply::hatch_mark(fills[0]), Some(apply::OVERRIDDEN));
+    // Back to L: new shapes follow the layer again.
+    palette(&mut app, Ga::FillByLayer);
+    let _ = app.run_command_line("RECTANG 40,0 50,4");
+    assert_eq!(hatches(&app).len(), 1);
+}
+
+#[test]
+fn a_custom_fill_of_none_leaves_new_shapes_unfilled_on_a_filled_layer() {
+    let mut app = walls();
+    palette(&mut app, Ga::Fill(GraphicAttribute::None));
+    let _ = app.run_command_line("RECTANG 0,0 10,4");
+    assert!(hatches(&app).is_empty());
+}
+
+#[test]
+fn the_fill_mode_of_a_selection_is_l_c_or_v() {
+    use apply::FillMode;
+    let mut app = walls();
+    let _ = app.run_command_line("RECTANG 0,0 10,4");
+    let i = app.active_tab;
+    let first = rectangle(&app);
+    let document = |app: &OpenCADStudio| app.tabs[app.active_tab].scene.document.clone();
+    assert_eq!(
+        apply::fill_mode(&document(&app), &[first]),
+        Some(FillMode::ByLayer)
+    );
+    let _ = app.run_command_line("RECTANG 20,0 30,4");
+    let second = shapes(&app)
+        .into_iter()
+        .find(|shape| *shape != first)
+        .unwrap();
+    app.tabs[i].scene.select_entities(&[second]);
+    palette(&mut app, Ga::Fill(GraphicAttribute::Hatch));
+    assert_eq!(
+        apply::fill_mode(&document(&app), &[second]),
+        Some(FillMode::Custom)
+    );
+    assert_eq!(
+        apply::fill_mode(&document(&app), &[first, second]),
+        Some(FillMode::Varies)
+    );
+    // A line has no fill to judge.
+    let _ = app.run_command_line("LINE 0,10 5,10 ");
+    let line = app.tabs[i]
+        .scene
+        .document
+        .entities()
+        .find_map(|entity| matches!(entity, EntityType::Line(_)).then(|| entity.common().handle))
+        .unwrap();
+    assert_eq!(apply::fill_mode(&document(&app), &[line]), None);
+    // L on the selection gives the custom one the layer's fill back.
+    app.tabs[i].scene.deselect_all();
+    app.tabs[i].scene.select_entities(&[second]);
+    palette(&mut app, Ga::FillByLayer);
+    assert_eq!(
+        apply::fill_mode(&document(&app), &[second]),
+        Some(FillMode::ByLayer)
+    );
+    assert!(hatches(&app).iter().all(|hatch| hatch.is_solid));
+    // C keeps the fill and makes it the object's own.
+    app.tabs[i].scene.select_entities(&[second]);
+    palette(&mut app, Ga::FillCustom);
+    assert_eq!(
+        apply::fill_mode(&document(&app), &[second]),
+        Some(FillMode::Custom)
+    );
+}
+
+#[test]
+fn a_shape_without_fill_is_l_on_a_layer_without_fill_and_c_on_one_with() {
+    use apply::FillMode;
+    let mut app = walls();
+    let i = app.active_tab;
+    let mut square = document::entities::LwPolyline::from_points(vec![
+        document::types::Vector2::new(0.0, 0.0),
+        document::types::Vector2::new(1.0, 0.0),
+        document::types::Vector2::new(1.0, 1.0),
+    ]);
+    square.is_closed = true;
+    square.common.layer = "Walls".into();
+    let shape = app.tabs[i].scene.add_entity(EntityType::LwPolyline(square));
+    let document = app.tabs[i].scene.document.clone();
+    assert_eq!(
+        apply::fill_mode(&document, &[shape]),
+        Some(FillMode::Custom)
+    );
+    let _ = app.dispatch_command("LAYERFILL Walls None");
+    let document = app.tabs[i].scene.document.clone();
+    assert_eq!(
+        apply::fill_mode(&document, &[shape]),
+        Some(FillMode::ByLayer)
     );
 }

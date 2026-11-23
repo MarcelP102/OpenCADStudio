@@ -97,6 +97,8 @@ pub enum Menu {
     LineTransparency,
     FillColor,
     FillTransparency,
+    /// The L / C / V button behind the fill kind.
+    FillMode,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +112,10 @@ pub enum GraphicAttributesMsg {
     /// Put new fills on the current layer instead of their object's layer.
     ToggleFillOnCurrentLayer,
     Fill(GraphicAttribute),
+    /// The fill follows the layer (selection, or new objects).
+    FillByLayer,
+    /// The fill is the object's own (selection, or new objects).
+    FillCustom,
     LineColor(AcadColor),
     LineLinetype(String),
     LineLineweight(LineWeight),
@@ -150,9 +156,71 @@ pub struct PendingFillClose {
     pub selection: Vec<Handle>,
 }
 
+/// The fill new objects get, as the line colour new objects get (CECOLOR):
+/// by layer, or the palette's own fill.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CreationFill {
+    /// New closed shapes get their layer's fill style.
+    pub by_layer: bool,
+    /// The custom fill (when not by layer); None fills nothing.
+    pub kind: GraphicAttribute,
+    pub color: AcadColor,
+    pub transparency: Transparency,
+}
+
+impl Default for CreationFill {
+    fn default() -> Self {
+        Self {
+            by_layer: true,
+            kind: GraphicAttribute::None,
+            color: AcadColor::ByLayer,
+            transparency: Transparency::BY_LAYER,
+        }
+    }
+}
+
+impl CreationFill {
+    /// A custom fill that starts from `layer`'s fill style, so switching
+    /// from L to C changes nothing visible until a value is picked.
+    pub fn custom_from_layer(document: &Document, layer: &str) -> Self {
+        use crate::app::layer_fill::store::{self, FillKind};
+        let style = store::read(document, layer);
+        Self {
+            by_layer: false,
+            kind: match style.as_ref().map(|fill| fill.kind) {
+                Some(FillKind::Solid) => GraphicAttribute::Solid,
+                Some(FillKind::Pattern) => GraphicAttribute::Hatch,
+                Some(FillKind::None) | None => GraphicAttribute::None,
+            },
+            color: style.as_ref().map_or(AcadColor::ByLayer, |fill| fill.color),
+            transparency: match style.as_ref().map(|fill| fill.transparency) {
+                Some(percent) if percent > 0 => {
+                    Transparency::from_percent(f64::from(percent.min(90)) / 100.0)
+                }
+                _ => Transparency::BY_LAYER,
+            },
+        }
+    }
+
+    /// What new objects get now: this custom fill, or `layer`'s as a fill
+    /// the palette shows.
+    fn shown(&self, document: &Document, layer: &str) -> Self {
+        if self.by_layer {
+            Self {
+                by_layer: true,
+                ..Self::custom_from_layer(document, layer)
+            }
+        } else {
+            *self
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct GraphicAttributesState {
     pub open_menu: Option<Menu>,
+    /// The fill new objects get (nothing selected).
+    pub creation_fill: CreationFill,
     pub hatch_editor: Option<HatchEditorState>,
     pub gradient_editor: Option<GradientEditorState>,
     pub pending_fill_close: Option<PendingFillClose>,
@@ -879,6 +947,35 @@ fn header_menu(
         .into()
 }
 
+/// The fill kind and, behind it, the L / C / V button: whether the fill is
+/// the layer's (L) or the objects' own (C), as for the line colour.
+fn fill_row<'a>(
+    current: GraphicAttribute,
+    mode: Option<PropertyMode>,
+    side: DockSide,
+    open_menu: Option<Menu>,
+) -> Element<'a, Message> {
+    let picker = fill_picker(current, open_menu == Some(Menu::Fill));
+    let Some(mode) = mode else {
+        return picker;
+    };
+    let more = mode_menu(
+        side,
+        mode,
+        Menu::FillMode,
+        open_menu,
+        km::TOOL_H,
+        vec![
+            ("ByLayer".into(), msg(GraphicAttributesMsg::FillByLayer)),
+            (crate::t!("Custom"), msg(GraphicAttributesMsg::FillCustom)),
+        ],
+    );
+    row![picker, more]
+        .spacing(km::TOOL_GAP)
+        .align_y(iced::Center)
+        .into()
+}
+
 fn fill_picker<'a>(current: GraphicAttribute, open: bool) -> Element<'a, Message> {
     let picker = button(
         row![
@@ -1283,6 +1380,34 @@ pub fn view<'a>(
     let open_menu = state.open_menu;
     let line_handles = line_handles(document, &selected);
     let (fill_handles, current) = state.fills(scene, &selected);
+    // Without a selection the Fill section shows, and sets, the fill new
+    // objects get, as the Line section does for their line.
+    let creation = selected.is_empty().then(|| {
+        state
+            .creation_fill
+            .shown(document, current_layer_name(document))
+    });
+    let (current, fill_mode) = match creation {
+        Some(creation) => (
+            creation.kind,
+            Some(if creation.by_layer {
+                PropertyMode::ByLayer
+            } else {
+                PropertyMode::Custom
+            }),
+        ),
+        None => (
+            current,
+            crate::app::layer_fill::apply::fill_mode(document, &selected).map(|mode| {
+                use crate::app::layer_fill::apply::FillMode;
+                match mode {
+                    FillMode::ByLayer => PropertyMode::ByLayer,
+                    FillMode::Custom => PropertyMode::Custom,
+                    FillMode::Varies => PropertyMode::Varies,
+                }
+            }),
+        ),
+    };
 
     let mut body = column![kit::section_bar(crate::t!("Line").into_owned(), Vec::new())];
     body = body.extend(line_section(
@@ -1297,9 +1422,26 @@ pub fn view<'a>(
 
     body = body
         .push(kit::section_bar(crate::t!("Fill").into_owned(), Vec::new()))
-        .push(fill_picker(current, open_menu == Some(Menu::Fill)));
+        .push(fill_row(current, fill_mode, side, open_menu));
     if !matches!(current, GraphicAttribute::None | GraphicAttribute::Gradient) {
-        if let Some(info) = color_info(document, &fill_handles, draw_depth) {
+        let info = match creation {
+            Some(creation) => {
+                let shown = match creation.color {
+                    AcadColor::ByLayer | AcadColor::ByBlock => document
+                        .layers
+                        .get(current_layer_name(document))
+                        .map_or(AcadColor::Index(7), |layer| layer.color),
+                    other => other,
+                };
+                Some(ColorInfo {
+                    color: creation.color,
+                    display: crate::ui::properties::acad_color_display(shown).0,
+                    varies: false,
+                })
+            }
+            None => color_info(document, &fill_handles, draw_depth),
+        };
+        if let Some(info) = info {
             body = body.push(color_control(
                 info,
                 side,
@@ -1311,6 +1453,9 @@ pub fn view<'a>(
         }
     }
     match current {
+        // The pattern editor edits selected fills; new objects take the
+        // first pattern, or their layer's.
+        GraphicAttribute::Hatch if creation.is_some() => {}
         GraphicAttribute::Hatch => {
             let hatch = top_fill_hatch(document, &fill_handles, draw_depth, current);
             let preview = hatch
@@ -1404,7 +1549,16 @@ pub fn view<'a>(
         GraphicAttribute::None | GraphicAttribute::Solid | GraphicAttribute::Varies => {}
     }
     if current != GraphicAttribute::None {
-        if let Some(info) = transparency_info(document, &fill_handles, draw_depth) {
+        let info = match creation {
+            Some(creation) => Some(TransparencyInfo::new(
+                document,
+                current_layer_name(document),
+                creation.transparency,
+                false,
+            )),
+            None => transparency_info(document, &fill_handles, draw_depth),
+        };
+        if let Some(info) = info {
             body = body.push(transparency_control(
                 info,
                 side,

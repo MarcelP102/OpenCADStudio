@@ -56,7 +56,7 @@ pub enum LayerSortCol {
     Description,
     /// How many objects are on the layer, block contents included.
     Objects,
-    /// The fill closed shapes drawn on the layer get (FILLBYLAYER).
+    /// The fill closed shapes drawn on the layer get.
     Fill,
     /// The colour of that fill, separate from the layer's line colour.
     FillColor,

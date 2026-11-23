@@ -1,30 +1,47 @@
 # Fill by layer
 
-A closed shape drawn on a layer gets the fill style of that layer, the way
-classes work in Vectorworks. The fill is an ordinary associative hatch, so the
-drawing stays a plain DWG. Only the fill style per layer is OpenCADStudio data.
+Fills work as line colours do. A closed shape drawn on a layer gets the fill
+style of that layer (ByLayer, like classes in Vectorworks), or the fill the
+Graphic Attributes palette sets for new objects (Custom). A layer whose fill
+is None fills nothing, so nothing has to be switched on or off. The fill is an
+ordinary associative hatch, so the drawing stays a plain DWG. Only the fill
+style per layer is OpenCADStudio data.
 
-Status: proof of concept on a feature branch. Off by default (`FILLBYLAYER 0`).
+Status: proof of concept on a feature branch.
+
+## Graphic Attributes: L / C
+
+Behind the fill kind (None / Solid / Hatch / Gradient) sits an L / C / V
+button, as behind the line colour:
+
+| Selection | L | C | V |
+| --- | --- | --- | --- |
+| Objects selected | Their fill is the one their layer sets (none where the layer has none) | Their fill is their own: changed in the palette, or none where the layer has one | Some are L, some C |
+| Nothing selected | New objects get their layer's fill | New objects get the fill set in the palette (kind, colour, transparency) | — |
+
+The button's menu has ByLayer and Custom. ByLayer on a selection gives the
+objects their layer's fill back; Custom keeps their fill as their own.
+Choosing a fill kind, colour or transparency with nothing selected makes new
+objects Custom, as picking a line colour leaves ByLayer.
 
 ## Using it
 
 | Command | What it does |
 | --- | --- |
-| `FILLBYLAYER 1` | Turn filling by layer on for this drawing (`0` turns it off). |
 | `LAYERFILL` | Report the fill style of the current layer. |
 | `LAYERFILL <layer> None` | Remove a layer's fill style. |
 | `LAYERFILL <layer> Solid` | Fill shapes on the layer solid. |
 | `LAYERFILL <layer> <pattern> [scale] [angle] [transparency]` | Fill with a hatch pattern, such as `ANSI31 2 45 30`. |
 | `FILLBYLAYERAPPLY [layer ...\|*]` | Fill closed shapes already in the drawing (current space) on these layers; `*` is every layer with a fill style. |
-| `FILLBYLAYERRESET` | Give the selected shapes their layer's fill again. |
+| `FILLBYLAYERRESET` | Give the selected shapes their layer's fill again (as ByLayer in the palette). |
 
 The Layer Manager has a Fill column (None, Solid or a pattern) and a Fill
 color column, the same colour list as the layer's Color column (standard
 colours or Select Color..., no ByLayer). A change of a
 layer's style, in the column or with `LAYERFILL`, reaches every fill that
 follows the layer in the same undo step; a layer set to None loses those
-fills. A fill changed in the Graphic Attributes palette is marked as changed
-(`OCS_FILL = 2`) and keeps its own style until `FILLBYLAYERRESET`.
+fills. A fill changed in the Graphic Attributes palette is custom
+(`OCS_FILL = 2`) and keeps its own style until it is set to ByLayer again.
 
 A layer name with spaces goes in double quotes. `.` is the current layer.
 `color=<colour>` gives the fill its own colour, apart from the layer's line
@@ -37,13 +54,8 @@ the layer's own colour), for example
 | What | Where | Format |
 | --- | --- | --- |
 | Fill style of a layer | XRecord `OCS_LAYER_FILL` in the extension dictionary of the layer table record | Group codes 70 version, 71 kind (0 none, 1 solid, 2 pattern), 2 pattern name, 62/420 colour, 63/421 background, 440 transparency (0–90 %), 41 scale, 50 angle (degrees) |
-| FILLBYLAYER | Drawing variable in the `AcDbVariableDictionary` of the named object dictionary | `DICTIONARYVAR`, value `0` or `1` |
-| Fill made from a layer style | XDATA `OCS_FILL` on the hatch | Integer16: 1 follows the layer, 2 changed by the user |
-
-FILLBYLAYER is stored as a drawing variable rather than in an XRecord
-`OCS_SETTINGS`: the variable dictionary is where AutoCAD keeps its own per
-drawing variables, and the code already reads and writes it
-(`crate::io::drawing_variable`, as `HPLAYER` does).
+| Fill of a shape | XDATA `OCS_FILL` on the hatch | Integer16: 1 ByLayer, 2 Custom |
+| Fill for new objects | Graphic Attributes palette, for the session | ByLayer, or kind + colour + transparency |
 
 The fill and its shape need no extra link: the hatch is associative, so its
 boundary handles point at the shape.
@@ -83,6 +95,10 @@ stays fast on large drawings. The palette code is unchanged.
 - The Layer Manager's Fill and Fill color columns pick the pattern and the
   fill colour. Background, scale, angle and transparency are set with
   `LAYERFILL` for now; the dialog for them is still to come.
+- The fill for new objects is kept for the session, not with the drawing
+  (CECOLOR, the line colour for new objects, is kept with the drawing).
+- A custom Hatch for new objects uses the first pattern of the catalogue; its
+  pattern editor works on selected fills only.
 - A saved Layer Manager column layout from before this branch shows the new
   columns at the end, after Description.
 - A shape and its marked fill select as one (`with_layer_fills`, called where

@@ -860,7 +860,6 @@ const SYSTEM_VARIABLES: &[&str] = &[
     "FILEASSOC",
     "FILEDIA",
     "FILETAB",
-    "FILLBYLAYER",
     "FILLMODE",
     "FRAME",
     "FRAMES0",

@@ -160,7 +160,7 @@ pub(crate) mod context_menu;
 mod dialog;
 mod dynamic;
 mod file;
-mod graphic_attributes;
+pub(in crate::app) mod graphic_attributes;
 mod keytips;
 pub(in crate::app) mod linetype_manager;
 pub(in crate::app) mod mleader_style;

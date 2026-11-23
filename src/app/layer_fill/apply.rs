@@ -1,8 +1,10 @@
-//! Fill a closed shape with its layer's fill style as it is drawn.
+//! Fill a closed shape as it is drawn, the way its lines get their colour:
+//! by layer (the layer's fill style) or custom (the Graphic Attributes
+//! palette's fill for new objects).
 //!
-//! The fill is an ordinary associative hatch on the shape's layer, placed
-//! behind the shape, marked with XDATA [`FILL_APP`] so the program can tell
-//! it from a hatch the user made. A hatch without that XDATA is never touched.
+//! The fill is an ordinary associative hatch placed behind the shape, marked
+//! with XDATA [`FILL_APP`]: 1 follows the layer, 2 is custom. A hatch
+//! without that XDATA is a hatch the user made on its own.
 
 use super::store::{self, FillKind, LayerFill};
 use crate::app::OpenCADStudio;
@@ -18,9 +20,6 @@ pub(crate) const FOLLOWS_LAYER: i16 = 1;
 /// [`FILL_APP`] value: the user changed this fill; it keeps its own style.
 /// Written when the Graphic Attributes palette changes such a fill.
 pub(crate) const OVERRIDDEN: i16 = 2;
-
-/// System variable that turns filling by layer on (1) or off (0, default).
-pub(crate) const FILLBYLAYER: &str = "FILLBYLAYER";
 
 /// The drawing commands whose closed shapes get their layer's fill. Paste,
 /// import, blocks, xrefs and plugins are not among them.
@@ -43,11 +42,6 @@ const DRAW_COMMANDS: &[&str] = &[
     "SPLINE",
     "SPLINECV",
 ];
-
-/// Whether FILLBYLAYER is on in `doc`. It is kept with the drawing.
-pub(crate) fn fill_by_layer(doc: &document::Document) -> bool {
-    crate::io::drawing_variable(doc, FILLBYLAYER).is_some_and(|value| value.trim() == "1")
-}
 
 /// Whether `name` is a drawing command whose shapes are filled.
 pub(crate) fn is_draw_command(name: &str) -> bool {
@@ -89,6 +83,85 @@ pub(crate) fn hatch_mark(hatch: &document::entities::Hatch) -> Option<i16> {
             XDataValue::Integer16(mark) => Some(*mark),
             _ => None,
         })
+}
+
+/// A fill that followed its layer and is now changed by hand becomes custom.
+pub(crate) fn override_mark(entity: &mut EntityType) {
+    if let EntityType::Hatch(hatch) = entity {
+        if hatch_mark(hatch) == Some(FOLLOWS_LAYER) {
+            set_fill_mark(hatch, OVERRIDDEN);
+        }
+    }
+}
+
+/// How the fill of a set of objects is set, as the L / C / V button shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FillMode {
+    /// The fill is the layer's fill style (none when the layer has none).
+    ByLayer,
+    /// The fill is the object's own.
+    Custom,
+    Varies,
+}
+
+/// The fill mode of `handles`: a shape with a fill that follows its layer, or
+/// with no fill on a layer without a fill style, is by layer; any other fill,
+/// or no fill where the layer has one, is custom. `None` when nothing among
+/// `handles` can be filled.
+pub(crate) fn fill_mode(doc: &document::Document, handles: &[Handle]) -> Option<FillMode> {
+    let picked: rustc_hash::FxHashSet<Handle> = handles.iter().copied().collect();
+    // The marks of the fills bound to each picked shape.
+    let mut fills_of: rustc_hash::FxHashMap<Handle, Vec<Option<i16>>> = Default::default();
+    for entity in doc.entities() {
+        let EntityType::Hatch(hatch) = entity else {
+            continue;
+        };
+        let mark = hatch_mark(hatch);
+        for shape in hatch.paths.iter().flat_map(|path| &path.boundary_handles) {
+            if picked.contains(shape) {
+                fills_of.entry(*shape).or_default().push(mark);
+            }
+        }
+    }
+    let mut modes = handles.iter().filter_map(|handle| {
+        let entity = doc.get_entity(*handle)?;
+        if let EntityType::Hatch(hatch) = entity {
+            // A fill picked with its shape is judged through the shape.
+            let shape_picked = hatch
+                .paths
+                .iter()
+                .flat_map(|path| &path.boundary_handles)
+                .any(|shape| picked.contains(shape));
+            return (!shape_picked).then(|| match hatch_mark(hatch) {
+                Some(FOLLOWS_LAYER) => FillMode::ByLayer,
+                _ => FillMode::Custom,
+            });
+        }
+        if !is_closed_shape(entity) {
+            return None;
+        }
+        Some(match fills_of.get(handle).map(Vec::as_slice) {
+            Some(marks) if marks.iter().all(|mark| *mark == Some(FOLLOWS_LAYER)) => {
+                FillMode::ByLayer
+            }
+            Some(_) => FillMode::Custom,
+            None => {
+                let layer_fills =
+                    store::read(doc, &entity.common().layer).is_some_and(|fill| fill.fills());
+                if layer_fills {
+                    FillMode::Custom
+                } else {
+                    FillMode::ByLayer
+                }
+            }
+        })
+    });
+    let first = modes.next()?;
+    Some(if modes.all(|mode| mode == first) {
+        first
+    } else {
+        FillMode::Varies
+    })
 }
 
 /// Set the [`FILL_APP`] value of a hatch.
@@ -148,14 +221,48 @@ fn render_pattern(
     }
 }
 
-/// Put a layer fill style's colour, background and transparency on `hatch`.
-pub(crate) fn apply_style(hatch: &mut document::entities::Hatch, fill: &LayerFill) {
-    hatch.common.color = fill.color;
-    hatch.common.transparency = if fill.transparency == 0 {
+/// Everything a new fill is made from.
+pub(crate) struct FillSpec {
+    pub name: String,
+    pub pattern: crate::scene::model::hatch_model::HatchPattern,
+    pub scale: f64,
+    pub angle_deg: f64,
+    pub color: document::types::Color,
+    pub transparency: document::types::Transparency,
+    pub background: Option<document::types::Color>,
+}
+
+impl FillSpec {
+    /// A layer's fill style; `None` when it fills nothing.
+    pub(crate) fn of_layer(fill: &LayerFill) -> Option<Self> {
+        if !fill.fills() {
+            return None;
+        }
+        let (name, pattern) = render_pattern(fill)?;
+        Some(Self {
+            name,
+            pattern,
+            scale: fill.scale,
+            angle_deg: fill.angle_deg,
+            color: fill.color,
+            transparency: style_transparency(fill),
+            background: fill.background,
+        })
+    }
+}
+
+fn style_transparency(fill: &LayerFill) -> document::types::Transparency {
+    if fill.transparency == 0 {
         document::types::Transparency::BY_LAYER
     } else {
         document::types::Transparency::from_percent(f64::from(fill.transparency.min(90)) / 100.0)
-    };
+    }
+}
+
+/// Put a layer fill style's colour, background and transparency on `hatch`.
+pub(crate) fn apply_style(hatch: &mut document::entities::Hatch, fill: &LayerFill) {
+    hatch.common.color = fill.color;
+    hatch.common.transparency = style_transparency(fill);
     if let Some(background) = &fill.background {
         crate::entities::hatch::set_background_color(hatch, background);
     }
@@ -172,8 +279,28 @@ impl OpenCADStudio {
         }
     }
 
-    /// Whether committing `entity` from the running command may add a layer
-    /// fill. The fill reorders the sort table and may register its XDATA
+    /// The custom fill new objects get (Graphic Attributes, nothing
+    /// selected, mode C); `None` when new fills follow the layer or the custom
+    /// fill is None.
+    fn creation_custom_fill(&self) -> Option<FillSpec> {
+        let creation = &self.graphic_attributes.creation_fill;
+        if creation.by_layer {
+            return None;
+        }
+        let (name, pattern) = crate::app::update::graphic_attributes::fill_pattern(creation.kind)?;
+        Some(FillSpec {
+            name,
+            pattern,
+            scale: 1.0,
+            angle_deg: 0.0,
+            color: creation.color,
+            transparency: creation.transparency,
+            background: None,
+        })
+    }
+
+    /// Whether committing `entity` from the running command may add a fill.
+    /// The fill reorders the sort table and may register its XDATA
     /// application, so such a step is undone from a structure snapshot.
     pub(in crate::app) fn layer_fill_may_apply(
         &self,
@@ -182,30 +309,40 @@ impl OpenCADStudio {
         preserve_layer: bool,
     ) -> bool {
         let document = &self.tabs[i].scene.document;
-        fill_by_layer(document)
+        let fills = if self.graphic_attributes.creation_fill.by_layer {
+            store::read(document, &self.commit_layer_of(i, entity, preserve_layer))
+                .is_some_and(|fill| fill.fills())
+        } else {
+            self.creation_custom_fill().is_some()
+        };
+        fills
             && self.tabs[i]
                 .active_cmd
                 .as_ref()
                 .is_some_and(|command| is_draw_command(command.name()))
             && is_closed_shape(entity)
-            && store::read(document, &self.commit_layer_of(i, entity, preserve_layer))
-                .is_some_and(|fill| fill.fills())
     }
 
     /// Fill the closed shapes among `handles`, just committed by a drawing
-    /// command, with their layer's fill style. Runs inside the commit's undo
-    /// step, so one undo removes shape and fill together.
+    /// command: with their layer's fill style, or with the palette's custom
+    /// fill. Runs inside the commit's undo step, so one undo removes shape
+    /// and fill together. A layer (or custom fill) of None fills nothing.
     pub(in crate::app) fn auto_fill_committed(&mut self, i: usize, handles: &[Handle]) {
-        if !fill_by_layer(&self.tabs[i].scene.document)
-            || !self.tabs[i]
-                .active_cmd
-                .as_ref()
-                .is_some_and(|command| is_draw_command(command.name()))
+        if !self.tabs[i]
+            .active_cmd
+            .as_ref()
+            .is_some_and(|command| is_draw_command(command.name()))
         {
             return;
         }
+        let custom = self.creation_custom_fill();
+        let by_layer = self.graphic_attributes.creation_fill.by_layer;
         for handle in handles {
-            let _ = self.add_layer_fill(i, *handle, FOLLOWS_LAYER);
+            let _ = match &custom {
+                _ if by_layer => self.add_layer_fill(i, *handle, FOLLOWS_LAYER),
+                Some(spec) => self.add_fill(i, *handle, spec, OVERRIDDEN),
+                None => None,
+            };
         }
     }
 
@@ -254,13 +391,32 @@ impl OpenCADStudio {
         shape: Handle,
         mark: i16,
     ) -> Option<Handle> {
+        let layer = self.tabs[i]
+            .scene
+            .document
+            .get_entity(shape)?
+            .common()
+            .layer
+            .clone();
+        let fill = store::read(&self.tabs[i].scene.document, &layer)?;
+        let spec = FillSpec::of_layer(&fill)?;
+        self.add_fill(i, shape, &spec, mark)
+    }
+
+    /// Add one associative fill made from `spec` to the closed shape
+    /// `shape`, on the shape's layer, behind it, marked `mark`.
+    pub(in crate::app) fn add_fill(
+        &mut self,
+        i: usize,
+        shape: Handle,
+        spec: &FillSpec,
+        mark: i16,
+    ) -> Option<Handle> {
         let entity = self.tabs[i].scene.document.get_entity(shape)?.clone();
         if !is_closed_shape(&entity) || self.tabs[i].scene.is_layer_locked(shape) {
             return None;
         }
         let layer = entity.common().layer.clone();
-        let fill = store::read(&self.tabs[i].scene.document, &layer).filter(LayerFill::fills)?;
-        let (name, pattern) = render_pattern(&fill)?;
         let plane = self.layer_fill_plane(i);
         let source = crate::scene::entity_boundary_source_on_plane(&entity, plane, 1.0e-6, None)?;
         let mut sources = rustc_hash::FxHashMap::default();
@@ -268,10 +424,10 @@ impl OpenCADStudio {
         let mut command =
             crate::modules::draw::draw::hatch::HatchCommand::new(sources, vec![shape], None, plane)
                 .with_origin(self.tabs[i].scene.document.hatch_origin())
-                .with_pattern(name, pattern);
+                .with_pattern(spec.name.clone(), spec.pattern.clone());
         if let Some(mut settings) = command.hatch_settings() {
-            settings.scale = fill.scale;
-            settings.angle_deg = fill.angle_deg;
+            settings.scale = spec.scale;
+            settings.angle_deg = spec.angle_deg;
             command.set_hatch_settings(settings);
         }
         let crate::command::CmdResult::CommitHatch(model) = command.finish_selected() else {
@@ -289,7 +445,11 @@ impl OpenCADStudio {
         else {
             return None;
         };
-        apply_style(&mut hatch, &fill);
+        hatch.common.color = spec.color;
+        hatch.common.transparency = spec.transparency;
+        if let Some(background) = &spec.background {
+            crate::entities::hatch::set_background_color(&mut hatch, background);
+        }
         self.tabs[i].scene.ensure_app_id(FILL_APP);
         set_fill_mark(&mut hatch, mark);
         self.tabs[i].scene.update_entity(EntityType::Hatch(hatch));
@@ -437,8 +597,10 @@ impl OpenCADStudio {
     }
 }
 
-/// Split a palette selection: `handles` without the layer fills whose shape
-/// is selected too, and the selected shapes that have a layer fill.
+/// Split a palette selection: a shape and its marked fill are selected
+/// together, so the palette changes the fill itself (in place, keeping its
+/// handle and draw order) and leaves the shape out, which would get a second
+/// fill otherwise. Returns the handles to work on and the shapes left out.
 pub(crate) fn split_layer_fills(
     doc: &document::Document,
     handles: &[Handle],
@@ -447,41 +609,36 @@ pub(crate) fn split_layer_fills(
         return (handles.to_vec(), Vec::new());
     }
     let picked: rustc_hash::FxHashSet<Handle> = handles.iter().copied().collect();
-    let mut drop = rustc_hash::FxHashSet::default();
-    let mut shapes = Vec::new();
-    for entity in doc.entities() {
-        let EntityType::Hatch(hatch) = entity else {
+    let mut shapes = rustc_hash::FxHashSet::default();
+    for handle in handles {
+        let Some(EntityType::Hatch(hatch)) = doc.get_entity(*handle) else {
             continue;
         };
         if hatch_mark(hatch).is_none() {
             continue;
         }
-        let bound: Vec<Handle> = hatch
-            .paths
-            .iter()
-            .flat_map(|path| path.boundary_handles.iter().copied())
-            .filter(|shape| picked.contains(shape))
-            .collect();
-        if bound.is_empty() {
-            continue;
-        }
-        drop.insert(hatch.common.handle);
-        shapes.extend(bound);
+        shapes.extend(
+            hatch
+                .paths
+                .iter()
+                .flat_map(|path| path.boundary_handles.iter().copied())
+                .filter(|shape| picked.contains(shape)),
+        );
     }
-    shapes.sort_unstable_by_key(Handle::value);
-    shapes.dedup();
     let kept = handles
         .iter()
         .copied()
-        .filter(|handle| !drop.contains(handle))
+        .filter(|handle| !shapes.contains(handle))
         .collect();
-    (kept, shapes)
+    let mut left_out: Vec<Handle> = shapes.into_iter().collect();
+    left_out.sort_unstable_by_key(Handle::value);
+    (kept, left_out)
 }
 
 impl OpenCADStudio {
-    /// After the Graphic Attributes palette changed the fills of `shapes`
-    /// (which had layer fills before), mark their fills as changed by the
-    /// user, so a layer style no longer overwrites them.
+    /// After the Graphic Attributes palette changed the fills of `handles`
+    /// (shapes, or fills themselves), mark those fills as the objects' own
+    /// (C), so a layer style no longer overwrites them.
     pub(in crate::app) fn mark_fills_overridden(&mut self, i: usize, shapes: &[Handle]) {
         if shapes.is_empty() {
             return;
@@ -496,11 +653,12 @@ impl OpenCADStudio {
                 _ => None,
             })
             .filter(|hatch| {
-                hatch
-                    .paths
-                    .iter()
-                    .flat_map(|path| path.boundary_handles.iter())
-                    .any(|shape| shape_set.contains(shape))
+                shape_set.contains(&hatch.common.handle)
+                    || hatch
+                        .paths
+                        .iter()
+                        .flat_map(|path| path.boundary_handles.iter())
+                        .any(|shape| shape_set.contains(shape))
             })
             .filter(|hatch| hatch_mark(hatch) != Some(OVERRIDDEN))
             .cloned()
@@ -526,9 +684,9 @@ impl OpenCADStudio {
             .filter(|handle| document.get_entity(*handle).is_some_and(is_closed_shape))
             .collect();
         let shape_set: rustc_hash::FxHashSet<Handle> = shapes.iter().copied().collect();
+        // ByLayer: whatever fill the shapes have now gives way to the layer's.
         let old_fills: Vec<Handle> = document
             .entities()
-            .filter(|entity| fill_mark(entity).is_some())
             .filter_map(|entity| match entity {
                 EntityType::Hatch(hatch) => Some(hatch),
                 _ => None,

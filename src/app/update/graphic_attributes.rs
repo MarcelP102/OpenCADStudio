@@ -31,7 +31,7 @@ fn default_hatch_pattern() -> Option<&'static crate::scene::model::hatch_pattern
 }
 
 /// Pattern name and render pattern of a new fill; `None` for no fill.
-fn fill_pattern(value: GraphicAttribute) -> Option<(String, HatchPattern)> {
+pub(in crate::app) fn fill_pattern(value: GraphicAttribute) -> Option<(String, HatchPattern)> {
     match value {
         GraphicAttribute::Solid => Some(("SOLID".into(), HatchPattern::Solid)),
         GraphicAttribute::Hatch => {
@@ -252,6 +252,8 @@ impl OpenCADStudio {
                 self.focus_cmd_input()
             }
             M::Fill(value) => self.on_graphic_attribute(value),
+            M::FillByLayer => self.on_fill_by_layer(),
+            M::FillCustom => self.on_fill_custom(),
             M::LineColor(color) => self.on_line_color(color),
             M::LineLinetype(linetype) => self.on_line_linetype(linetype),
             M::LineLineweight(lineweight) => self.on_line_lineweight(lineweight),
@@ -613,7 +615,14 @@ impl OpenCADStudio {
         self.graphic_attributes.hatch_editor = None;
         let i = self.active_tab;
         let handles = self.graphic_handles(i, Part::Fill);
-        self.apply_hatch_pattern(i, &handles, name)
+        let task = self.apply_hatch_pattern(i, &handles, name);
+        // Part of the same undo snapshot: a pattern picked by hand is custom.
+        for handle in &handles {
+            if let Some(entity) = self.tabs[i].scene.document.get_entity_mut(*handle) {
+                crate::app::layer_fill::apply::override_mark(entity);
+            }
+        }
+        task
     }
 
     fn on_gradient_editor(&mut self, message: GradientMsg) -> Task<Message> {
@@ -727,8 +736,8 @@ impl OpenCADStudio {
         let i = self.active_tab;
         let selected = self.tabs[i].scene.selected_handles_in_order();
         if selected.is_empty() {
-            self.command_line
-                .push_info(crate::t!("Select one or more closed objects first.").as_ref());
+            // Nothing selected: the fill new objects get, as a line colour.
+            self.custom_creation_fill().kind = value;
             return Task::none();
         }
         if value != GraphicAttribute::None {
@@ -795,7 +804,7 @@ impl OpenCADStudio {
         }
         // A shape and its layer fill are selected together: the shape's
         // fill is replaced, the fill itself is not converted a second time.
-        let (selected, layer_filled) = crate::app::layer_fill::apply::split_layer_fills(
+        let (selected, _) = crate::app::layer_fill::apply::split_layer_fills(
             &self.tabs[i].scene.document,
             &selected,
         );
@@ -817,7 +826,8 @@ impl OpenCADStudio {
             }
         }
         changed |= self.replace_graphic_fills(i, value, selected);
-        self.mark_fills_overridden(i, &layer_filled);
+        // A fill given in the palette is the objects' own (C).
+        self.mark_fills_overridden(i, selected);
         if changed {
             self.tabs[i].dirty = true;
             self.refresh_properties();
@@ -975,16 +985,76 @@ impl OpenCADStudio {
     }
 
     pub(super) fn on_solid_fill_color(&mut self, color: AcadColor) -> Task<Message> {
+        if !self.has_selection() {
+            self.custom_creation_fill().color = color;
+            return Task::none();
+        }
         self.edit_graphic_part(Part::Fill, &crate::t!("Fill color"), |entity| {
             crate::scene::view::dispatch::apply_color(entity, color);
+            crate::app::layer_fill::apply::override_mark(entity);
         });
         Task::none()
     }
 
     pub(super) fn on_fill_transparency(&mut self, transparency: Transparency) -> Task<Message> {
+        if !self.has_selection() {
+            self.custom_creation_fill().transparency = transparency;
+            return Task::none();
+        }
         self.edit_graphic_part(Part::Fill, &crate::t!("Fill transparency"), |entity| {
             entity.common_mut().transparency = transparency;
+            crate::app::layer_fill::apply::override_mark(entity);
         });
+        Task::none()
+    }
+
+    /// The fill new objects get, made custom first if it followed the layer
+    /// (starting from the layer's fill, as a colour leaves ByLayer).
+    fn custom_creation_fill(&mut self) -> &mut palette::CreationFill {
+        let i = self.active_tab;
+        let creation = &mut self.graphic_attributes.creation_fill;
+        if creation.by_layer {
+            *creation = palette::CreationFill::custom_from_layer(
+                &self.tabs[i].scene.document,
+                &self.tabs[i].active_layer,
+            );
+        }
+        creation
+    }
+
+    /// L: the selected objects' fill becomes their layer's (none where the
+    /// layer has none); nothing selected, new objects follow the layer.
+    fn on_fill_by_layer(&mut self) -> Task<Message> {
+        if !self.has_selection() {
+            self.graphic_attributes.creation_fill.by_layer = true;
+            return Task::none();
+        }
+        let i = self.active_tab;
+        if self.reset_layer_fills(i) > 0 || self.tabs[i].dirty {
+            self.refresh_properties();
+        }
+        Task::none()
+    }
+
+    /// C: the selected objects keep their fill as their own; nothing
+    /// selected, new objects get the palette's fill.
+    fn on_fill_custom(&mut self) -> Task<Message> {
+        if !self.has_selection() {
+            let _ = self.custom_creation_fill();
+            return Task::none();
+        }
+        let i = self.active_tab;
+        let selected = self.tabs[i].scene.selected_handles_in_order();
+        let pending = self.begin_undo(
+            i,
+            HistoryLabel::Message("Fill change"),
+            selected.len(),
+            false,
+        );
+        self.mark_fills_overridden(i, &selected);
+        if let Some(pending) = pending {
+            self.commit_undo_delta(i, pending);
+        }
         Task::none()
     }
 

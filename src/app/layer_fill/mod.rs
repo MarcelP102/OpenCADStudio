@@ -1,10 +1,10 @@
-//! Fill by layer: a closed shape drawn on a layer gets that layer's fill.
+//! Fill by layer: fills work as line colours do. A closed shape drawn on a
+//! layer gets that layer's fill (ByLayer), or the Graphic Attributes
+//! palette's custom fill for new objects. A layer whose fill is None fills
+//! nothing.
 //!
 //! - [`store`]: the fill style per layer, an XRecord on the layer.
 //! - [`apply`]: the associative fill added when a shape is drawn.
-//!
-//! FILLBYLAYER (0 off, 1 on; kept with the drawing) turns it on. While it is
-//! off, nothing behaves differently.
 
 pub(crate) mod apply;
 pub(crate) mod store;
@@ -32,7 +32,6 @@ fn words(text: &str) -> Vec<String> {
     words
 }
 
-/// Parse `None | Solid | <pattern> [scale] [angle] [transparency]` onto `base`.
 /// A fill colour as typed: an index 1–255 or `r,g,b`. No ByLayer: the
 /// fill colour is itself part of the layer's settings.
 fn parse_color(text: &str) -> Option<document::types::Color> {
@@ -52,6 +51,7 @@ fn parse_color(text: &str) -> Option<document::types::Color> {
     }
 }
 
+/// Parse `None | Solid | <pattern> [scale] [angle] [transparency]` onto `base`.
 fn parse_fill(base: Option<LayerFill>, words: &[String]) -> Result<LayerFill, String> {
     let mut fill = base.unwrap_or_default();
     // `color=<colour>` may stand anywhere; the rest is positional.
@@ -132,33 +132,22 @@ fn describe(layer: &str, fill: Option<&LayerFill>) -> String {
 }
 
 impl OpenCADStudio {
-    /// FILLBYLAYER, SETVAR FILLBYLAYER and LAYERFILL. `None` for any other
-    /// command.
+    /// LAYERFILL, FILLBYLAYERRESET and FILLBYLAYERAPPLY. `None` for any
+    /// other command.
     pub(in crate::app) fn dispatch_layer_fill(
         &mut self,
         cmd: &str,
         i: usize,
     ) -> Option<Task<Message>> {
         let all = words(cmd);
-        let first = all.first()?.to_ascii_uppercase();
-        let (name, rest) = if first == "SETVAR" {
-            (
-                all.get(1)?.to_ascii_uppercase(),
-                all.get(2..).unwrap_or(&[]),
-            )
-        } else {
-            (first, all.get(1..).unwrap_or(&[]))
-        };
+        let name = all.first()?.to_ascii_uppercase();
+        let rest = all.get(1..).unwrap_or(&[]);
         match name.as_str() {
-            apply::FILLBYLAYER => {
-                self.fill_by_layer_setvar(i, rest.first().map(String::as_str));
-                Some(self.finish_dispatch(cmd))
-            }
-            "LAYERFILL" if all[0].eq_ignore_ascii_case("LAYERFILL") => {
+            "LAYERFILL" => {
                 self.layer_fill_command(i, rest);
                 Some(self.finish_dispatch(cmd))
             }
-            "FILLBYLAYERRESET" if all[0].eq_ignore_ascii_case("FILLBYLAYERRESET") => {
+            "FILLBYLAYERRESET" => {
                 let reset = self.reset_layer_fills(i);
                 self.command_line.push_output(&format!(
                     "FILLBYLAYERRESET: {reset} fill(s) follow their layer again."
@@ -166,45 +155,11 @@ impl OpenCADStudio {
                 self.refresh_properties();
                 Some(self.finish_dispatch(cmd))
             }
-            "FILLBYLAYERAPPLY" if all[0].eq_ignore_ascii_case("FILLBYLAYERAPPLY") => {
+            "FILLBYLAYERAPPLY" => {
                 self.fill_by_layer_apply_command(i, rest);
                 Some(self.finish_dispatch(cmd))
             }
             _ => None,
-        }
-    }
-
-    fn fill_by_layer_setvar(&mut self, i: usize, value: Option<&str>) {
-        let current = u8::from(apply::fill_by_layer(&self.tabs[i].scene.document));
-        match value.map(str::trim).filter(|value| !value.is_empty()) {
-            None => {
-                self.command_line.push_output(&format!(
-                    "Enter new value for {} <{current}>:",
-                    apply::FILLBYLAYER
-                ));
-                self.pending_setvar = Some(apply::FILLBYLAYER.to_string());
-            }
-            Some(value @ ("0" | "1")) => {
-                if value != current.to_string() {
-                    crate::io::set_drawing_variable(
-                        &mut self.tabs[i].scene.document,
-                        apply::FILLBYLAYER,
-                        value,
-                    );
-                    self.tabs[i].dirty = true;
-                }
-                self.command_line
-                    .push_output(&format!("{} = {value}", apply::FILLBYLAYER));
-            }
-            Some(_) => {
-                self.command_line
-                    .push_rejection(crate::t!("Requires 0 or 1 only.").as_ref());
-                self.command_line.push_output(&format!(
-                    "Enter new value for {} <{current}>:",
-                    apply::FILLBYLAYER
-                ));
-                self.pending_setvar = Some(apply::FILLBYLAYER.to_string());
-            }
         }
     }
 
