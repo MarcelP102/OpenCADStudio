@@ -417,9 +417,54 @@ impl OpenCADStudio {
             sections.extend(object_sections);
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
+        if matches!(entity, document::EntityType::Dimension(_)) {
+            let document = &self.tabs[i].scene.document;
+            let count = crate::io::xref::ifc_slice::unresolved(document, Some(handle), None);
+            if count > 0 {
+                sections.push(crate::scene::model::object::PropSection {
+                    title: "IFC XREF".into(),
+                    props: vec![crate::entities::common::ro_prop(
+                        "Unresolved points",
+                        "ifc_xref_unresolved",
+                        format!("{count} (value may be stale). Use DIMREASSOCIATE."),
+                    )],
+                });
+            }
+        }
+
         {
             use crate::entities::common::ro_prop;
-            let xd = &source_entity.common().extended_data;
+            let common = source_entity.common();
+            let xd = &common.extended_data;
+            let ifc_source = crate::ifc_plan::source::read(common);
+            if let Some(source) = &ifc_source {
+                let mut props = Vec::new();
+                if let Some(file) = source.file {
+                    props.push(ro_prop(
+                        &crate::tr!("ifc2plan", "source-file"),
+                        "ifc_file",
+                        file,
+                    ));
+                }
+                for (index, element) in source.elements.iter().enumerate() {
+                    let (field, label) = if element.global_id.is_empty() {
+                        ("ifc_step_id", format!("#{}", element.step_id))
+                    } else {
+                        ("ifc_global_id", element.global_id.to_owned())
+                    };
+                    let title = if source.elements.len() == 1 {
+                        element.ifc_type.to_owned()
+                    } else {
+                        format!("{} {}", index + 1, element.ifc_type)
+                    };
+                    props.push(ro_prop(&title, field, label));
+                }
+                sections.push(crate::scene::model::object::PropSection {
+                    title: crate::tr!("ifc2plan", "source"),
+                    props,
+                });
+            }
             if !xd.is_empty() && !matches!(source_entity, document::EntityType::Ole2Frame(_)) {
                 let mut xd_props = Vec::new();
                 // A hyperlink shows on its own row; inspection data is the
@@ -434,6 +479,7 @@ impl OpenCADStudio {
                             != document::entities::CENTERLINE_XDATA_APPLICATION
                         // A cloud's arc length is its Arc Length row.
                         && rec.application_name != crate::entities::revcloud::APP
+                        && !(ifc_source.is_some() && rec.application_name == crate::ifc_plan::source::APPLICATION)
                 }) {
                     let value_text = rec
                         .values
@@ -1043,6 +1089,15 @@ impl OpenCADStudio {
                     custom_properties.extend(Self::visibility_property(doc, handle));
                 }
                 custom_properties.extend(Self::visible_blocks_property(doc, handle));
+                // A BricsCAD parametric block's states, switched from a list
+                // outside the Block Editor and Test Block.
+                custom_properties.extend(Self::bricscad_visibility_properties(
+                    doc,
+                    self.tabs[i].id,
+                    handle,
+                    self.tabs[i].active_block_edit_session().is_none()
+                        && self.tabs[i].block_test.is_none(),
+                ));
                 if !custom_properties.is_empty() {
                     sections.push(crate::scene::model::object::PropSection {
                         title: t!("Custom").into_owned(),
@@ -4642,7 +4697,9 @@ handles={handles_ms:.1} panel={:.1} ribbon={ribbon_ms:.1} tail={:.1} selected={}
             entity.as_entity_mut().set_layer(layer);
         } else if !preserve_entity_layer {
             // DIMLAYER and MLEADERLAYER put new dimensions and
-            // multileaders on their own layers.
+            // multileaders on their own layers; the other layer variables
+            // put new hatches, external references and the new objects of
+            // REVCLOUD, TABLE and MVIEW on theirs.
             let xref = match &entity {
                 document::EntityType::Insert(insert) => self.tabs[i]
                     .scene
@@ -4660,6 +4717,12 @@ handles={handles_ms:.1} panel={:.1} ribbon={ribbon_ms:.1} tail={:.1} selected={}
                 self.new_variable_layer(i, "HATCHLAYER")
             } else if xref {
                 self.new_variable_layer(i, "XREFLAYER")
+            } else if let Some(name) = self.tabs[i]
+                .active_cmd
+                .as_ref()
+                .and_then(|command| super::commands::command_layer_variable(command.name()))
+            {
+                self.new_variable_layer(i, name)
             } else {
                 self.tabs[i].active_layer.clone()
             };
@@ -5171,23 +5234,44 @@ pub(super) fn aggregate_sections(
                 _ => None,
             })
             .sum::<f64>();
-        for section in result.iter_mut() {
-            if let Some(at) = section.props.iter().position(|p| p.field == "length") {
-                section.props.insert(
-                    at + 1,
-                    crate::scene::model::object::Property {
-                        label: t!("Total length").into_owned(),
-                        field: "total_length",
-                        value: crate::scene::model::object::PropValue::ReadOnly(
-                            crate::entities::common::format_length(total),
-                        ),
-                    },
-                );
-                break;
-            }
-        }
+        insert_total(&mut result, "length", t!("Total length").into_owned(), "total_length", crate::entities::common::format_length(total));
+    }
+    // Several polylines: their summed area and length below each row
+    // (#3528).
+    if selected.len() > 1
+        && selected
+            .iter()
+            .all(|(_, entity)| matches!(entity, document::EntityType::LwPolyline(_)))
+    {
+        use crate::entities::traits::MassPropsCalc;
+        let (area, length) = selected
+            .iter()
+            .filter_map(|(_, entity)| match entity {
+                document::EntityType::LwPolyline(pline) => Some(pline.mass_props()),
+                _ => None,
+            })
+            .fold((0.0, 0.0), |(a, l), mp| (a + mp.area, l + mp.perimeter));
+        insert_total(&mut result, "area", t!("Total area").into_owned(), "total_area", crate::entities::common::format_area(area));
+        insert_total(&mut result, "length", t!("Total length").into_owned(), "total_length", crate::entities::common::format_length(length));
     }
     result
+}
+
+/// Inserts a read-only total row below the first row of `field`.
+fn insert_total(result: &mut [crate::scene::model::object::PropSection], field: &str, label: String, total_field: &'static str, value: String) {
+    for section in result.iter_mut() {
+        if let Some(at) = section.props.iter().position(|p| p.field == field) {
+            section.props.insert(
+                at + 1,
+                crate::scene::model::object::Property {
+                    label,
+                    field: total_field,
+                    value: crate::scene::model::object::PropValue::ReadOnly(value),
+                },
+            );
+            return;
+        }
+    }
 }
 
 fn aggregate_solid_history_sections(
@@ -5957,40 +6041,10 @@ fn dim_lineweight_label(dimlwd: i16) -> String {
     crate::entities::common::lineweight_label(dimlwd)
 }
 
-/// Human-readable INSUNITS name (DXF group 70 unit codes).
-pub(in crate::app) fn insunits_name(code: i16) -> &'static str {
-    match code {
-        1 => "Inches",
-        2 => "Feet",
-        3 => "Miles",
-        4 => "Millimeters",
-        5 => "Centimeters",
-        6 => "Meters",
-        7 => "Kilometers",
-        8 => "Microinches",
-        9 => "Mils",
-        10 => "Yards",
-        11 => "Angstroms",
-        12 => "Nanometers",
-        13 => "Microns",
-        14 => "Decimeters",
-        15 => "Decameters",
-        16 => "Hectometers",
-        17 => "Gigameters",
-        18 => "Astronomical Units",
-        19 => "Light Years",
-        20 => "Parsecs",
-        21 => "US Survey Feet",
-        22 => "US Survey Inches",
-        23 => "US Survey Yards",
-        24 => "US Survey Miles",
-        0 => "Unitless",
-        _ => "Unknown",
-    }
-}
+pub(crate) use crate::entities::units::{insunits_name, insunits_to_mm};
 
 /// Unit-conversion scale for a new INSERT.
-pub(in crate::app) fn insert_unit_scale(host_units: i16, src_units: i16) -> Option<f64> {
+pub(crate) fn insert_unit_scale(host_units: i16, src_units: i16) -> Option<f64> {
     let host_mm = insunits_to_mm(host_units)?;
     let src_mm = insunits_to_mm(src_units)?;
     let ratio = src_mm / host_mm;
@@ -6007,37 +6061,6 @@ pub(in crate::app) fn format_unit_factor(factor: f64) -> String {
     } else {
         format!("{factor:.4}")
     }
-}
-
-/// Convert INSUNITS (DXF group 70) to millimetres.
-pub(crate) fn insunits_to_mm(code: i16) -> Option<f64> {
-    Some(match code {
-        1 => 25.4,                       // Inches
-        2 => 304.8,                      // Feet
-        3 => 1_609_344.0,                // Miles
-        4 => 1.0,                        // Millimeters
-        5 => 10.0,                       // Centimeters
-        6 => 1_000.0,                    // Meters
-        7 => 1_000_000.0,                // Kilometers
-        8 => 0.000_025_4,                // Microinches
-        9 => 0.025_4,                    // Mils
-        10 => 914.4,                     // Yards
-        11 => 1.0e-7,                    // Angstroms
-        12 => 1.0e-6,                    // Nanometers
-        13 => 0.001,                     // Microns
-        14 => 100.0,                     // Decimeters
-        15 => 10_000.0,                  // Decameters
-        16 => 100_000.0,                 // Hectometers
-        17 => 1.0e12,                    // Gigameters
-        18 => 1.495_978_707e14,          // Astronomical Units
-        19 => 9.460_730_472_580_8e18,    // Light Years
-        20 => 3.085_677_581_491_367e19,  // Parsecs
-        21 => 1_200_000.0 / 3_937.0,     // US Survey Feet
-        22 => 100_000.0 / 3_937.0,       // US Survey Inches
-        23 => 3_600_000.0 / 3_937.0,     // US Survey Yards
-        24 => 6_336_000_000.0 / 3_937.0, // US Survey Miles
-        _ => return None,
-    })
 }
 
 fn apply_insert_unit_scale(ins: &mut document::entities::Insert, ratio: f64) -> bool {
@@ -6621,10 +6644,11 @@ mod chprop_integration_tests {
     /// Converting the site to `apply_property_op` moved the snapshot
     /// to *before* the mutation. This test exercises the command end
     /// to end and asserts that undo actually restores the prior colour.
-    #[ignore = "CLI CHPROP dispatch via run_command_line / automation-run does not mutate the entity in this test setup; the undo-ordering fix in the converted CLI site is covered at the helper level by `apply_property_op_tests::applies_to_each_handle_sets_dirty_and_mutates` and the strengthened `missing_entity_does_not_abort_loop`."]
     #[test]
     fn cli_chprop_undo_restores_previous_state() {
         let mut app = OpenCADStudio::new_for_test();
+        // The command line refuses a command while no drawing is open.
+        let _ = app.automation_op(r#"{"op":"new"}"#);
         let i = app.active_tab;
         let h = line_handle(&mut app);
         let original = app.tabs[i]
@@ -7192,4 +7216,42 @@ pub(crate) fn property_linetype_items(
         })
         .chain(super::layers::catalog_linetype_items(doc))
         .collect()
+}
+
+#[cfg(test)]
+mod polyline_total_tests {
+    use super::aggregate_sections;
+    use document::entities::LwPolyline;
+    use document::types::Vector2;
+    use document::{EntityType, Handle};
+
+    fn square(x: f64, side: f64) -> EntityType {
+        let mut pline = LwPolyline::from_points(vec![
+            Vector2::new(x, 0.0),
+            Vector2::new(x + side, 0.0),
+            Vector2::new(x + side, side),
+            Vector2::new(x, side),
+        ]);
+        pline.close();
+        EntityType::LwPolyline(pline)
+    }
+
+    fn row(sections: &[crate::scene::model::object::PropSection], field: &str) -> Option<String> {
+        sections.iter().flat_map(|s| &s.props).find(|p| p.field == field).map(|p| match &p.value {
+            crate::scene::model::object::PropValue::ReadOnly(v) => v.clone(),
+            other => panic!("{field}: {other:?}"),
+        })
+    }
+
+    /// #3528: several polylines show their summed area and length.
+    #[test]
+    fn several_polylines_show_their_total_area_and_length() {
+        let (a, b) = (square(0.0, 2.0), square(10.0, 3.0));
+        let selected = [(Handle::new(1), &a), (Handle::new(2), &b)];
+        let sections = aggregate_sections(&selected, &[]);
+        assert_eq!(row(&sections, "total_area"), Some(crate::entities::common::format_area(13.0)));
+        assert_eq!(row(&sections, "total_length"), Some(crate::entities::common::format_length(20.0)));
+        // One polyline has no totals.
+        assert_eq!(row(&aggregate_sections(&selected[..1], &[]), "total_area"), None);
+    }
 }

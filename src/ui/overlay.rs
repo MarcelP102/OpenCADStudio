@@ -23,8 +23,6 @@ pub const CROSSHAIR_SQ: f32 = 7.5;
 pub const CROSSHAIR_ARM: f32 = 60.0;
 pub(crate) const TRACKING_DASH_PX: [f32; 2] = [6.0, 4.0];
 const DEFAULT_CURSOR_SIZE: i32 = 5;
-const DEFAULT_PICK_BOX: i32 = 3;
-const DEFAULT_PICK_APERTURE: f32 = 8.0;
 const CONSTRAINT_HOVER_MARKER_RADIUS: f32 = 7.0;
 
 use crate::scene::parametric_constraints::{
@@ -254,29 +252,18 @@ pub(crate) fn crosshair_arm_px(bounds: iced::Rectangle, value: i32) -> f32 {
     CROSSHAIR_ARM + (full - CROSSHAIR_ARM) * scale
 }
 
-/// Convert PICKBOX to the visible half-size while retaining the original
-/// 15 x 15 px center box at the default value.
+/// PICKBOX is the pick box's half-size in screen pixels: an object is picked
+/// within that distance of the pointer, and the square shows that reach
+/// (measured: 2, 5 and 10 pick up to 2.5, 6.25 and 12.5 device pixels at a
+/// 125 % display scale, i.e. PICKBOX interface pixels).
 pub(crate) fn pick_box_half_px(value: i32) -> f32 {
-    let value = value.clamp(0, 50);
-    if value <= DEFAULT_PICK_BOX {
-        return CROSSHAIR_SQ * value as f32 / DEFAULT_PICK_BOX as f32;
-    }
-
-    let scale = (value - DEFAULT_PICK_BOX) as f32 / (50 - DEFAULT_PICK_BOX) as f32;
-    CROSSHAIR_SQ + (50.0 - CROSSHAIR_SQ) * scale
+    value.clamp(0, 50) as f32
 }
 
-/// Convert PICKBOX to the real click/hover aperture. A zero setting hides the
-/// box but retains the one-pixel minimum needed for direct hits.
+/// The click/hover aperture of PICKBOX. A zero setting hides the box but
+/// retains the one-pixel minimum needed for direct hits.
 pub(crate) fn pick_box_aperture_px(value: i32) -> f32 {
-    let value = value.clamp(0, 50);
-    let aperture = if value <= DEFAULT_PICK_BOX {
-        DEFAULT_PICK_APERTURE * value as f32 / DEFAULT_PICK_BOX as f32
-    } else {
-        let scale = (value - DEFAULT_PICK_BOX) as f32 / (50 - DEFAULT_PICK_BOX) as f32;
-        DEFAULT_PICK_APERTURE + (50.0 - DEFAULT_PICK_APERTURE) * scale
-    };
-    aperture.max(1.0)
+    pick_box_half_px(value).max(1.0)
 }
 
 /// What a crosshair paints around the pointer, in canvas pixels.
@@ -285,6 +272,22 @@ pub(super) struct CrosshairMarks {
     pub arms: Vec<[(Point, Point); 2]>,
     pub pickbox: Option<iced::Rectangle>,
     pub dot: Option<Point>,
+}
+
+/// Where the crosshairs are drawn: on a hovered grip; else on a grid snap
+/// point; else, with the AutoSnap Magnet on, on the object snap point; else
+/// at the pointer. A grid snap is SNAP mode, not AutoSnap, so it moves the
+/// crosshairs with the magnet on or off.
+pub(super) fn crosshair_centre(
+    hovered_grip: Option<Point>,
+    snap: Option<(Point, SnapType)>,
+    magnet: bool,
+    pointer: Option<Point>,
+) -> Option<Point> {
+    let snap_point = snap
+        .filter(|&(_, snap_type)| magnet || snap_type == SnapType::Grid)
+        .map(|(point, _)| point);
+    hovered_grip.or(snap_point).or(pointer)
 }
 
 /// The crosshair's marks, all anchored on the pointer it belongs to.
@@ -385,6 +388,8 @@ pub struct CrosshairOptions {
     pub snap_color: Option<[u8; 3]>,
     /// Object-snap marker half-size in pixels (SNAPMARKERSIZE, 1–20).
     pub snap_size: f32,
+    /// The AutoSnap Magnet: draw the crosshairs on the object snap point.
+    pub magnet: bool,
 }
 
 /// Rendering style for the viewport grid.
@@ -3181,7 +3186,12 @@ impl canvas::Program<Message> for SelectionCanvas {
                     .iter()
                     .find(|grip| grip.is_hovered)
                     .map(|grip| grip.pos);
-                if let Some(cp) = hovered_grip.or(self.selection.borrow().input.last_move_pos) {
+                if let Some(cp) = crosshair_centre(
+                    hovered_grip,
+                    self.snap,
+                    self.crosshair.magnet,
+                    self.selection.borrow().input.last_move_pos,
+                ) {
                     let [r, g, b, a] = self.crosshair.color.map_or_else(
                         || {
                             crate::scene::view::render::adapt_to_bg(
@@ -3788,13 +3798,21 @@ fn draw_grid(
     // stroke, matching the reference hierarchy without glaring.
     let major_alpha = (alpha * 1.5).clamp(0.03, 1.0);
     let [r, g, b] = style.color;
+    // The web build draws canvas geometry without MSAA, and a stroke thinner
+    // than a pixel then misses the pixel centres along whole rows and columns,
+    // so bands of grid lines vanished (#3671). One pixel always covers them.
+    let (minor_width, major_width) = if cfg!(target_arch = "wasm32") {
+        (1.0, 1.0)
+    } else {
+        (0.5, 0.75)
+    };
     let minor_stroke = canvas::Stroke {
-        width: 0.5,
+        width: minor_width,
         style: canvas::Style::Solid(Color { r, g, b, a: alpha }),
         ..Default::default()
     };
     let major_stroke = canvas::Stroke {
-        width: 0.75,
+        width: major_width,
         style: canvas::Style::Solid(Color {
             r,
             g,
@@ -7169,7 +7187,7 @@ mod selection_visual_color_tests {
     }
 
     #[test]
-    fn test_selection_fill_alpha_clamping() {
+    fn selection_fill_alpha_clamping() {
         // Dark canvas preserves user opacity directly clamped to [0.0, 1.0]
         assert_eq!(selection_fill_alpha(0.0, false), 0.0);
         assert!((selection_fill_alpha(50.0, false) - 0.5).abs() < 1e-5);
@@ -7490,5 +7508,76 @@ mod crosshair_cursor_tests {
         let marks = crosshair_marks(cp, 7.5, 60.0, [0.0, 90.0], 0.0, false, false, true);
         assert!(marks.arms.is_empty());
         assert!(marks.pickbox.is_some());
+    }
+}
+
+#[cfg(test)]
+mod autosnap_magnet_tests {
+    use super::crosshair_centre;
+    use crate::snap::SnapType;
+    use iced::Point;
+
+    const POINTER: Point = Point::new(400.0, 300.0);
+    const SNAP: Point = Point::new(409.0, 294.0);
+
+    #[test]
+    fn the_magnet_draws_the_crosshairs_on_the_snap_point() {
+        for snap_type in [
+            SnapType::Endpoint,
+            SnapType::Extension,
+            SnapType::Vertex,
+            SnapType::ObjectPick,
+        ] {
+            assert_eq!(
+                crosshair_centre(None, Some((SNAP, snap_type)), true, Some(POINTER)),
+                Some(SNAP),
+                "{snap_type:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn without_the_magnet_the_crosshairs_stay_at_the_pointer() {
+        let snap = Some((SNAP, SnapType::Endpoint));
+        assert_eq!(
+            crosshair_centre(None, snap, false, Some(POINTER)),
+            Some(POINTER)
+        );
+    }
+
+    #[test]
+    fn a_grid_snap_moves_the_crosshairs() {
+        let snap = Some((SNAP, SnapType::Grid));
+        assert_eq!(
+            crosshair_centre(None, snap, true, Some(POINTER)),
+            Some(SNAP)
+        );
+    }
+
+    #[test]
+    fn a_grid_snap_moves_the_crosshairs_with_the_magnet_off() {
+        let snap = Some((SNAP, SnapType::Grid));
+        assert_eq!(
+            crosshair_centre(None, snap, false, Some(POINTER)),
+            Some(SNAP)
+        );
+    }
+
+    #[test]
+    fn with_no_snap_marker_the_crosshairs_are_at_the_pointer() {
+        assert_eq!(
+            crosshair_centre(None, None, true, Some(POINTER)),
+            Some(POINTER)
+        );
+    }
+
+    #[test]
+    fn a_hovered_grip_keeps_the_crosshairs() {
+        let grip = Point::new(395.0, 305.0);
+        let snap = Some((SNAP, SnapType::Endpoint));
+        assert_eq!(
+            crosshair_centre(Some(grip), snap, true, Some(POINTER)),
+            Some(grip)
+        );
     }
 }

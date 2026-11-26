@@ -1268,6 +1268,10 @@ impl Scene {
         // own pass fills its preallocated handle.
         let mut order: Vec<Handle> = Vec::new();
         let mut index = rustc_hash::FxHashMap::default();
+        // A dimension's DIMASSOC names the source dimension and its
+        // geometry: the copy gets its own from `copy_dimension_associations`
+        // (or none), so the source's is neither cloned nor listed.
+        let mut dimension_associations = rustc_hash::FxHashSet::default();
         let mut stack = vec![src_root];
         while let Some(h) = stack.pop() {
             if index.contains_key(&h) {
@@ -1282,6 +1286,19 @@ impl Scene {
                 }
                 continue;
             };
+            if h != src_root
+                && matches!(
+                    obj,
+                    document::objects::ObjectType::Associative(object)
+                        if matches!(
+                            object.data,
+                            document::objects::AssociativeData::DimensionAssociation(_)
+                        )
+                )
+            {
+                dimension_associations.insert(h);
+                continue;
+            }
             index.insert(h, order.len());
             order.push(h);
             match obj {
@@ -1349,6 +1366,8 @@ impl Scene {
                 document::objects::ObjectType::Dictionary(d) => {
                     d.handle = new_h;
                     d.owner = rewrite(d.owner);
+                    d.entries
+                        .retain(|(_, child)| !dimension_associations.contains(child));
                     for (_, child) in &mut d.entries {
                         *child = rewrite(*child);
                     }
@@ -1427,9 +1446,20 @@ impl Scene {
             }
             clones.push((new_h, obj));
         }
+        // A cloned FIELD joins the field index and the FIELDLIST too, or the
+        // copy's field is never evaluated (D3657).
+        let mut fields = Vec::new();
         for (new_h, obj) in clones {
-            doc.objects.insert(new_h, obj);
             created.push(new_h);
+            match obj {
+                document::objects::ObjectType::Field(f) => fields.push(f),
+                obj => {
+                    doc.objects.insert(new_h, obj);
+                }
+            }
+        }
+        if !fields.is_empty() {
+            doc.register_fields(fields);
         }
         doc.block_representations.extend(representations);
         Some(remap[&src_root])
@@ -1628,6 +1658,21 @@ impl Scene {
             .map(|(h, _, _, root)| (*h, *root))
             .collect::<Vec<_>>();
         let (cross, owner_of) = self.prepare_xdict_copies(&roots);
+        // A copied field joins the FIELDLIST; undo puts the list back.
+        if self.is_recording_undo() && roots.iter().any(|(_, root)| root.is_some()) {
+            let lists: Vec<(Handle, document::objects::ObjectType)> = self
+                .document
+                .objects
+                .iter()
+                .filter(|(_, object)| {
+                    matches!(object, document::objects::ObjectType::FieldList(_))
+                })
+                .map(|(handle, object)| (*handle, object.clone()))
+                .collect();
+            for (handle, before) in lists {
+                self.record_undo_object_before(handle, Some(before));
+            }
+        }
         let mut created_objects = Vec::new();
         for (src_handle, mut entity, annotation_scales, src_xdict) in clones {
             let source_attributes = match &entity {
@@ -3753,6 +3798,13 @@ pub(super) fn remap_copied_xdict_cross_refs(
                 }
                 for entry in &mut x.object_references {
                     entry.handle = rewrite(entry.handle);
+                }
+            }
+            // A field naming an object copied with it follows the copy, so a
+            // copied line and its length field stay linked (#3435).
+            document::objects::ObjectType::Field(f) => {
+                for r in &mut f.referenced_objects {
+                    *r = rewrite(*r);
                 }
             }
             _ => {}

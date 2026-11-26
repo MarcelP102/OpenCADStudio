@@ -185,7 +185,26 @@ impl OpenCADStudio {
                         .iter()
                         .any(|field| field.buffer.is_some());
 
-                    let target = if let Some(point) = point_override {
+                    // The command line answers a hot grip as it answers a
+                    // command's point prompt: `<angle`, or a coordinate, with
+                    // `@` measured from the grip.
+                    let typed = self.command_line.input.trim().to_string();
+                    if !dyn_locked
+                        && point_override.is_none()
+                        && grip.mode == GripEditMode::Stretch
+                        && self.try_angle_override(&typed)
+                    {
+                        self.command_line.input.clear();
+                        return Task::none();
+                    }
+                    let typed_point =
+                        parse_coord(&typed)
+                            .filter(|_| !dyn_locked)
+                            .map(|(coord, kind)| {
+                                self.typed_coordinate_wcs(i, coord, kind, Some(grip.origin_world))
+                            });
+
+                    let target = if let Some(point) = point_override.or(typed_point) {
                         Some(point)
                     } else if matches!(grip.mode, GripEditMode::RectangleResize) {
                         grip.rectangle_frame
@@ -227,9 +246,12 @@ impl OpenCADStudio {
                         crate::app::expr_eval::eval_number(text.trim()).map(|dist| {
                             let cursor = self.tabs[i].last_cursor_world;
 
-                            // If the cursor is following OTRACK or Extension,
+                            // A typed `<angle` runs from the grip. If the
+                            // cursor is following OTRACK or Extension,
                             // preserve the existing reference-ray behaviour.
-                            if let Some((base, dir)) = self.active_distance_ray(i) {
+                            if let Some(dir) = self.angle_override {
+                                grip.origin_world + dir * dist
+                            } else if let Some((base, dir)) = self.active_distance_ray(i) {
                                 base + dir * dist
                             } else {
                                 let direction = cursor - grip.origin_world;
@@ -360,6 +382,7 @@ impl OpenCADStudio {
                         self.tabs[i].dyn_active = 0;
                         self.dyn_user_reshaped = false;
                         self.dyn_coord_absolute = self.dyn_pointer_absolute;
+                        self.dyn_coord_wcs = false;
 
                         self.tabs[i].dirty = true;
 
@@ -413,6 +436,10 @@ impl OpenCADStudio {
                 self.command_line.autocomplete_cursor = None;
                 self.command_line.push_command(&command);
                 return self.dispatch_command(&command);
+            }
+            if let Some(item) = self.command_line.selected_content() {
+                self.command_line.push_command(&item.name);
+                return self.run_content_suggestion(item);
             }
         } else if self.command_line.has_contextual_suggestions() {
             // During an active command Enter accepts the highlighted
@@ -487,6 +514,18 @@ impl OpenCADStudio {
             if is_mtp && self.point_modifier_step(i) {
                 self.command_line.input.clear();
                 self.start_mtp_modifier(i);
+                return self.focus_cmd_input();
+            }
+            if crate::command::is_tracking_token(&raw) && self.point_modifier_step(i) {
+                self.command_line.input.clear();
+                self.start_tracking_modifier(i);
+                return self.focus_cmd_input();
+            }
+            if let Some(filter) =
+                crate::command::PointFilter::parse(&raw).filter(|_| self.point_modifier_step(i))
+            {
+                self.command_line.input.clear();
+                self.start_point_filter_modifier(i, filter);
                 return self.focus_cmd_input();
             }
             if let Some(kind) = self.typed_snap_override(i, &raw) {
@@ -592,26 +631,7 @@ impl OpenCADStudio {
                 // default lives in the DYN tooltip path — see
                 // `dyn_resolve_point`; command-line coordinates stay
                 // absolute regardless of the DYN setting.)
-                let want_relative = matches!(kind, CoordKind::Relative);
-                let ucs = self.tabs[i].active_ucs.clone();
-                let wcs_pt = match (want_relative, self.relative_input_base(i)) {
-                    (true, Some(base)) => {
-                        // Offset from the last point, rotated by the
-                        // UCS axes (no origin translation).
-                        let offset = match &ucs {
-                            Some(u) => ucs_rotate_vec(coord, u),
-                            None => coord,
-                        };
-                        base + offset
-                    }
-                    _ => {
-                        // Absolute: typed coordinates are in active UCS.
-                        match &ucs {
-                            Some(u) => ucs_to_wcs(coord, u),
-                            None => coord,
-                        }
-                    }
-                };
+                let wcs_pt = self.typed_coordinate_wcs(i, coord, kind, self.relative_input_base(i));
                 // An object snap override typed before the point snaps it.
                 let (wcs_pt, snapped) = match self.typed_override_snap(i, wcs_pt) {
                     Some(Err(())) => return self.focus_cmd_input(),
@@ -629,6 +649,7 @@ impl OpenCADStudio {
                 self.last_point = Some(wcs_pt);
                 self.dyn_user_reshaped = false;
                 self.dyn_coord_absolute = self.dyn_pointer_absolute;
+                self.dyn_coord_wcs = false;
                 self.sync_dyn_fields();
                 self.reset_tracking_after_point();
                 self.snapper.clear_override();

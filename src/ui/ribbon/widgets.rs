@@ -492,6 +492,9 @@ pub(super) fn is_active_tool(id: &str, active_tool: &Option<String>, state: &Tog
         "FILETAB" => state.show_file_tabs,
         "LAYOUTTAB" => state.show_layout_tabs,
         "TOGGLEGROUPS" => state.group_selection,
+        "SURFACEASSOCIATIVITY" => crate::scene::model::sweep_model::surface_associativity(),
+        "SURFACEMODELINGMODE" => crate::app::surface_modeling_mode() == 1,
+        "SURFACEAUTOTRIM" => crate::modules::mesh::var("SURFACEAUTOTRIM") != 0.0,
         id => active_tool.as_deref() == Some(id) || super::text_editor::lit(id),
     }
 }
@@ -1821,10 +1824,12 @@ pub fn module_event_to_message(event: ModuleEvent) -> Message {
         ModuleEvent::ToggleLayers => Message::ToggleLayers,
         // Needs the tool context + async picker — route through the normal
         // ribbon-click handler rather than a direct 1:1 message.
-        e @ ModuleEvent::PluginFileDialog { .. } => Message::RibbonToolClick {
-            tool_id: String::new(),
-            event: e,
-        },
+        e @ (ModuleEvent::PluginFileDialog { .. } | ModuleEvent::PluginFolderDialog { .. }) => {
+            Message::RibbonToolClick {
+                tool_id: String::new(),
+                event: e,
+            }
+        }
     }
 }
 

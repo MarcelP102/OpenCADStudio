@@ -131,6 +131,8 @@ pub(super) struct State {
     /// screenshotting in the same batch as the state change used to return the
     /// previous frame (C11). Cleared by `on_control_capture_frame`.
     pub(super) capture_frame_pending: bool,
+    /// Shared cancellation token for an in-flight off-screen `capture` worker.
+    pub(super) capture_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// Whether the parked capture actually waited for a redraw (vs. the
     /// anti-hang timer). Reported in the capture result as `waited_for_frame`.
     pub(super) capture_after_redraw: bool,
@@ -569,6 +571,7 @@ pub(super) fn xref_status_name(status: &crate::io::xref::XrefStatus) -> &'static
 pub(super) fn ref_status_name(status: crate::io::xref_model::RefStatus) -> &'static str {
     use crate::io::xref_model::RefStatus as S;
     match status {
+        S::Circular => "circular",
         S::Loaded => "loaded",
         S::Unloaded => "unloaded",
         S::NotFound => "not_found",
@@ -589,6 +592,14 @@ impl OpenCADStudio {
     /// dialog, a popup, typed text) or step a command back a level, and the
     /// client has no other way to finish the job. (#1930)
     fn control_cancel(&mut self) -> Task<Message> {
+        self.control.capture_frame_pending = false;
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.control.capture_deadline = None;
+        }
+        if let Some(cancel) = self.control.capture_cancel.take() {
+            cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         let mut tasks = vec![self.update(Message::CommandEscape)];
         // ponytail: fixed Esc budget; covers every overlay + step-back chain
         // in the escape path today, raise it if a deeper chain appears.
@@ -690,6 +701,17 @@ impl OpenCADStudio {
     }
 
     pub(super) fn control_request(&mut self, req: Value) -> (Value, Task<Message>) {
+        // A test build checks that a change of the drawing has an undo step.
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        let undo_guard =
+            crate::app::update::undo_record_guard::begin_request(self, "control", &req);
+        let response = self.control_request_unguarded(req);
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        crate::app::update::undo_record_guard::end(self, undo_guard);
+        response
+    }
+
+    fn control_request_unguarded(&mut self, req: Value) -> (Value, Task<Message>) {
         // First control contact marks the session automated (#1349): a
         // DonationPrompt that is still queued (not yet shown) is dropped so
         // automation never waits behind it, and `queue_startup_prompts`
@@ -715,6 +737,8 @@ impl OpenCADStudio {
                 | "snap"
                 | "grips"
                 | "query"
+                | "civil_station_offset"
+                | "civil_surface_stats"
                 | "records"
                 | "record_schema"
                 | "capabilities"
@@ -737,6 +761,7 @@ impl OpenCADStudio {
                 | "cad_extract_block_instances"
                 | "keytips"
                 | "plugins"
+                | "plugin_panels"
         );
         if !query && !self.control.enabled {
             return (
@@ -990,7 +1015,10 @@ impl OpenCADStudio {
                     "activate" | "switch_document" | "close" | "entities_copy_to"
                 )
             {
-                if req["active_only"].as_bool() == Some(true) || !query && !background_mutation(op)
+                let background_capture =
+                    op == "capture" && offscreen_capture::is_offscreen_capture(&req);
+                if req["active_only"].as_bool() == Some(true)
+                    || !query && !background_mutation(op) && !background_capture
                 {
                     return (
                         failure(
@@ -1007,7 +1035,13 @@ impl OpenCADStudio {
         } else if !query
             && !matches!(
                 op,
-                "new" | "open" | "font_register" | "stop" | "user_select" | "getpoint"
+                "new"
+                    | "open"
+                    | "font_register"
+                    | "stop"
+                    | "user_select"
+                    | "getpoint"
+                    | "plugin_panel_action"
             )
         {
             return (
@@ -1134,7 +1168,10 @@ impl OpenCADStudio {
                 .owner
                 .as_ref()
                 .is_some_and(|(owner_tab, owner)| *owner_tab == tab.id && *owner != client);
+        let offscreen_capture_req =
+            op == "capture" && offscreen_capture::is_offscreen_capture(&req);
         if tab.active_cmd.is_some()
+            && !offscreen_capture_req
             && (cancels_foreign_command
                 || (self.control.owner.as_ref() != Some(&(tab.id, client.clone()))
                     || matches!(
@@ -1157,7 +1194,7 @@ impl OpenCADStudio {
                 .map(|(_, owner)| owner.clone()));
             return (busy, Task::none());
         }
-        if matches!(op, "run" | "start" | "input") && tab.is_start {
+        if (matches!(op, "run" | "start" | "input") || offscreen_capture_req) && tab.is_start {
             return (
                 failure("no_document", "Create or open a drawing first"),
                 Task::none(),
@@ -1215,7 +1252,7 @@ impl OpenCADStudio {
                 return (error, Task::none());
             }
         };
-        if self.tabs[self.active_tab].active_cmd.is_some() {
+        if !offscreen_capture_req && self.tabs[self.active_tab].active_cmd.is_some() {
             self.control.owner = Some((self.tabs[self.active_tab].id, client));
         }
         if matches!(op, "new" | "activate" | "switch_document" | "dgn_import")
@@ -1236,10 +1273,10 @@ impl OpenCADStudio {
             // counter stays at one so settle keeps returning `running` until
             // the person at the screen answers and the resolver zeroes it.
             // `capture` is parked the same way until the next drawn frame.
-            if !matches!(
-                p.request["op"].as_str(),
-                Some("user_select" | "getpoint" | "capture")
-            ) {
+            let parked = matches!(p.request["op"].as_str(), Some("user_select" | "getpoint"))
+                || (p.request["op"].as_str() == Some("capture")
+                    && self.control.capture_frame_pending);
+            if !parked {
                 p.pending -= 1;
             }
         }
@@ -1463,6 +1500,16 @@ impl OpenCADStudio {
             "panel_input" => self.control_panel_input(req)?,
             "panel_button" => self.control_panel_button(req)?,
             "panel_action" => self.control_panel_action(req)?,
+            // The surface facade's activation rides the same route as the GUI
+            // gesture; the control envelope owns request_id idempotency.
+            "plugin_panel_action" => {
+                let result = self.automation_op_inner(&req.to_string());
+                if result["ok"] != true {
+                    return Err(result);
+                }
+                self.set_control_result(result);
+                Task::none()
+            }
             #[cfg(not(target_arch = "wasm32"))]
             "embed_image" => self.control_embed_image(req)?,
             "dgn_import" => self.control_dgn_import(req)?,
@@ -1472,6 +1519,7 @@ impl OpenCADStudio {
             "plot" => self.control_plot(req)?,
             "entities_create" => self.control_entities_create(req)?,
             "entities_set" => self.control_entities_set(req)?,
+            "xref_source_register" => self.control_xref_source_register(req)?,
             "xref_reload" => self.control_xref_reload(req)?,
             "xref_unload" => self.control_xref_unload(req)?,
             "xref_detach" => self.control_xref_detach(req)?,
@@ -1572,7 +1620,7 @@ impl OpenCADStudio {
                         true,
                         require_new_destination,
                     )
-                        .map_err(|e| failure("save_failed", e))?;
+                    .map_err(|e| failure("save_failed", e))?;
                     Task::none()
                 } else {
                     self.prepare_native_save(i);
@@ -1671,6 +1719,9 @@ impl OpenCADStudio {
                         "invalid_request",
                         "view region needs bounds [min_x, min_y, max_x, max_y]",
                     ));
+                }
+                if offscreen_capture::is_offscreen_capture(req) {
+                    return self.control_capture_offscreen(req);
                 }
                 self.main_window
                     .ok_or_else(|| failure("gui_required", "Capture requires a GUI window"))?;
@@ -1889,19 +1940,30 @@ impl OpenCADStudio {
         {
             self.active_tab = index;
         }
+        let is_offscreen_capture =
+            p.request["op"] == "capture" && offscreen_capture::is_offscreen_capture(&p.request);
         let failed = p.failure.is_some() || self.command_line.error_revision != p.error_revision;
         let waiting = self.tabs[self.active_tab].active_cmd.is_some()
             || self.active_modal.is_some()
             || self.mtext_editor.is_some()
             || self.text_inline.is_some();
-        if !waiting {
+        if !is_offscreen_capture && !waiting {
             self.control.owner = None;
+        }
+        // A command that starts after the request returned (one that asks
+        // for a file first) belongs to the client that ran it.
+        if matches!(p.request["op"].as_str(), Some("run" | "start"))
+            && self.control.owner.is_none()
+            && self.tabs[self.active_tab].active_cmd.is_some()
+        {
+            let client = p.request["client_id"].as_str().unwrap_or("default").to_owned();
+            self.control.owner = Some((self.tabs[self.active_tab].id, client));
         }
         let status = if failed {
             "failed"
         } else if p.cancelled || p.request["op"] == "cancel" {
             "cancelled"
-        } else if waiting {
+        } else if waiting && !is_offscreen_capture {
             "waiting_input"
         } else {
             "completed"
@@ -2141,48 +2203,12 @@ impl OpenCADStudio {
 
             // Optional Set-of-Marks visual overlay badges
             if annotate {
-                for ent_val in &grounding.visible_entities {
-                    if let (Some(tag), Some(px_arr), Some(selected)) = (
-                        ent_val["tag"].as_u64(),
-                        ent_val["screen_pixel"].as_array(),
-                        ent_val["selected"].as_bool(),
-                    ) {
-                        if px_arr.len() == 2 {
-                            if let (Some(x), Some(y)) = (px_arr[0].as_i64(), px_arr[1].as_i64()) {
-                                vision::draw_som_badge(
-                                    &mut image,
-                                    x as i32,
-                                    y as i32,
-                                    tag as usize,
-                                    selected,
-                                );
-                            }
-                        }
-                    }
-                }
+                offscreen_capture::draw_som_annotations(&mut image, &grounding.visible_entities);
             }
 
-            #[cfg(not(target_arch = "wasm32"))]
-            image
-                .save_with_format(&path, image::ImageFormat::Png)
-                .map_err(|e| e.to_string())?;
-            // No filesystem behind a web "path": encode the PNG in memory and
-            // hand it to the browser as a download named after the request's
-            // file name — the delivery every other web output uses.
-            #[cfg(target_arch = "wasm32")]
-            {
-                let mut png = Vec::new();
-                image
-                    .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
-                    .map_err(|e| e.to_string())?;
-                let download = path
-                    .rsplit(['/', '\\'])
-                    .next()
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or("capture.png")
-                    .to_string();
-                crate::sys::download_bytes(&download, &png);
-            }
+            // On native, save PNG directly; on web (no filesystem), hand the
+            // encoded PNG to the browser as a download named after the path.
+            offscreen_capture::save_capture_png(&image, &path)?;
 
             let doc_unit = crate::app::properties::insunits_name(
                 self.tabs[self.active_tab]
@@ -2192,21 +2218,14 @@ impl OpenCADStudio {
                     .insertion_units,
             );
 
-            let spatial_obj = json!({
-                "crs": "CAD_WCS",
-                "unit": doc_unit,
-                "pixel_resolution": [image.width(), image.height()],
-                "world_bounds": grounding.viewport_world_bounds,
-                "pixel_to_world_matrix": grounding.pixel_to_world_matrix,
-                "world_to_pixel_matrix": grounding.world_to_pixel_matrix,
-                "camera": grounding.camera,
-                "target_plane": grounding.target_plane,
-                "annotations": grounding.visible_entities.clone(),
-            });
+            let spatial_obj =
+                offscreen_capture::spatial_metadata_json(doc_unit, &image, &grounding);
 
             Ok(json!({
                 "path": path,
                 "scope": actual_scope,
+                "layout": self.tabs[self.active_tab].scene.current_layout,
+                "offscreen": false,
                 "width": image.width(),
                 "height": image.height(),
                 "scale_factor": s.scale_factor,
@@ -2330,6 +2349,9 @@ mod entities;
 pub(crate) mod http_bridge;
 mod interactive;
 mod node_graph;
+mod offscreen_capture;
+#[cfg(not(target_arch = "wasm32"))]
+mod offscreen_gpu;
 mod plugins;
 mod sheets;
 mod xrefs;
@@ -2377,6 +2399,34 @@ mod tests {
             r
         }
     }
+    #[test]
+    fn plugin_panel_surface_ops_pass_the_control_envelope() {
+        let mut app = OpenCADStudio::new_for_test();
+        assert_eq!(request(&mut app, json!({"op":"new"}))["ok"], true);
+        // plugin_panels is a query: no request_id, no document_id.
+        let read = request(&mut app, json!({"op":"plugin_panels"}));
+        assert_eq!(read["ok"], true, "{read}");
+        assert!(read["panels"].is_array(), "{read}");
+        // plugin_panel_action carries a request_id (idempotent replay) but
+        // needs no document_id — panel surfaces are app-level state.
+        let payload = json!({
+            "op":"plugin_panel_action","request_id":"env-1",
+            "panel_id":"nobody:here","element":1,"kind":"node_activated"
+        });
+        let act = request(&mut app, payload.clone());
+        assert_eq!(act["ok"], false, "{act}");
+        assert!(
+            act["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("unknown panel"),
+            "the envelope must let the action reach the facade: {act}"
+        );
+        // The same request_id replays the cached response (no double fire).
+        let replay = request(&mut app, payload);
+        assert_eq!(replay, act, "replay returns the cached response");
+    }
+
     #[test]
     fn edits_reach_an_inactive_document_without_switching_tabs() {
         let mut app = OpenCADStudio::new_for_test();
@@ -4658,7 +4708,11 @@ mod tests {
 
         let measured = app.control_measure(&json!({"handles":[handle_text]}));
         let mesh = &measured["measurements"][0]["mesh"];
-        assert!((mesh["volume"].as_f64().unwrap() - 50.0).abs() < 1e-9, "{}", mesh["volume"]);
+        assert!(
+            (mesh["volume"].as_f64().unwrap() - 50.0).abs() < 1e-9,
+            "{}",
+            mesh["volume"]
+        );
         assert_eq!(mesh["principal_moments"].as_array().unwrap().len(), 3);
         assert!(matches!(
             app.tabs[app.active_tab]
@@ -5009,7 +5063,10 @@ mod tests {
     fn block_definition_dialog_fields_are_automatable() {
         use crate::app::ModalKind;
         let mut app = OpenCADStudio::new_for_test();
-        assert_eq!(request(&mut app, json!({"op":"new"}))["status"], "completed");
+        assert_eq!(
+            request(&mut app, json!({"op":"new"}))["status"],
+            "completed"
+        );
         let drawn = request(&mut app, json!({"op":"run","cmd":"LINE 0,0 10,0"}));
         assert_eq!(drawn["ok"], true, "{drawn}");
         let selected = request(&mut app, json!({"op":"run","cmd":"SELECTALL"}));
@@ -5896,11 +5953,8 @@ mod tests {
             .header
             .insertion_units = 6;
         let crs = crate::io::crs::CrsDefinition::from_epsg(5514).unwrap();
-        crate::io::crs::set_document_crs(
-            &mut app.tabs[app.active_tab].scene.document,
-            &crs,
-        )
-        .unwrap();
+        crate::io::crs::set_document_crs(&mut app.tabs[app.active_tab].scene.document, &crs)
+            .unwrap();
         app.plot_dialog.geopdf = true;
         // The destination extension, not this stale device selection, decides
         // whether the output is PDF and needs GeoPDF validation.
@@ -5928,8 +5982,7 @@ mod tests {
                 std::process::id()
             ));
             let _ = std::fs::remove_file(&path);
-            let mut plot =
-                json!({"op":"plot","layout":layout,"path":path.to_string_lossy()});
+            let mut plot = json!({"op":"plot","layout":layout,"path":path.to_string_lossy()});
             if kind == "mixed" {
                 // Paper-space non-Layout areas are deliberately plain. They
                 // must not inherit the model page's GeoPDF eligibility check.
@@ -5944,9 +5997,10 @@ mod tests {
             } else {
                 assert!(flags.len() > 1);
                 assert!(flags[model_index]);
-                assert!(flags.iter().enumerate().all(|(index, vp)| {
-                    index == model_index || !vp
-                }));
+                assert!(flags
+                    .iter()
+                    .enumerate()
+                    .all(|(index, vp)| { index == model_index || !vp }));
             }
             let _ = std::fs::remove_file(&path);
         }
@@ -5997,23 +6051,20 @@ mod tests {
 
         // A drawing without a CRS exports as an ordinary plain PDF; the
         // GeoPDF opt-in neither fails the plot nor writes geospatial metadata.
-        let response = request(
-            &mut app,
-            json!({"op":"plot","path":pdf.to_string_lossy()}),
-        );
+        let response = request(&mut app, json!({"op":"plot","path":pdf.to_string_lossy()}));
         assert_eq!(response["status"], "completed", "{response}");
         assert!(pdf.exists(), "{response}");
-        assert_eq!(vp_by_page(std::fs::read(&pdf).expect("fallback PDF")), [false]);
+        assert_eq!(
+            vp_by_page(std::fs::read(&pdf).expect("fallback PDF")),
+            [false]
+        );
         let _ = std::fs::remove_file(&pdf);
 
         let svg = std::env::temp_dir().join(format!(
             "ocs-geopdf-control-missing-crs-{}.svg",
             std::process::id()
         ));
-        let response = request(
-            &mut app,
-            json!({"op":"plot","path":svg.to_string_lossy()}),
-        );
+        let response = request(&mut app, json!({"op":"plot","path":svg.to_string_lossy()}));
         assert_eq!(response["status"], "completed", "{response}");
         roxmltree::Document::parse(&std::fs::read_to_string(&svg).unwrap()).unwrap();
         let _ = std::fs::remove_file(&svg);
@@ -6097,19 +6148,19 @@ mod tests {
         // Monochrome maps every index colour (ByLayer cyan frame, explicit
         // red) to black; the true-color line keeps its RGB by definition.
         assert!(
-            !text.contains("0 1 1 rg") && !text.contains("0 1 1 RG"),
+            !text.contains("0.0 1.0 1.0 rg") && !text.contains("0.0 1.0 1.0 RG"),
             "cyan frame must be CTB-mapped to monochrome"
         );
         assert!(
-            !text.contains("1 0 0 rg") && !text.contains("1 0 0 RG"),
+            !text.contains("1.0 0.0 0.0 rg") && !text.contains("1.0 0.0 0.0 RG"),
             "explicit red must be CTB-mapped to monochrome"
         );
         assert!(
-            text.contains("0 1 0 rg") || text.contains("0 1 0 RG"),
+            text.contains("0.0 1.0 0.0 rg") || text.contains("0.0 1.0 0.0 RG"),
             "true-color line keeps its RGB (aci 0 is not CTB-mapped)"
         );
         assert!(
-            text.contains("0 0 0 rg") || text.contains("0 0 0 RG"),
+            text.contains("0.0 0.0 0.0 rg") || text.contains("0.0 0.0 0.0 RG"),
             "monochrome strokes must plot black"
         );
 
@@ -6918,47 +6969,60 @@ mod tests {
         let before = app.tabs[0].scene.document.clone();
         let before_undo = app.tabs[0].history.undo_stack.len();
 
-        let response = request(&mut app, json!({
-            "op": "panel_input",
-            "panel_id": panel_id,
-            "control_id": "SegmentLength",
-            "text": "101.5",
-        }));
+        let response = request(
+            &mut app,
+            json!({
+                "op": "panel_input",
+                "panel_id": panel_id,
+                "control_id": "SegmentLength",
+                "text": "101.5",
+            }),
+        );
         assert_eq!(response["ok"], true, "{response}");
         assert_eq!(
-            app.plugin_panels[panel_id].text_values.get("SegmentLength").map(String::as_str),
+            app.plugin_panels[panel_id]
+                .text_values
+                .get("SegmentLength")
+                .map(String::as_str),
             Some("101.5"),
         );
         assert_eq!(app.tabs[0].scene.document, before);
         assert_eq!(app.tabs[0].history.undo_stack.len(), before_undo);
 
-        let response = request(&mut app, json!({
-            "op": "panel_button",
-            "panel_id": panel_id,
-            "control_id": "reset",
-        }));
+        let response = request(
+            &mut app,
+            json!({
+                "op": "panel_button",
+                "panel_id": panel_id,
+                "control_id": "reset",
+            }),
+        );
         assert_eq!(response["ok"], true, "{response}");
         assert_eq!(
-            app.plugin_panels[panel_id].text_values.get("SegmentLength").map(String::as_str),
+            app.plugin_panels[panel_id]
+                .text_values
+                .get("SegmentLength")
+                .map(String::as_str),
             Some("100"),
         );
         assert_eq!(
             app.plugin_panels[panel_id].owner_plugin_id.as_deref(),
             Some("opencad.civil_ifc"),
         );
-        let declared_action = OpenCADStudio::panel_button_action(
-            &app.plugin_panels[panel_id].def.controls,
-            "apply",
-        );
+        let declared_action =
+            OpenCADStudio::panel_button_action(&app.plugin_panels[panel_id].def.controls, "apply");
         assert_eq!(declared_action.as_deref(), Some("CVI_IFC_PANEL_APPLY"));
         assert_eq!(app.tabs[0].scene.document, before);
         assert_eq!(app.tabs[0].history.undo_stack.len(), before_undo);
 
-        let response = request(&mut app, json!({
-            "op": "panel_button",
-            "panel_id": panel_id,
-            "control_id": "apply",
-        }));
+        let response = request(
+            &mut app,
+            json!({
+                "op": "panel_button",
+                "panel_id": panel_id,
+                "control_id": "apply",
+            }),
+        );
         assert_eq!(response["ok"], true, "{response}");
         assert_eq!(app.tabs[0].scene.document, before);
         assert_eq!(app.tabs[0].history.undo_stack.len(), before_undo);

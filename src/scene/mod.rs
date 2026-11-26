@@ -26,6 +26,7 @@ pub(crate) mod block_point_parameter;
 pub(crate) mod block_properties_table;
 pub mod block_service;
 pub mod block_visibility;
+pub(crate) mod bricscad_parameters;
 pub mod cache;
 pub mod compare;
 pub mod convert;
@@ -67,13 +68,19 @@ mod block_solid_fill_tests;
 mod boundary;
 mod camera_ops;
 #[cfg(test)]
+mod draw_guard_key_tests;
+#[cfg(test)]
 mod dwg_edit_after_open_tests;
 #[cfg(test)]
 mod layer_visibility_block_cache_tests;
 #[cfg(test)]
+mod layout_plot_settings_cache_tests;
+#[cfg(test)]
 mod ole_resolution_tests;
 #[cfg(test)]
 mod reference_only_tests;
+#[cfg(test)]
+mod resident_patch_adds_tests;
 #[cfg(test)]
 mod resident_patch_shorter_runs_tests;
 #[cfg(test)]
@@ -113,6 +120,10 @@ mod limits;
 mod modify;
 #[cfg(test)]
 mod selection_preview_tests;
+#[cfg(test)]
+mod sheet_underlay_tests;
+#[cfg(test)]
+mod sheet_paper_change_tests;
 pub(crate) mod table_content;
 pub(crate) mod table_fields;
 pub(crate) use modify::inverse_affine;
@@ -143,6 +154,8 @@ pub mod viewport_dimension_pick;
 #[cfg(test)]
 mod viewport_freeze_block_member_tests;
 pub mod viewport_ref;
+#[cfg(test)]
+mod viewport_underlay_tests;
 pub(crate) use selection::pe_url_of;
 pub mod parametric_constraints;
 mod parametric_solve;
@@ -1503,6 +1516,26 @@ fn inserted_draw_depth_label(order: &[DrawDepthEntry], position: usize) -> Optio
     }
 }
 
+/// The entry of `handle` at its own place in a block's order.
+///
+/// The order is sorted by effective key, then by handle, and an entity's key
+/// is its own handle unless the block's sort table files it under another. So
+/// the entry of an entity the table left alone is where a search for the
+/// handle as both key and handle ends, with no walk through the order.
+fn draw_depth_entry_at_own_key(order: &[DrawDepthEntry], handle: u64) -> Option<&DrawDepthEntry> {
+    order
+        .binary_search_by_key(&(handle, handle), |entry| (entry.effective, entry.handle))
+        .ok()
+        .map(|index| &order[index])
+}
+
+/// The entry of `handle` in a block's order: at its own place, or, for an
+/// entity the sort table moved, wherever in the order that put it.
+fn draw_depth_entry(order: &[DrawDepthEntry], handle: u64) -> Option<&DrawDepthEntry> {
+    draw_depth_entry_at_own_key(order, handle)
+        .or_else(|| order.iter().find(|entry| entry.handle == handle))
+}
+
 #[derive(Clone)]
 pub(crate) struct DrawDepthCache {
     epoch: u64,
@@ -1979,6 +2012,12 @@ pub fn prepare_open_geometry(
     scene.bg_color = model_bg;
     scene.sync_annotation_scale_from_header();
     scene.current_layout = "Model".to_string();
+    // The Properties palette resolves each text style at its first refresh,
+    // on the UI thread. Resolve them here, so that the font files of the
+    // styles that no model-space text uses are read on this worker.
+    for style in scene.document.text_styles.iter() {
+        let _ = crate::entities::text_support::resolve_text_style(&style.name, &scene.document);
+    }
     let camera = scene.camera.borrow().clone();
     let perf = crate::perf::enabled();
     let t_wires = perf.then(iced::time::Instant::now);
@@ -2298,6 +2337,10 @@ pub struct ViewportInstance {
     /// view (paper-space entities, top-locked), the paper equivalent of the
     /// Model view. Floating content viewports overlay it.
     pub paper_sheet: bool,
+    /// `true` for the second sheet pass, drawn after the content viewports:
+    /// the paper-space entities that come after the first content viewport
+    /// in draw order, so they cover what the viewports show.
+    pub sheet_over: bool,
 }
 
 /// One pane of the Model-space tiled viewport layout: the normalized screen
@@ -3029,6 +3072,8 @@ pub struct Scene {
     /// movement scanned the whole document for wipeouts and recreated the same
     /// Arcs, making Paper frame construction CPU-bound on large drawings.
     paper_sheet_render_cache: RefCell<HashMap<String, PaperSheetRenderCache>>,
+    /// The sheet's models split at the first content viewport's draw order.
+    paper_sheet_split_cache: RefCell<paper::SheetSplitCache>,
     display_plot_style_cache:
         RefCell<HashMap<(String, String), Option<Arc<crate::io::plot_style::PlotStyleTable>>>>,
     styled_wire_cache: RefCell<HashMap<(u64, String), (u64, Arc<Vec<WireModel>>)>>,
@@ -3226,9 +3271,12 @@ pub struct Scene {
     hidden_dynamic_dimensions: HashSet<Handle>,
     /// The camera generation the dynamic dimensions were last scaled for.
     dynamic_dimension_camera_gen: Option<u64>,
-    /// The view scale the underlay rasters are made for (model space).
+    /// The view scale the rasters of the underlays of model space are made
+    /// for: the model view's, or with a sheet in view that of its viewports
+    /// (`sheet_model_view`).
     underlay_scale: raster_scale::RasterScale,
-    /// The view scale the OLE pictures of the current layout are made for.
+    /// The view scale of the current layout, which its OLE pictures and the
+    /// underlays on its sheet are made for.
     ole_scale: raster_scale::RasterScale,
     /// The rasters a zoom step asks a worker to draw (`raster_reseed`).
     pending_reseed: Option<raster_reseed::ReseedJob>,
@@ -3316,6 +3364,9 @@ pub struct Scene {
     /// (re)built, otherwise the held value. `build_primitive` reads it right
     /// after the call to gate GPU wire re-upload. 0 = none yet.
     pub(crate) last_model_wire_gen: std::cell::Cell<u64>,
+    /// Minimum protected resident-wire count during transient off-screen layout
+    /// switches so capturing another layout cannot evict live viewports.
+    pub(super) transient_prune_floor: std::cell::Cell<usize>,
     /// SDF glyph-atlas generation this scene's caches were built against.
     /// When the atlas grows or re-bakes, every cached glyph quad (resident
     /// sets, block caches, projected viewport copies) addresses the wrong
@@ -3435,6 +3486,14 @@ pub struct Scene {
     /// a full re-tessellation. Diagnostics + a hook for the oracle test to prove
     /// the fast path is actually exercised (not silently always falling back).
     resident_patch_hits: std::cell::Cell<u64>,
+    /// Count of resident sets that were assembled whole, because no patch
+    /// could bring the kept set up to date. With `resident_patch_hits` it
+    /// tells a test how a step updated the display.
+    resident_full_builds: std::cell::Cell<u64>,
+    /// Count of entities the incremental patch has tessellated, whether it
+    /// then went in or declined: what a declined patch cost before the full
+    /// build did the work again.
+    resident_patch_tessellated: std::cell::Cell<u64>,
     /// Handoff for the GPU wire arena (`OCS_WIRE_GPU_PATCH`): when the MODEL
     /// resident set was brought up to date by an incremental patch, this records
     /// `(prev_gen, new_gen, changed handles)` so the render layer can patch just
@@ -3681,6 +3740,7 @@ impl Scene {
             paper_sheet_cache: RefCell::new(HashMap::default()),
             paper_viewport_cache: RefCell::new(HashMap::default()),
             paper_sheet_render_cache: RefCell::new(HashMap::default()),
+            paper_sheet_split_cache: RefCell::new(paper::SheetSplitCache::default()),
             display_plot_style_cache: RefCell::new(HashMap::default()),
             styled_wire_cache: RefCell::new(HashMap::default()),
             styled_hatch_cache: RefCell::new(HashMap::default()),
@@ -3770,6 +3830,7 @@ impl Scene {
             last_tess_ms: std::cell::Cell::new(0.0),
             last_tess_wires: std::cell::Cell::new(0),
             last_model_wire_gen: std::cell::Cell::new(0),
+            transient_prune_floor: std::cell::Cell::new(0),
             last_atlas_generation: std::cell::Cell::new(crate::scene::text::sdf_atlas::generation()),
             nav_last_gen: std::cell::Cell::new(0),
             nav_changed_at: std::cell::Cell::new(None),
@@ -3794,6 +3855,8 @@ impl Scene {
             pending_removed_categories: RefCell::new(HashMap::default()),
             geometry_journal_floor: std::cell::Cell::new(0),
             resident_patch_hits: std::cell::Cell::new(0),
+            resident_full_builds: std::cell::Cell::new(0),
+            resident_patch_tessellated: std::cell::Cell::new(0),
             model_wire_gpu_patch: RefCell::new(HashMap::default()),
             undo_recording: None,
         }
@@ -3816,21 +3879,34 @@ impl Scene {
     /// Paper-space callers use their own scale instead.
     /// Rasterise the underlays again when the view's scale has moved to
     /// another quarter-octave step and stayed there briefly (not on every
-    /// frame of a zoom), and likewise the OLE pictures of the current layout.
+    /// frame of a zoom), and likewise the OLE pictures of the current layout
+    /// and the underlays on its sheet.
     pub fn refresh_underlay_resolution(&mut self, now: iced::time::Instant) {
         let generation = self.camera_generation;
-        if let Some(wpp) = self.world_per_pixel() {
-            let view = self.plan_view_rect();
+        if let Some((wpp, view)) = self.model_view_scale() {
+            let layout = self.current_layout.clone();
             if self
                 .underlay_scale
-                .settle(wpp, view, "Model", generation, now)
+                .settle(wpp, view, &layout, generation, now)
                 && self
                     .document
                     .entities()
                     .any(|e| matches!(e, EntityType::Underlay(_)))
             {
                 #[cfg(not(target_arch = "wasm32"))]
-                self.queue_reseed(|e| matches!(e, EntityType::Underlay(_)));
+                {
+                    // With a sheet in view, the pages of the model alone: one
+                    // on a sheet follows that sheet's view (below).
+                    let mut sheets = HashSet::default();
+                    if layout != "Model" {
+                        sheets = self.layout_block_handles();
+                        sheets.remove(&self.model_space_block_handle());
+                    }
+                    self.queue_reseed(|e| {
+                        matches!(e, EntityType::Underlay(u)
+                            if !sheets.contains(&u.common.owner_handle))
+                    });
+                }
                 #[cfg(target_arch = "wasm32")]
                 self.reseed_underlays();
             }
@@ -3838,11 +3914,30 @@ impl Scene {
         if let Some(wpp) = self.layout_world_per_pixel() {
             let view = self.layout_plan_view_rect();
             let layout = self.current_layout.clone();
-            if self.ole_scale.settle(wpp, view, &layout, generation, now) && self.has_ole_frames() {
+            let sheet_underlays = self.sheet_may_hold_underlays();
+            if self.ole_scale.settle(wpp, view, &layout, generation, now)
+                && (self.has_ole_frames() || sheet_underlays)
+            {
                 #[cfg(not(target_arch = "wasm32"))]
-                self.queue_reseed(|e| matches!(e, EntityType::Ole2Frame(_)));
+                {
+                    let sheet = self.current_layout_block_handle();
+                    self.queue_reseed(|e| match e {
+                        EntityType::Ole2Frame(_) => true,
+                        EntityType::Underlay(u) => {
+                            sheet_underlays && u.common.owner_handle == sheet
+                        }
+                        _ => false,
+                    });
+                }
                 #[cfg(target_arch = "wasm32")]
-                self.reseed_ole_frames();
+                {
+                    if self.has_ole_frames() {
+                        self.reseed_ole_frames();
+                    }
+                    if sheet_underlays {
+                        self.reseed_underlays();
+                    }
+                }
             }
         }
     }
@@ -3852,16 +3947,32 @@ impl Scene {
     /// requested until they are made again).
     pub fn underlay_resolution_stale(&self) -> bool {
         let underlays = self.has_underlays()
-            && self.world_per_pixel().is_some_and(|wpp| {
-                self.underlay_scale
-                    .stale(wpp, self.plan_view_rect(), "Model")
+            && self.model_view_scale().is_some_and(|(wpp, view)| {
+                self.underlay_scale.stale(wpp, view, &self.current_layout)
             });
         underlays
-            || (self.has_ole_frames()
+            || ((self.has_ole_frames() || self.sheet_may_hold_underlays())
                 && self.layout_world_per_pixel().is_some_and(|wpp| {
                     self.ole_scale
                         .stale(wpp, self.layout_plan_view_rect(), &self.current_layout)
                 }))
+    }
+
+    /// The scale the model is seen at now (model units per pixel) and the
+    /// plan rectangle of it in sight: those of the model view, or with a
+    /// sheet in view those of its viewports. `None` when the model is not in
+    /// sight, or before a frame has told the size of the view.
+    fn model_view_scale(&self) -> Option<(f32, Option<[f64; 4]>)> {
+        match self.world_per_pixel() {
+            Some(wpp) => Some((wpp, self.plan_view_rect())),
+            None => self.sheet_model_view(),
+        }
+    }
+
+    /// A paper layout is in view and the drawing has underlays: some may lie
+    /// on its sheet, where they follow the sheet's view.
+    fn sheet_may_hold_underlays(&self) -> bool {
+        self.current_layout != "Model" && self.has_underlays()
     }
 
     /// World units per screen pixel of the current layout's view: the model
@@ -3885,7 +3996,13 @@ impl Scene {
     /// down (orthographic plan view) — model space in Model, the sheet in a
     /// paper layout; `None` otherwise.
     fn layout_plan_view_rect(&self) -> Option<[f64; 4]> {
-        let cam = self.camera.borrow();
+        Self::plan_rect_of(&self.camera.borrow(), self.view_aspect())
+    }
+
+    /// World XY rectangle a camera shows in a view `aspect` wide for its
+    /// height, when it looks straight down (orthographic plan view); `None`
+    /// otherwise.
+    pub(super) fn plan_rect_of(cam: &view::camera::Camera, aspect: f64) -> Option<[f64; 4]> {
         if !matches!(cam.projection, view::camera::Projection::Orthographic) {
             return None;
         }
@@ -3893,7 +4010,7 @@ impl Scene {
             return None;
         }
         let h = f64::from(cam.ortho_size());
-        let w = h * self.view_aspect();
+        let w = h * aspect;
         let right = (cam.rotation * glam::Vec3::X).as_dvec3();
         let up = (cam.rotation * glam::Vec3::Y).as_dvec3();
         let (hx, hy) = (
@@ -4629,13 +4746,7 @@ impl Scene {
         }
     }
 
-    pub fn load_current_layout_state(&mut self) {
-        self.display_plot_style_cache
-            .borrow_mut()
-            .retain(|(layout, _), _| layout != &self.current_layout);
-        self.styled_wire_cache.borrow_mut().clear();
-        self.styled_hatch_cache.borrow_mut().clear();
-        self.styled_wire_fill_cache.borrow_mut().clear();
+    pub(super) fn load_layout_header_fields(&mut self) {
         if self.current_layout == "Model" {
             return;
         }
@@ -4667,6 +4778,16 @@ impl Scene {
             self.document.header.paper_space_limits_max =
                 document::types::Vector2::new(max_limits.0, max_limits.1);
         }
+    }
+
+    pub fn load_current_layout_state(&mut self) {
+        self.display_plot_style_cache
+            .borrow_mut()
+            .retain(|(layout, _), _| layout != &self.current_layout);
+        self.styled_wire_cache.borrow_mut().clear();
+        self.styled_hatch_cache.borrow_mut().clear();
+        self.styled_wire_fill_cache.borrow_mut().clear();
+        self.load_layout_header_fields();
     }
 
     pub fn persist_current_layout_state(&mut self) {
@@ -4768,7 +4889,7 @@ mod scale_list;
 impl Scene {
     /// True when a top-level entity must be omitted for a session-only object
     /// visibility command or an interactive replacement preview.
-    fn entity_temporarily_hidden(&self, handle: Handle) -> bool {
+    pub(crate) fn entity_temporarily_hidden(&self, handle: Handle) -> bool {
         self.object_isolation.hides(handle)
             || self.preview_hidden.contains(&handle)
             || self.command_preview_hidden.contains(&handle)
@@ -5313,7 +5434,7 @@ impl Scene {
             })
     }
 
-    fn viewport_scale_handle(&self, viewport: Handle) -> Option<Handle> {
+    pub(crate) fn viewport_scale_handle(&self, viewport: Handle) -> Option<Handle> {
         if let Some(handle) = self.document.viewport_annotation_scale(viewport) {
             if matches!(
                 self.document.objects.get(&handle),
@@ -5761,6 +5882,24 @@ impl Scene {
 
 mod resident_wires;
 
+/// What [`Scene::tessellation_context`] resolves: the background colour, the
+/// annotation scale and its handle, the block cache, and whether the layout
+/// is a paper layout.
+type TessellationContext = (
+    [f32; 4],
+    f32,
+    Option<Handle>,
+    Arc<cache::block_cache::BlockCache>,
+    bool,
+);
+
+#[cfg(test)]
+thread_local! {
+    /// How many times this thread resolved a tessellation context.
+    pub(crate) static TESSELLATION_CONTEXTS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 impl Scene {
     /// Cached tessellation of the current layout block's paper-space entities,
     /// shared by `entity_wires_arc()` and the GPU sheet viewport. A thin
@@ -6018,9 +6157,10 @@ impl Scene {
                                     incremental_ok = false;
                                     break;
                                 }
-                                let restored = cache.blocks.get(&block).and_then(|order| {
-                                    order.iter().find(|entry| entry.handle == value)
-                                });
+                                let restored = cache
+                                    .blocks
+                                    .get(&block)
+                                    .and_then(|order| draw_depth_entry(order, value));
                                 let Some(entry) = restored else {
                                     incremental_ok = false;
                                     break;
@@ -6642,13 +6782,16 @@ impl Scene {
     /// Splice a re-delivered raster's fresh model into every cached gathered
     /// image list. The reseed takes no geometry bump — the entity, its draw
     /// order and every wire are untouched — so the lists stay valid and only
-    /// their pixels are refreshed; without this the gather would re-walk the
+    /// their rasters are refreshed; without this the gather would re-walk the
     /// whole drawing on the UI thread right after the view settled (#3339).
-    /// A raster replacement changes only pixels and size — the gathered
-    /// placement, clip and draw depth stay valid — so lists that are current
-    /// are patched in place; lists already stale for other reasons, and lists
-    /// holding an instanced clone (an image inside a block reference), are
-    /// evicted so the next gather rebuilds them.
+    /// A raster replacement changes pixels, size and the triangles the
+    /// raster is drawn with (one with a zoomed-in region has the whole
+    /// picture and the region in one texture) — the gathered placement, clip
+    /// and draw depth stay valid — so lists that are current are patched in
+    /// place, an instanced clone (an image inside a block reference) through
+    /// the placement its corners give; lists already stale for other
+    /// reasons are evicted so the next gather rebuilds them. The sheet of a
+    /// layout keeps a list of its own pictures, patched the same way.
     pub(crate) fn patch_image_caches(&self, prev_epoch: u64, handles: &[Handle]) {
         if handles.is_empty() {
             return;
@@ -6657,7 +6800,8 @@ impl Scene {
         let started = perf.then(iced::time::Instant::now);
         let a = self.patch_image_cache_entries(&self.image_cache, prev_epoch, handles);
         let b = self.patch_image_cache_entries(&self.frozen_image_cache, prev_epoch, handles);
-        let counts = (a.0 + b.0, a.1 + b.1, a.2 + b.2);
+        let c = self.patch_paper_sheet_images(prev_epoch, handles);
+        let counts = (a.0 + b.0 + c.0, a.1 + b.1 + c.1, a.2 + b.2 + c.2);
         if perf {
             crate::perf_record!(
                 "[perf] image-patch   {:>7.2}ms entries={} lists_patched={} evicted={}",
@@ -6683,53 +6827,119 @@ impl Scene {
         cache.borrow_mut().retain(|_, (entry_epoch, arc)| {
             seen += 1;
             // A list the patch cannot reason about — one that predates other
-            // changes, or holds an instanced clone whose transform the gather
-            // owns — is evicted: the reseed records no geometry change, so the
+            // changes, or holds an instanced clone whose placement its
+            // corners do not give — is evicted: the reseed records no geometry change, so the
             // journal replay would otherwise revalidate it with the old pixels.
-            if *entry_epoch != prev_epoch
-                || arc.iter().any(|model| {
-                    model.render_instance.is_some()
-                        && model.entity.is_some_and(|entity| handles.contains(&entity))
-                })
-            {
+            if *entry_epoch != prev_epoch || self.holds_unplaceable_clone(arc, handles) {
                 stale += 1;
                 return false;
             }
-            let list = Arc::make_mut(arc);
-            let mut touched = false;
-            list.retain_mut(|model| {
-                let Some(entity) = model.entity else {
-                    return true;
-                };
-                if !handles.contains(&entity) {
-                    return true;
-                }
-                match self.images.get(&entity) {
-                    Some(fresh) => {
-                        if !Arc::ptr_eq(&model.pixels, &fresh.pixels) {
-                            model.file_path = fresh.file_path.clone();
-                            model.pixels = Arc::clone(&fresh.pixels);
-                            model.width = fresh.width;
-                            model.height = fresh.height;
-                        }
-                        touched = true;
-                        true
-                    }
-                    None => {
-                        // The raster did not come back; the cached list drops
-                        // the entry the rebuild would not gather either.
-                        touched = true;
-                        false
-                    }
-                }
-            });
-            if touched {
+            if self.splice_fresh_images(arc, handles) {
                 *entry_epoch = epoch;
                 patched += 1;
             }
             true
         });
         (seen, patched, stale)
+    }
+
+    /// The same for the list the sheet of each layout keeps of its own
+    /// pictures (`paper_sheet_render_models_for_view`). A sheet whose list
+    /// holds none of `handles` is left as it is, whatever its epoch: the
+    /// reseed has nothing for it.
+    fn patch_paper_sheet_images(
+        &self,
+        prev_epoch: u64,
+        handles: &[Handle],
+    ) -> (usize, usize, usize) {
+        let epoch = self.geometry_epoch;
+        let mut seen = 0usize;
+        let mut patched = 0usize;
+        let mut stale = 0usize;
+        self.paper_sheet_render_cache
+            .borrow_mut()
+            .retain(|_, sheet| {
+                seen += 1;
+                let holds = sheet
+                    .images
+                    .iter()
+                    .any(|model| model.entity.is_some_and(|entity| handles.contains(&entity)));
+                if !holds {
+                    return true;
+                }
+                if sheet.epoch != prev_epoch || self.holds_unplaceable_clone(&sheet.images, handles) {
+                    stale += 1;
+                    return false;
+                }
+                if self.splice_fresh_images(&mut sheet.images, handles) {
+                    sheet.epoch = epoch;
+                    patched += 1;
+                }
+                true
+            });
+        (seen, patched, stale)
+    }
+
+    /// `list` holds one of `handles` as an instanced clone (an image inside
+    /// a block reference) whose placement cannot be read back from its
+    /// corners (a degenerate quad), so only the gather can place it.
+    fn holds_unplaceable_clone(&self, list: &[ImageModel], handles: &[Handle]) -> bool {
+        list.iter().any(|model| {
+            model.render_instance.is_some()
+                && model.entity.is_some_and(|entity| handles.contains(&entity))
+                && model.entity.and_then(|entity| self.images.get(&entity)).is_some_and(
+                    |fresh| image_clone_placement(fresh, model).is_none(),
+                )
+        })
+    }
+
+    /// Gives the entries of `list` that serve `handles` the rasters the scene
+    /// has for them now, and drops those whose raster did not come back.
+    /// Returns whether the list held any.
+    fn splice_fresh_images(&self, list: &mut Arc<Vec<ImageModel>>, handles: &[Handle]) -> bool {
+        let mut touched = false;
+        Arc::make_mut(list).retain_mut(|model| {
+            let Some(entity) = model.entity else {
+                return true;
+            };
+            if !handles.contains(&entity) {
+                return true;
+            }
+            match self.images.get(&entity) {
+                Some(fresh) => {
+                    if !Arc::ptr_eq(&model.pixels, &fresh.pixels) {
+                        model.file_path = fresh.file_path.clone();
+                        model.pixels = Arc::clone(&fresh.pixels);
+                        model.width = fresh.width;
+                        model.height = fresh.height;
+                        // The triangles go with the texture: they say
+                        // which part of it each one draws. A clone's are
+                        // placed as the gather placed its corners.
+                        let place = model
+                            .render_instance
+                            .is_some()
+                            .then(|| image_clone_placement(fresh, model))
+                            .flatten();
+                        model.verts.clone_from(&fresh.verts);
+                        if let Some(place) = place {
+                            for vertex in &mut model.verts {
+                                let point = place(split_sum(vertex.pos, vertex.pos_low));
+                                (vertex.pos, vertex.pos_low) = split_f64(point);
+                            }
+                        }
+                    }
+                    touched = true;
+                    true
+                }
+                None => {
+                    // The raster did not come back; the cached list drops
+                    // the entry the rebuild would not gather either.
+                    touched = true;
+                    false
+                }
+            }
+        });
+        touched
     }
 
     /// Image / OLE-frame models owned by `target_block`, optionally dropping
@@ -7238,7 +7448,7 @@ impl Scene {
     /// the sheet / tiles directly). Only the current interaction space
     /// carries a walk: a graph that serves a foreign viewport or an export
     /// pass must keep drawing the un-walked content.
-    fn render_space_layer_walk(
+    pub(crate) fn render_space_layer_walk(
         &self,
         block: Handle,
         viewport: Option<Handle>,
@@ -7847,7 +8057,7 @@ impl Scene {
     /// views overlap in model space; each is drawn only in its own viewport).
     /// Entity and layer handles never collide, so both ride the same set and
     /// its cache signature.
-    pub(super) fn viewport_hidden_handles(&self, vp: Handle) -> HashSet<Handle> {
+    pub(crate) fn viewport_hidden_handles(&self, vp: Handle) -> HashSet<Handle> {
         let mut hidden: HashSet<Handle> = match self.document.get_entity(vp) {
             Some(EntityType::Viewport(v)) => v.frozen_layers.iter().copied().collect(),
             _ => HashSet::default(),
@@ -8313,8 +8523,8 @@ impl Scene {
     }
 
     /// True when `handle`'s entity sits on a locked layer, or is a point cloud
-    /// locked on its own. Locked objects stay visible, snappable and
-    /// selectable, but mutation paths must skip them.
+    /// locked on its own. Locked objects stay visible and snappable, and
+    /// selectable unless PICKLOCKED is off; mutation paths must skip them.
     pub fn is_layer_locked(&self, handle: Handle) -> bool {
         let Some(entity) = self.document.get_entity(handle) else {
             return false;
@@ -13048,15 +13258,13 @@ vis_a[layer={:.1} hidden={:.1} invis={:.1} walk={:.1} block={:.1} full={:.1}]",
     }
 
     /// Resolve the active layout and annotation context for tessellation.
-    fn tessellation_context(
-        &self,
-    ) -> (
-        [f32; 4],
-        f32,
-        Option<Handle>,
-        Arc<cache::block_cache::BlockCache>,
-        bool,
-    ) {
+    ///
+    /// This scans the drawing's objects for the annotation scale and for the
+    /// current layout. A pass over many entities takes it one time, at its
+    /// first entity, and gives it to [`Self::tessellate_one_in`].
+    fn tessellation_context(&self) -> TessellationContext {
+        #[cfg(test)]
+        TESSELLATION_CONTEXTS.with(|count| count.set(count.get() + 1));
         let is_model = self.current_layout == "Model";
         let bg = if is_model {
             self.bg_color
@@ -13089,7 +13297,22 @@ vis_a[layer={:.1} hidden={:.1} invis={:.1} walk={:.1} block={:.1} full={:.1}]",
     }
 
     fn tessellate_one(&self, e: &EntityType) -> Vec<WireModel> {
-        let (bg, anno, annotation_scale_handle, blk_cache, paper) = self.tessellation_context();
+        self.tessellate_one_in(&std::cell::OnceCell::new(), e)
+    }
+
+    /// [`Self::tessellate_one`] for a pass over many entities: the first call
+    /// resolves the context into `context` and the later calls use it. The
+    /// scene cannot change during the pass, so the context stays correct. A
+    /// pass that tessellates nothing resolves nothing, as before.
+    fn tessellate_one_in(
+        &self,
+        context: &std::cell::OnceCell<TessellationContext>,
+        e: &EntityType,
+    ) -> Vec<WireModel> {
+        let (bg, anno, annotation_scale_handle, blk_cache, paper) =
+            context.get_or_init(|| self.tessellation_context());
+        let (bg, anno, annotation_scale_handle, paper) =
+            (*bg, *anno, *annotation_scale_handle, *paper);
         // tessellate_one is used for one-off lookups (hit test, properties).
         // Skip culling here so the caller always gets the full geometry.
         let mut wires = tessellate_entity(
@@ -13100,7 +13323,7 @@ vis_a[layer={:.1} hidden={:.1} invis={:.1} walk={:.1} block={:.1} full={:.1}]",
             anno,
             annotation_scale_handle,
             e,
-            Some(&blk_cache),
+            Some(blk_cache),
             None,
             None,
             paper.then_some(1.0),
@@ -13466,6 +13689,39 @@ pub fn selection_box_crossing(anchor: iced::Point, current: iced::Point) -> bool
     current.x < anchor.x + 0.5
 }
 
+/// PICKLOCKED: objects on a locked layer can be selected (they are never
+/// editable). Off takes them out of every selection; they stay visible and
+/// snappable.
+#[cfg(not(test))]
+static PICK_LOCKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Each test thread owns its PICKLOCKED value. In the shipped app this is a
+/// process-wide setting, but in tests every app that is constructed applies
+/// its own settings: with a shared atomic, one test could flip the flag under
+/// another test that had just set it and was asserting the result.
+#[cfg(test)]
+thread_local! {
+    static PICK_LOCKED_TEST: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+pub fn pick_locked() -> bool {
+    #[cfg(test)]
+    {
+        PICK_LOCKED_TEST.with(|cell| cell.get())
+    }
+    #[cfg(not(test))]
+    {
+        PICK_LOCKED.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+pub fn set_pick_locked(on: bool) {
+    #[cfg(test)]
+    PICK_LOCKED_TEST.with(|cell| cell.set(on));
+    #[cfg(not(test))]
+    PICK_LOCKED.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 pub fn layout_create_viewport() -> bool {
     LAYOUT_CREATE_VIEWPORT.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -13539,3 +13795,50 @@ mod wipeout_viewport_cache_tests;
 
 #[cfg(test)]
 mod block_incremental_invalidation;
+
+// A test sets this to make the next `add_entity` panic when the entity is
+// in the document and has no undo record and no display model yet: a stop
+// in the middle of a change.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static TEST_PANIC_AFTER_DOCUMENT_ADD: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+/// A double-single coordinate (`hi` + `lo`) as one f64 point.
+fn split_sum(hi: [f32; 3], lo: [f32; 3]) -> [f64; 3] {
+    [0, 1, 2].map(|i| hi[i] as f64 + lo[i] as f64)
+}
+
+/// An f64 point as a double-single coordinate (`hi`, `lo`).
+fn split_f64(point: [f64; 3]) -> ([f32; 3], [f32; 3]) {
+    let hi = point.map(|v| v as f32);
+    let lo = [0, 1, 2].map(|i| (point[i] - hi[i] as f64) as f32);
+    (hi, lo)
+}
+
+/// The placement that takes `base`'s image plane onto `clone`'s, read from
+/// three of their corners: the affine map the gather applied to an image
+/// inside a block reference. `None` for a degenerate quad.
+fn image_clone_placement(
+    base: &ImageModel,
+    clone: &ImageModel,
+) -> Option<impl Fn([f64; 3]) -> [f64; 3]> {
+    let corner = |m: &ImageModel, i: usize| split_sum(m.corners[i], m.corners_low[i]);
+    let sub = |a: [f64; 3], b: [f64; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let (b0, k0) = (corner(base, 0), corner(clone, 0));
+    let (e1, e2) = (sub(corner(base, 1), b0), sub(corner(base, 2), b0));
+    let (f1, f2) = (sub(corner(clone, 1), k0), sub(corner(clone, 2), k0));
+    let (a, b, c) = (dot(e1, e1), dot(e1, e2), dot(e2, e2));
+    let det = a * c - b * b;
+    if !(det > 1.0e-12 * a * c) {
+        return None;
+    }
+    Some(move |p: [f64; 3]| {
+        let d = sub(p, b0);
+        let (r1, r2) = (dot(d, e1), dot(d, e2));
+        let (u, v) = ((c * r1 - b * r2) / det, (a * r2 - b * r1) / det);
+        [0, 1, 2].map(|i| k0[i] + u * f1[i] + v * f2[i])
+    })
+}

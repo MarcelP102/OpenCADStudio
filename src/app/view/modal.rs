@@ -37,6 +37,7 @@ impl OpenCADStudio {
             Some(K::Options) => crate::tr!("action", "options"),
             Some(K::FindReplace) => crate::tr!("modal", "find-replace"),
             Some(K::Overkill) => crate::t!("Delete Duplicate Objects").into_owned(),
+            Some(K::GeometryCleanupSettings) => crate::t!("Geometry Cleanup Settings").into_owned(),
             Some(K::PluginManager) => crate::tr!("modal", "plugin-manager"),
             Some(K::UpdateNotice) => crate::tr!("modal", "update-available"),
             Some(K::DonationPrompt) => crate::tr!("donation", "title"),
@@ -74,6 +75,16 @@ impl OpenCADStudio {
             Some(K::TableCellFormat) => crate::tr!("table-cells", "format-title"),
             Some(K::TableCellWarning) => crate::tr!("table-cells", "warning-title"),
             Some(K::AnnotationScalePrompt) => crate::tr!("anno-scale-prompt", "title"),
+            Some(K::SurfaceList) => crate::t!("Select a Surface").into_owned(),
+            Some(K::CorridorPoints) => crate::t!("Create COGO Points").into_owned(),
+            Some(K::PointBlocks) => crate::t!("Create Blocks from COGO Points").into_owned(),
+            Some(K::BlockDuplicate) => crate::t!("Point Blocks with Duplicate Point Numbers Found").into_owned(),
+            Some(K::DuplicatePoint) => crate::t!("Duplicate Point Number").into_owned(),
+            Some(K::PointGroup) => format!(
+                "{} - {}",
+                crate::t!("Point Group Properties"),
+                self.point_tools.point_group.as_ref().map_or("", |s| s.name.as_str())
+            ),
             Some(K::MTextDialog) => {
                 use crate::ui::window::mtext_dialogs::MTextDialog as D;
                 crate::t!(match self.mtext_dialog {
@@ -101,6 +112,7 @@ impl OpenCADStudio {
             Some(K::Spell) => crate::ui::window::spell_dialog::title(),
             Some(K::PdfImportFile) => crate::t!("Import PDF").into_owned(),
             Some(K::ImportFile) => crate::t!("Import File").into_owned(),
+            Some(K::IfcPlan) => crate::tr!("ifc2plan", "title"),
             Some(K::DgnImport) => crate::t!("DGN Import").into_owned(),
             Some(K::TdsImport) => crate::tr!("import-3ds", "title"),
             Some(K::TdsMaterial) => crate::tr!("import-3ds-alert", "title"),
@@ -301,6 +313,7 @@ impl OpenCADStudio {
                             zoom_wheel_reversed: self.zoom_wheel_reversed,
                             navigation_style: self.navigation_style,
                             touchpad_pan: self.touchpad_pan,
+                            keypad_decimal_point: crate::app::view::keypad_decimal_point(),
                             ui_scale_percent: self.ui_scale_percent,
                             zoom_factor: self.zoom_factor,
                             texteditmode: self.texteditmode,
@@ -308,6 +321,7 @@ impl OpenCADStudio {
                             qdim_snap_priority: self.quick_dimension_snap_priority,
                             annotation_auto_scale: self.annotation_auto_scale,
                             polar_increment_deg: self.polar_increment_deg,
+                            autosnap_magnet: self.autosnap_magnet,
                             show_viewcube: self.show_viewcube,
                             show_ucs_icon: self.show_ucs_icon,
                             ucs_icon_at_origin: self.ucs_icon_at_origin,
@@ -442,6 +456,13 @@ impl OpenCADStudio {
                 let state = self.overkill_dialog.as_ref()?;
                 automatic_flow(ex, |flow| {
                     crate::ui::window::overkill::view_window(state, flow)
+                })
+            }
+            super::super::ModalKind::GeometryCleanupSettings => {
+                let dialog = self.geometry_cleanup.dialog.as_ref()?;
+                let rescan = self.geometry_cleanup_scan_here(self.active_tab).is_some();
+                automatic_flow(ex, |flow| {
+                    crate::ui::window::geometry_cleanup_settings::view_window(dialog, rescan, flow)
                 })
             }
             super::super::ModalKind::FindReplace => automatic_flow(ex, |flow| {
@@ -698,6 +719,31 @@ impl OpenCADStudio {
                     D::ListsToggle(d) => sized_flow(ex, 470, 220, |_| t::view_lists_toggle(d)),
                 }
             }
+            super::super::ModalKind::CorridorPoints => {
+                let state = self.point_tools.corridor.as_ref()?;
+                sized_flow(ex, 660, 620, |flow| crate::ui::window::point_tools::view_corridor(state, flow))
+            }
+            super::super::ModalKind::PointBlocks => {
+                let state = self.point_tools.blocks.as_ref()?;
+                sized_flow(ex, 520, 560, |flow| crate::ui::window::point_tools::view_blocks(state, flow))
+            }
+            super::super::ModalKind::BlockDuplicate => {
+                let number = self.point_tools.block_job.as_ref()?.pending.as_ref()?.0.number;
+                sized_flow(ex, 420, 260, |flow| crate::ui::window::point_tools::view_block_duplicate(number, flow))
+            }
+            super::super::ModalKind::DuplicatePoint => {
+                let state = self.point_tools.duplicate.as_ref()?;
+                sized_flow(ex, 400, 380, |flow| crate::ui::window::point_tools::view_duplicate(state, flow))
+            }
+            super::super::ModalKind::PointGroup => {
+                let state = self.point_tools.point_group.as_ref()?;
+                sized_flow(ex, 780, 560, |flow| crate::ui::window::point_group::view(state, flow))
+            }
+            super::super::ModalKind::SurfaceList => {
+                let state = self.surface_list.as_ref()?;
+                let height = 224 + 32 * state.names.len().min(8) as u16;
+                sized_flow(ex, 380, height, |flow| crate::ui::window::surface_list::view(state, flow))
+            }
             super::super::ModalKind::AnnotationScalePrompt => {
                 let state = self.anno_scale_prompt.as_ref()?;
                 sized_flow(ex, 440, 250, |flow| {
@@ -815,6 +861,12 @@ impl OpenCADStudio {
                 let map = self.import_dialogs.tds_maps.first()?;
                 sized_flow(ex, 460, 240, |flow| {
                     crate::ui::window::import_dialogs::view_tds_map(map, flow)
+                })
+            }
+            super::super::ModalKind::IfcPlan => {
+                let state = self.import_dialogs.ifc_plan.as_ref()?;
+                sized_flow(ex, 430, 285, |flow| {
+                    crate::ui::window::ifc_plan::view(state, flow)
                 })
             }
             super::super::ModalKind::DgnImport => {
@@ -2241,7 +2293,7 @@ fn unsaved_changes_dialog_window(
                     if block_edit {
                         t!("Save the changes")
                     } else {
-                        t!("Save")
+                        format!("{} (S)", t!("Save")).into()
                     },
                     if block_edit {
                         Message::BlockEditChangesSave
@@ -2255,7 +2307,7 @@ fn unsaved_changes_dialog_window(
                     if block_edit {
                         t!("Discard the changes")
                     } else {
-                        t!("Don't Save")
+                        format!("{} (N)", t!("Don't Save")).into()
                     },
                     if block_edit {
                         Message::BlockEditChangesDiscard
@@ -2266,7 +2318,11 @@ fn unsaved_changes_dialog_window(
                 ),
                 iced::widget::Space::new().width(8),
                 dialog_button(
-                    t!("Cancel"),
+                    if block_edit {
+                        t!("Cancel")
+                    } else {
+                        format!("{} (C)", t!("Cancel")).into()
+                    },
                     if block_edit {
                         Message::BlockEditChangesCancel
                     } else {

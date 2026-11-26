@@ -89,6 +89,24 @@ impl OpenCADStudio {
                         Some(document::EntityType::MultiLeader(_))
                     )
                 }),
+            single_block: tab
+                .scene
+                .selected
+                .iter()
+                .next()
+                .filter(|handle| {
+                    tab.scene.selected.len() == 1
+                        && matches!(
+                            tab.scene.document.get_entity(**handle),
+                            Some(document::EntityType::Insert(_))
+                        )
+                })
+                .map(|handle| {
+                    tab.scene
+                        .document
+                        .dynamic_definition_for_insert(*handle)
+                        .is_some()
+                }),
             selected_constraint: tab.scene.selected_constraint,
             isolation_active: tab.scene.has_hidden_objects(),
             recent_cmds: self
@@ -230,6 +248,15 @@ impl OpenCADStudio {
         let (index, x) = crate::ui::menu_bar::menu_for_letter(letter, self.tabs[i].is_start)?;
         self.menu_bar_popup = Some(index);
         self.context_menu_editing = None;
+        // The menu opens at the top of the drawing, under its title: the
+        // menus may start after the logo, in the title bar or a row of their
+        // own, and the drawing after a pallet docked on the left.
+        let menus_x = crate::ui::wrap_bar::dropdown_bounds(crate::ui::menu_bar::MENUS_ID)
+            .map_or(0.0, |b| b.x);
+        let viewport_x =
+            crate::ui::wrap_bar::dropdown_bounds(crate::app::view::VIEWPORT_CAPTURE_BOUNDS_ID)
+                .map_or(0.0, |b| b.x);
+        let x = (menus_x + x - viewport_x).max(0.0);
         let mut sel = self.tabs[i].scene.selection.borrow_mut();
         sel.menu.open(iced::Point::new(x, 2.0));
         sel.menu.ui.highlighted = Some(0);
@@ -2070,7 +2097,7 @@ mod transparent_tests {
     }
 
     #[test]
-    fn test_direct_distance_entry_dyn_off() {
+    fn direct_distance_entry_dyn_off() {
         with_stack(|| {
             let mut app = line_app();
             app.dyn_input = false;

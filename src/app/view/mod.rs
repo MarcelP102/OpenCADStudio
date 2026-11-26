@@ -22,6 +22,8 @@ mod hatch_panel_widget_tests;
 mod select_similar_clipboard_tests;
 #[cfg(test)]
 mod table_inplace_widget_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod view_guard_tests;
 
 /// Invisible event surface for accurate point picking. MouseArea emits a
 /// positionless press message; capturing the cursor in the actual button
@@ -401,6 +403,20 @@ pub(crate) fn main_window_event(
     status: iced::event::Status,
     win_id: window::Id,
 ) -> Option<Message> {
+    #[cfg(not(target_arch = "wasm32"))]
+    let is_main = crate::app::tool_windows::is_main_window(win_id);
+    #[cfg(target_arch = "wasm32")]
+    let is_main = true;
+    window_event_with_context(ev, status, win_id, is_main)
+}
+
+/// Classify an event using the window identity resolved by the caller.
+pub(crate) fn window_event_with_context(
+    ev: iced::Event,
+    status: iced::event::Status,
+    win_id: window::Id,
+    #[cfg_attr(target_arch = "wasm32", allow(unused_variables))] is_main: bool,
+) -> Option<Message> {
     use iced::event::Status;
     match ev {
         iced::Event::Mouse(iced::mouse::Event::ButtonPressed(_))
@@ -426,24 +442,38 @@ pub(crate) fn main_window_event(
         }
         iced::Event::Window(window::Event::Closed) => Some(Message::OsWindowClosed(win_id)),
         #[cfg(not(target_arch = "wasm32"))]
-        iced::Event::Window(window::Event::Resized(sz))
-            if !crate::app::tool_windows::is_main_window(win_id) =>
-        {
+        iced::Event::Window(window::Event::Resized(sz)) if !is_main => {
             Some(Message::OsWindowResized(win_id, sz.width, sz.height))
         }
+        // The main window's moves too: dialogs open over it (`os_window_moved`).
         #[cfg(not(target_arch = "wasm32"))]
-        iced::Event::Window(window::Event::Moved(at))
-            if !crate::app::tool_windows::is_main_window(win_id) =>
-        {
-            Some(Message::OsWindowMoved(win_id, at))
-        }
+        iced::Event::Window(window::Event::Moved(at)) => Some(Message::OsWindowMoved(win_id, at)),
         // Keys typed in a window of its own stay with its widgets; only Esc,
         // an unclaimed Enter and the list's Up and Down reach its dialog.
         #[cfg(not(target_arch = "wasm32"))]
-        iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
-            if !crate::app::tool_windows::is_main_window(win_id) =>
-        {
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key,
+            modifiers,
+            text,
+            repeat,
+            ..
+        }) if !is_main => {
             let name = match key {
+                keyboard::Key::Character(ref value)
+                    if status == Status::Ignored
+                        && !repeat
+                        && !modifiers.control()
+                        && !modifiers.alt()
+                        && !modifiers.logo()
+                        && text
+                            .as_deref()
+                            .is_some_and(|s| s.eq_ignore_ascii_case(value.as_str()))
+                        && ["s", "n", "c"]
+                            .iter()
+                            .any(|s| value.eq_ignore_ascii_case(s)) =>
+                {
+                    return Some(Message::OsWindowKey(win_id, value.to_ascii_uppercase()));
+                }
                 keyboard::Key::Named(keyboard::key::Named::Escape) => "ESCAPE",
                 keyboard::Key::Named(keyboard::key::Named::Enter) if status == Status::Ignored => {
                     "ENTER"
@@ -463,24 +493,16 @@ pub(crate) fn main_window_event(
             Some(Message::OsWindowKey(win_id, name.to_string()))
         }
         #[cfg(not(target_arch = "wasm32"))]
-        iced::Event::Keyboard(keyboard::Event::KeyReleased { .. })
-            if !crate::app::tool_windows::is_main_window(win_id) =>
-        {
-            None
-        }
+        iced::Event::Keyboard(keyboard::Event::KeyReleased { .. }) if !is_main => None,
         iced::Event::Window(window::Event::Resized(sz)) => {
             Some(Message::WindowResized(sz.width, sz.height))
         }
         #[cfg(not(target_arch = "wasm32"))]
-        iced::Event::Window(window::Event::Opened { scale_factor, .. })
-            if !crate::app::tool_windows::is_main_window(win_id) =>
-        {
+        iced::Event::Window(window::Event::Opened { scale_factor, .. }) if !is_main => {
             Some(Message::OsWindowScale(win_id, scale_factor))
         }
         #[cfg(not(target_arch = "wasm32"))]
-        iced::Event::Window(window::Event::Rescaled(scale_factor))
-            if !crate::app::tool_windows::is_main_window(win_id) =>
-        {
+        iced::Event::Window(window::Event::Rescaled(scale_factor)) if !is_main => {
             Some(Message::OsWindowScale(win_id, scale_factor))
         }
         // The ribbon's arrows sit on whole physical pixels.
@@ -550,9 +572,15 @@ pub(crate) fn main_window_event(
             // The numpad decimal key emits the OS-layout separator
             // (a comma on German/European layouts), which the
             // coordinate parser rejects. Force it to a decimal point
-            // from the physical key, independent of layout.
+            // from the physical key, independent of layout, unless the
+            // user keeps the layout's character (Options › User
+            // Preferences; there a comma separates coordinates, #3641).
+            // A key an input method composes arrives without text: it is
+            // the method's, and the focused field keeps it (#2835).
             if !shortcut_modifier
+                && keypad_decimal_point()
                 && status == Status::Ignored
+                && text.as_deref().is_some_and(|t| !t.is_empty())
                 && matches!(
                     physical_key,
                     keyboard::key::Physical::Code(
@@ -775,9 +803,68 @@ fn named_visual_style(
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// A test sets it to make the next window view panic.
+    pub(in crate::app) static TEST_VIEW_PANIC: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+/// What a window shows after its view panicked: the user can still save.
+#[cfg(not(target_arch = "wasm32"))]
+fn failed_window_view(window_id: window::Id) -> Element<'static, Message> {
+    let actions = row![
+        button(text(t!("Save As"))).on_press(Message::SaveAs),
+        button(text(t!("Save All"))).on_press(Message::DocTabSaveAll),
+        button(text(t!("Try again"))).on_press(Message::RetryWindowView(window_id)),
+    ]
+    .spacing(8);
+    let message = text(t!(
+        "This window could not be drawn. Save your work under a new name."
+    ));
+    container(column![message, actions].spacing(12))
+        .center(Fill)
+        .into()
+}
+
 impl OpenCADStudio {
+    /// The view of a window, under a panic guard (`scene/view/draw_guard.rs`).
+    /// After a panic the window shows [`failed_window_view`] until the user
+    /// asks to try again.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn view(&self, window_id: window::Id) -> Element<'_, Message> {
+        if !self.window_view_failed(window_id) {
+            let drawn = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.view_window(window_id)
+            }));
+            match drawn {
+                Ok(element) => return element,
+                Err(payload) => {
+                    crate::scene::view::draw_guard::note_panic(payload.as_ref());
+                    self.failed_views
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push(window_id);
+                }
+            }
+        }
+        failed_window_view(window_id)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(in crate::app) fn window_view_failed(&self, window_id: window::Id) -> bool {
+        self.failed_views
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&window_id)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn view_window(&self, window_id: window::Id) -> Element<'_, Message> {
+        #[cfg(test)]
+        if TEST_VIEW_PANIC.with(|panic| panic.replace(false)) {
+            panic!("test panic in view");
+        }
         crate::sys::startup_times::view_tick();
         // ── Windows of their own ──────────────────────────────────────────
         // A tool dialog or dock pallet moved out of the main window draws
@@ -2094,6 +2181,7 @@ bg={bg_ms:.1}ms n={view_count}"
                         .is_some_and(|c| matches!(c.name(), "XLINE" | "RAY")),
                     snap_color: self.snap_marker_color,
                     snap_size: self.model_space.snap_marker_size as f32,
+                    magnet: self.autosnap_magnet,
                 },
                 // MATCHPROP paints properties onto destinations; it gets the
                 // paintbrush cursor instead of the crosshair.
@@ -2992,6 +3080,11 @@ bg={bg_ms:.1}ms n={view_count}"
                 }
             }
 
+            // The civil Create Points menu, over the right-edge toolbars.
+            if self.points_menu.open && !tab.is_start {
+                viewport_stack = viewport_stack.push(crate::ui::points_menu::view(&self.points_menu, command_line_inset(self)));
+            }
+
             // In-place block edit (REFEDIT): right-edge toolbar with Save / Discard
             // so the edit can be finished by clicking. (#136)
             if let (Some(session), false) = (tab.refedit_session.as_ref(), tab.is_start) {
@@ -3495,30 +3588,62 @@ bg={bg_ms:.1}ms n={view_count}"
         // a tall one (Layer Manager with many layers) are not hidden by it.
         let center_stack = self.dock_overlay(center_stack, tab);
 
-        let center_stack: Element<'_, Message> = if self.command_line_moving {
-            mouse_area(center_stack)
+        // The wrapper stays in the tree while nothing is dragged: adding it on
+        // the first press rebuilt the grip's state and lost its double click
+        // (#3491).
+        let mut center_area = mouse_area(center_stack);
+        if self.command_line_moving {
+            center_area = center_area
                 .on_move(Message::CommandLineMoveMove)
                 .on_release(Message::CommandLineMoveRelease)
-                .interaction(iced::mouse::Interaction::Grabbing)
-                .into()
+                .interaction(iced::mouse::Interaction::Grabbing);
         } else if self.command_history_resizing {
-            mouse_area(center_stack)
+            center_area = center_area
                 .on_move(Message::CommandHistoryResizeMove)
                 .on_release(Message::CommandHistoryResizeRelease)
-                .interaction(iced::mouse::Interaction::ResizingVertically)
-                .into()
-        } else {
-            center_stack
-        };
+                .interaction(iced::mouse::Interaction::ResizingVertically);
+        }
+        let center_stack: Element<'_, Message> = center_area.into();
 
         let main_ui = container({
             // Clean-screen mode drops the ribbon for a full-canvas view; the
             // menu bar and status bar stay so commands remain reachable and
             // the mode can be toggled back off.
             let mut col = column![];
+            // With the toolbar below the ribbon, the pull-down menus take its
+            // place in the title bar instead of a row of their own.
+            let menus_in_title = self.show_menu_bar
+                && self.ribbon.menus_fit_title_bar(
+                    self.ribbon_closed || self.clean_screen,
+                    self.tabs[self.active_tab].is_start,
+                );
+            // The app's own title bar heads the window, also on a clean
+            // screen: it is the only way left to move or close it.
+            if self.draws_title_bar() {
+                let tab = &self.tabs[self.active_tab];
+                col = col.push(crate::ui::title_bar::view(
+                    self.ribbon.title_bar_start(
+                        self.ribbon_closed || self.clean_screen,
+                        tab.is_start,
+                        tab.history.undo_stack.len(),
+                        tab.history.redo_stack.len(),
+                        menus_in_title
+                            .then(|| crate::ui::menu_bar::view_inline(self.menu_context())),
+                    ),
+                    &tab.tab_display_name(),
+                    tab.dirty,
+                    self.ribbon.title_bar_search(),
+                    self.ribbon.title_bar_room(),
+                    self.main_maximized,
+                    self.title_bar_pressed,
+                ));
+            }
             if self.clean_screen {
-                // Clean screen keeps the menu row, led by the compact logo.
-                if self.show_menu_bar {
+                // Clean screen keeps the menu row, led by the compact logo;
+                // under the app's title bar, which holds both, it is alone.
+                if self.show_menu_bar && self.draws_title_bar() {
+                    col = col.push(crate::ui::menu_bar::view(self.menu_context()));
+                } else if self.show_menu_bar {
                     col = col.push(
                         row![
                             container(self.ribbon.logo_button(false)).padding([0, 6]),
@@ -3531,7 +3656,7 @@ bg={bg_ms:.1}ms n={view_count}"
             } else {
                 col = col.push(
                     self.ribbon.view(
-                        self.show_menu_bar
+                        (self.show_menu_bar && !menus_in_title)
                             .then(|| crate::ui::menu_bar::view(self.menu_context())),
                         self.ribbon_closed,
                         is_paper,
@@ -3908,8 +4033,11 @@ bg={bg_ms:.1}ms n={view_count}"
                 .iter()
                 .any(|tool| tool.kind == kind && !tool.in_canvas())
         });
+        // A dialog's backdrop covers the title bar (see `with_window_frame`).
+        let mut covered = false;
         let base: Element<'_, Message> = match self.modal_content().filter(|_| !in_own_window) {
             Some(content) => {
+                covered = true;
                 let modal_options = if cfg!(target_arch = "wasm32")
                     && matches!(self.active_modal, Some(super::ModalKind::PluginManager))
                 {
@@ -3956,26 +4084,95 @@ bg={bg_ms:.1}ms n={view_count}"
             }
         }
 
-        if let Some(picker) = self.color_picker.as_ref() {
+        let top: Element<'_, Message> = if let Some(picker) = self.color_picker.as_ref() {
             // While the eyedropper is picking, the panel steps aside so the
             // whole window can be sampled.
             if let Some(eyedropper) = picker.eyedropper_view() {
                 return iced::widget::stack![base, eyedropper].into();
             }
             if in_own_window {
-                return base;
+                base
+            } else {
+                covered = true;
+                crate::ui::modal::modal(
+                    base,
+                    t!("Select Color"),
+                    picker.view(),
+                    Message::CloseColorPicker,
+                    self.modal_offset,
+                    crate::ui::modal::ModalOptions::NOTICE,
+                )
             }
-            crate::ui::modal::modal(
-                base,
-                t!("Select Color"),
-                picker.view(),
-                Message::CloseColorPicker,
-                self.modal_offset,
-                crate::ui::modal::ModalOptions::NOTICE,
-            )
         } else {
             base
+        };
+        self.with_window_frame(top, covered)
+    }
+
+    /// The window without a system frame: invisible edges to resize it by
+    /// and, while a dialog's backdrop `covered` the title bar, its window
+    /// buttons and empty space laid over the backdrop, so the window can
+    /// still be moved, maximized or closed. The tree keeps one shape either
+    /// way, so maximizing loses no widget state.
+    fn with_window_frame<'a>(
+        &self,
+        top: Element<'a, Message>,
+        covered: bool,
+    ) -> Element<'a, Message> {
+        if !self.draws_title_bar() {
+            return top;
         }
+        let controls: Element<'a, Message> = if covered {
+            crate::ui::title_bar::controls(self.main_maximized, self.title_bar_pressed)
+        } else {
+            iced::widget::Space::new().width(0).height(0).into()
+        };
+        // The drawn maximize button answers as the system's only while
+        // nothing of the app's lies over it.
+        #[cfg(target_os = "windows")]
+        crate::ui::title_bar::windows::set_maximize_free(
+            !covered && !self.title_buttons_overlaid(),
+        );
+        // A window without a system frame that is not maximized gets a 1 px
+        // border in the ribbon's dark hairline colour, so it stands apart
+        // from what lies behind it. Maximized it has none, but the same
+        // container, so no widget below loses its state.
+        let bordered = crate::ui::title_bar::frameless() && !self.main_maximized;
+        let line = if bordered {
+            crate::ui::icons::hairline()
+        } else {
+            0.0
+        };
+        let framed = container(iced::widget::stack![top, controls])
+            .padding(line)
+            .style(move |theme: &Theme| container::Style {
+                border: iced::Border {
+                    color: crate::ui::style::chrome::edge(theme),
+                    width: line,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
+            });
+        crate::ui::title_bar::with_resize_edges(
+            framed.into(),
+            crate::ui::title_bar::app_draws_edges() && !self.main_maximized,
+        )
+    }
+
+    /// Whether something of the app's lies over the title bar's window
+    /// buttons: an open ribbon dropdown or menu, or a floating pallet.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    pub(in crate::app) fn title_buttons_overlaid(&self) -> bool {
+        let right = self.win_size.0;
+        let left = right - crate::ui::title_bar::buttons_width();
+        let bottom = crate::ui::title_bar::bar_height();
+        self.ribbon.open_dropdown.is_some()
+            || self.ribbon.menu_open()
+            || self
+                .dock
+                .floating
+                .iter()
+                .any(|f| f.x < right && f.x + f.w > left && f.y < bottom)
     }
 
     /// Measured outer pixel bounds for whichever shared modal is visible, used
@@ -4247,6 +4444,29 @@ impl OpenCADStudio {
         } else {
             event::listen_with(window_event)
         };
+        // While a column divider is dragged, a release anywhere ends it: the
+        // capture layers only hear a release over their own window, and one
+        // past the edge of a pallet's window of its own left the column
+        // following the pointer until the next click.
+        let column_drag_release = if matches!(
+            self.dock_drag,
+            Some(
+                crate::ui::dock::DockDrag::LayerColumn(_)
+                    | crate::ui::dock::DockDrag::WalkColumn(_)
+            )
+        ) {
+            event::listen_with(|event, _, _| {
+                use iced::mouse::{Button, Event as Mouse};
+                match event {
+                    iced::Event::Mouse(Mouse::ButtonReleased(Button::Left)) => {
+                        Some(Message::Dock(crate::ui::dock::DockMsg::DragRelease))
+                    }
+                    _ => None,
+                }
+            })
+        } else {
+            Subscription::none()
+        };
         #[cfg(not(target_arch = "wasm32"))]
         let control = iced::Subscription::batch([
             super::control::subscribe().map(Message::ControlRequest),
@@ -4284,6 +4504,7 @@ impl OpenCADStudio {
                 _ => None,
             }),
             control,
+            column_drag_release,
             point_cloud_reads,
             frames,
             history_tick,
@@ -6259,7 +6480,7 @@ mod tests {
     }
 
     #[test]
-    fn test_crosshair_background_paper_space() {
+    fn crosshair_background_paper_space() {
         let tab = crate::app::tab_document::DocumentTab::new_drawing(1);
         let bg = crosshair_background(&tab, true);
         assert_eq!(bg, tab.scene.paper_bg_color);
@@ -6372,4 +6593,17 @@ impl OpenCADStudio {
             )
         })
     }
+}
+
+static KEYPAD_DECIMAL_POINT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+/// Whether the numeric keypad's decimal key always types a decimal point
+/// (`true`) or the character the keyboard layout gives it.
+pub fn keypad_decimal_point() -> bool {
+    KEYPAD_DECIMAL_POINT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_keypad_decimal_point(on: bool) {
+    KEYPAD_DECIMAL_POINT.store(on, std::sync::atomic::Ordering::Relaxed);
 }

@@ -165,7 +165,11 @@ pub fn handle_plugin_request(
         }
         UpdateEntitiesTransaction { label, entities } => {
             if entities.len() > MAX_BATCH_ENTITIES {
-                batch_budget_error("update_entities_transaction", entities.len(), MAX_BATCH_ENTITIES)
+                batch_budget_error(
+                    "update_entities_transaction",
+                    entities.len(),
+                    MAX_BATCH_ENTITIES,
+                )
             } else {
                 PluginResponse::EntityTransactionResult(
                     host.update_entities_transaction(&label, entities),
@@ -179,7 +183,8 @@ pub fn handle_plugin_request(
             } else {
                 PluginResponse::SelectionResult(host.set_selection(&handles))
             }
-        }        SolidOperation { operation } => {
+        }
+        SolidOperation { operation } => {
             PluginResponse::SolidResult(host.solid_operation(operation))
         }
         TableOperation { operation } => {
@@ -339,11 +344,7 @@ pub fn handle_plugin_request(
         }),
         RegisterQuadPanels { panels } => {
             if panels.len() > MAX_QUAD_PANELS {
-                return batch_budget_error(
-                    "register_quad_panels",
-                    panels.len(),
-                    MAX_QUAD_PANELS,
-                );
+                return batch_budget_error("register_quad_panels", panels.len(), MAX_QUAD_PANELS);
             }
             // API v15: the owning plugin's id is transport identity (see
             // handle_plugin_request's doc), so one plugin's registration can
@@ -393,6 +394,26 @@ pub fn handle_plugin_request(
         PanelSnapshot { panel_id } => {
             PluginResponse::PanelSnapshot(host.panel_snapshot_for_plugin(plugin_id, &panel_id))
         }
+        PanelSurfacePublish { panel_id, surface } => match surface {
+            crate::scene::PanelSurface::Scene(scene) => PluginResponse::PanelSurfacePublished(
+                host.panel_surface_publish_for_plugin(plugin_id, &panel_id, scene),
+            ),
+            crate::scene::PanelSurface::Widgets(widgets) => PluginResponse::PanelWidgetPublished(
+                host.panel_widget_publish_for_plugin(plugin_id, &panel_id, widgets),
+            ),
+            crate::scene::PanelSurface::Tables(tables) => PluginResponse::PanelTablePublished(
+                host.panel_table_publish_for_plugin(plugin_id, &panel_id, tables),
+            ),
+        },
+        PanelSurfacePatch { panel_id, patch } => PluginResponse::PanelSurfacePatchResult(
+            host.panel_surface_patch_for_plugin(plugin_id, &panel_id, patch),
+        ),
+        PanelSurfacePage { panel_id, page } => PluginResponse::PanelSurfacePageResult(
+            host.panel_surface_page_for_plugin(plugin_id, &panel_id, page),
+        ),
+        PanelSurfaceTablePatch { panel_id, patch } => PluginResponse::PanelTablePatchResult(
+            host.panel_surface_table_patch_for_plugin(plugin_id, &panel_id, patch),
+        ),
         SetGeoLocation { location } => {
             PluginResponse::GeoLocationSet(host.set_geo_location(&location))
         }

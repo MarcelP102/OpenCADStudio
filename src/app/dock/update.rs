@@ -193,7 +193,14 @@ impl OpenCADStudio {
             | DockMsg::HoverExit
             | DockMsg::HoverStay
             | DockMsg::HoverSettled(_) => return self.dock_hover(m),
-            DockMsg::DragMove(point) => self.dock_drag_move(point),
+            DockMsg::DragMove(point) => {
+                self.dock_drag_over(None);
+                self.dock_drag_move(point);
+            }
+            DockMsg::DragMoveIn(window, point) => {
+                self.dock_drag_over(Some(window));
+                self.dock_drag_move(point);
+            }
             DockMsg::DragRelease => self.dock_drag_release(),
         }
         iced::Task::none()
@@ -274,6 +281,17 @@ impl OpenCADStudio {
         self.dock_grip_lit = None;
     }
 
+    /// The pointer moved over `window` (`None`: the main window). Points of
+    /// two windows have different origins, so moving from one into the other
+    /// starts the drag's deltas afresh instead of jumping by the windows'
+    /// offset.
+    fn dock_drag_over(&mut self, window: Option<iced::window::Id>) {
+        if self.dock_drag_window != window {
+            self.dock_drag_window = window;
+            self.dock_drag_last = None;
+        }
+    }
+
     /// Pointer released: land what was dragged and save a changed layout.
     fn dock_drag_release(&mut self) {
         use crate::ui::dock::{DockDrag, DropTarget, FloatPanel};
@@ -332,6 +350,7 @@ impl OpenCADStudio {
             self.save_config();
         }
         self.dock_drag_last = None;
+        self.dock_drag_window = None;
         self.xref_col_drag = None;
         self.xref_col_last = None;
         self.xref_split_drag = false;
@@ -625,6 +644,8 @@ impl OpenCADStudio {
                     }
                     PanelId::PointCloudManager => self.pc_manager.show = true,
                     PanelId::Count => self.set_count_palette(true),
+                    PanelId::GeometryCleanup => self.geometry_cleanup.show = true,
+                    PanelId::BricscadVisibility => self.set_bricscad_visibility_panel(true),
                     PanelId::SheetSetManager => self.show_sheet_set_manager(true),
                     PanelId::Layers => {
                         self.sync_ribbon_layers();
@@ -722,6 +743,8 @@ impl OpenCADStudio {
                 self.count_palette.show = false;
                 self.ribbon.set_count_palette(false);
             }
+            PanelId::GeometryCleanup => self.geometry_cleanup.show = false,
+            PanelId::BricscadVisibility => self.bricscad_visibility.show = false,
             PanelId::SheetSetManager => {
                 self.sheet_set.show = false;
                 self.ribbon.set_sheet_set(false);
@@ -873,6 +896,8 @@ impl OpenCADStudio {
             PanelId::NodeGraph => self.show_node_graph,
             PanelId::PointCloudManager => self.pc_manager.show,
             PanelId::Count => self.count_palette.show,
+            PanelId::GeometryCleanup => self.geometry_cleanup.show,
+            PanelId::BricscadVisibility => self.bricscad_visibility.show,
             PanelId::SheetSetManager => self.sheet_set.show,
             PanelId::Layers => self.show_layers,
             // The walk session is the pallet's state. While the Select Objects
@@ -1287,5 +1312,26 @@ mod ui_state_tests {
         assert!(again.show_layers);
         assert!(again.show_block_palette);
         assert!(!again.show_file_tabs);
+    }
+
+    /// #3527: the External References pallet docked on the right comes back
+    /// open, in its place.
+    #[test]
+    fn external_references_pallet_survives_a_restart() {
+        use crate::ui::dock::PanelId;
+        let mut app = OpenCADStudio::new_for_test();
+        app.automation_op(r#"{"op":"new"}"#);
+        let _ = app.update(Message::ToggleXrefManager);
+        assert!(app.dock_panel_visible(PanelId::ExternalReferences));
+        let place = app.dock.location(PanelId::ExternalReferences);
+        let saved = app.current_config();
+        assert!(saved.show_external_references);
+
+        let mut again = OpenCADStudio::new_for_test();
+        again.apply_config(saved);
+        again.automation_op(r#"{"op":"new"}"#);
+        assert!(again.show_external_references);
+        assert_eq!(again.dock.location(PanelId::ExternalReferences), place);
+        assert!(again.dock_panel_visible(PanelId::ExternalReferences));
     }
 }

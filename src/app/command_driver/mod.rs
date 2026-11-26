@@ -119,12 +119,20 @@ impl OpenCADStudio {
         let task = self.apply_cmd_result_outer(result);
         if self.result_depth == 0 {
             self.ask_annotation_scale_after_first_point();
+            self.open_surface_list_if_asked();
         }
         task
     }
 
     fn apply_cmd_result_outer(&mut self, mut result: CmdResult) -> Task<Message> {
         let i = self.active_tab;
+        // Text a plugin command printed while the host served its step comes
+        // before whatever the step's result adds to the command line.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut host = crate::app::plugin_host::HostSession::new(self, i);
+            crate::plugin::external::with_manager(|mgr| mgr.replay_held_messages(&mut host));
+        }
         // A constraint addition records the geometry its solve moved outside
         // the command's own list. Only the outermost result owns the record:
         // a handler that applies a follow-up result must not wipe it.
@@ -510,11 +518,49 @@ impl OpenCADStudio {
         self.refresh_active_cmd_preview(i);
     }
 
+    pub(in crate::app) fn start_point_filter_modifier(
+        &mut self,
+        i: usize,
+        filter: crate::command::PointFilter,
+    ) {
+        if self.tabs[i].suspended_cmd.is_some() {
+            return;
+        }
+        let parent = self.tabs[i].active_cmd.take();
+        self.tabs[i].suspended_cmd = parent;
+        self.tabs[i].scene.clear_preview_wire();
+        let cmd = crate::command::PointFilterCommand::new(filter, self.last_point);
+        let prompt = crate::command::CadCommand::prompt(&cmd);
+        self.tabs[i].active_cmd = Some(Box::new(cmd));
+        self.push_ucs_to_cmd(i);
+        self.command_line.push_info(&prompt);
+        self.command_line.set_step_options(Vec::new());
+        self.sync_dyn_fields();
+        self.refresh_active_cmd_preview(i);
+    }
+
+    pub(in crate::app) fn start_tracking_modifier(&mut self, i: usize) {
+        if self.tabs[i].suspended_cmd.is_some() {
+            return;
+        }
+        let parent = self.tabs[i].active_cmd.take();
+        self.tabs[i].suspended_cmd = parent;
+        self.tabs[i].scene.clear_preview_wire();
+        let cmd = crate::command::TrackingCommand::new(self.last_point);
+        let prompt = crate::command::CadCommand::prompt(&cmd);
+        self.tabs[i].active_cmd = Some(Box::new(cmd));
+        self.push_ucs_to_cmd(i);
+        self.command_line.push_info(&prompt);
+        self.command_line.set_step_options(Vec::new());
+        self.sync_dyn_fields();
+        self.refresh_active_cmd_preview(i);
+    }
+
     pub(in crate::app) fn relative_input_base(&self, i: usize) -> Option<glam::DVec3> {
         self.tabs[i]
             .active_cmd
             .as_ref()
-            .filter(|c| c.name() == "FROM")
+            .filter(|c| matches!(c.name(), "FROM" | "TRACKING"))
             .and_then(|c| c.resolved_anchor())
             .or(self.last_point)
     }
@@ -716,6 +762,17 @@ impl OpenCADStudio {
                 self.refresh_properties();
             }
             CmdResult::CopySelected(handles, transform) => {
+                // Every further copy is placed from the base point, so ortho,
+                // polar and a typed distance measure from it, not from the
+                // copy just made (#3519).
+                let i = self.active_tab;
+                if let Some(base) = self.tabs[i]
+                    .active_cmd
+                    .as_ref()
+                    .and_then(|c| c.resolved_anchor())
+                {
+                    self.last_point = Some(base);
+                }
                 if let Some(task) = self.handle_copy_selected(handles, transform) {
                     return task;
                 }
@@ -1214,6 +1271,38 @@ impl OpenCADStudio {
             }
             CmdResult::Done => {
                 self.handle_done();
+            }
+            CmdResult::AddCogoPoint { position, description, elevation, echo, then } => {
+                self.add_created_cogo_point(position, description, elevation, echo);
+                if let Some(line) = then {
+                    self.command_line.push_output(&line);
+                }
+                let _ = self.handle_need_point();
+            }
+            CmdResult::ConvertCadPoint { handle, at, description, more } => {
+                self.add_created_cogo_point(at, description, Some(at.z), false);
+                self.tabs[i].scene.erase_entities(&[handle]);
+                if more {
+                    let _ = self.handle_need_point();
+                } else {
+                    use crate::command::CadCommand;
+                    let next = crate::modules::civil::point_convert::selection();
+                    self.command_line.push_info(&next.prompt());
+                    self.tabs[i].active_cmd = Some(Box::new(next));
+                }
+            }
+            CmdResult::AddCogoPoints { points, lines, done } => {
+                for line in &lines {
+                    self.command_line.push_output(line);
+                }
+                for (position, description, elevation) in points {
+                    self.add_created_cogo_point(position, description, elevation, false);
+                }
+                if done {
+                    self.handle_done();
+                } else {
+                    let _ = self.handle_need_point();
+                }
             }
             cancel @ (CmdResult::Cancel | CmdResult::CancelForSpaceChange) => {
                 self.handle_cancel(cancel);
@@ -2444,20 +2533,29 @@ fn entity_at_typed_point(
     document: &document::Document,
     owner: Handle,
     point: glam::DVec3,
+    keep: Option<fn(&document::EntityType) -> bool>,
+    tolerance: Option<f64>,
 ) -> Option<Handle> {
     let mut extent = 0.0f64;
     let mut nearest: Option<(f64, Handle)> = None;
     for entity in document.entities() {
         let common = entity.common();
-        if common.owner_handle != owner {
+        // Only the kinds of object the prompt takes: a point on an
+        // alignment drawn over its source polyline finds the alignment.
+        if common.owner_handle != owner || keep.is_some_and(|keep| !keep(entity)) {
             continue;
         }
         let bounds = entity.as_entity().bounding_box();
         extent = extent
             .max((bounds.max.x - bounds.min.x).abs())
             .max((bounds.max.y - bounds.min.y).abs());
+        // An alignment answers by its plan geometry.
+        // So do lot lines and feature lines, by their edges in their site.
+        let alignment = crate::modules::civil::point_intersect::alignment_curve(entity)
+            .or_else(|| crate::modules::civil::point_intersect::site_line_curve(document, entity))
+            .map(|curve| ocs_geom::geom2d::closest_point(&curve, [point.x, point.y]).distance);
         let distance =
-            match crate::scene::viewport_dimension_pick::planar_pick_distance(entity, point) {
+            match alignment.or_else(|| crate::scene::viewport_dimension_pick::planar_pick_distance(entity, point)) {
                 Some(distance) => distance,
                 // A multileader answers by its leader lines and landings.
                 None if matches!(entity, document::EntityType::MultiLeader(_)) => match entity {
@@ -2505,13 +2603,42 @@ fn entity_at_typed_point(
                         .max(0.0);
                     dx.hypot(dy)
                 }
-                None => continue,
+                // A COGO point answers by its location.
+                None if crate::entities::civil::cogo_point_position(entity, document).is_some() => {
+                    let p = crate::entities::civil::cogo_point_position(entity, document).unwrap_or_default();
+                    p.truncate().distance(point.truncate())
+                }
+                // A 3D polyline answers by its edges in plan.
+                None => match entity {
+                    document::EntityType::Polyline3D(p) => {
+                        let mut v: Vec<glam::DVec2> = p.vertices.iter().map(|v| glam::DVec2::new(v.position.x, v.position.y)).collect();
+                        if p.is_closed() && v.len() > 2 {
+                            v.push(v[0]);
+                        }
+                        let q = point.truncate();
+                        let Some(d) = v
+                            .windows(2)
+                            .map(|w| {
+                                let ab = w[1] - w[0];
+                                let t = ((q - w[0]).dot(ab) / ab.length_squared().max(1e-24)).clamp(0.0, 1.0);
+                                (w[0] + ab * t).distance(q)
+                            })
+                            .reduce(f64::min)
+                        else {
+                            continue;
+                        };
+                        d
+                    }
+                    _ => continue,
+                },
             };
-        if nearest.is_none_or(|(best, _)| distance < best) {
+        // Of objects equally near, the one drawn last (on top) is found:
+        // an alignment over its source polyline, a line over an alignment.
+        if nearest.is_none_or(|(best, _)| distance <= best) {
             nearest = Some((distance, common.handle));
         }
     }
-    let tolerance = (extent * 0.002).max(1.0e-9);
+    let tolerance = tolerance.unwrap_or((extent * 0.002).max(1.0e-9));
     nearest
         .filter(|(distance, _)| *distance <= tolerance)
         .map(|(_, handle)| handle)

@@ -48,6 +48,18 @@ pub(crate) fn lwpolyline_global_width(pline: &LwPolyline) -> Option<f64> {
     Some(w0)
 }
 
+/// Append a provisional vertex on the end of an open polyline, joined to the
+/// old end by a straight segment.
+fn append_end_vertex(pline: &mut LwPolyline) {
+    let Some(last) = pline.vertices.last_mut() else {
+        return;
+    };
+    last.bulge = 0.0;
+    let mut new_v = *last;
+    new_v.vertex_id = 0;
+    pline.vertices.push(new_v);
+}
+
 /// Midpoint position on an arc segment defined by its bulge.
 fn arc_midpoint(p0: [f64; 2], p1: [f64; 2], bulge: f64) -> [f64; 2] {
     match crate::entities::common::BulgeArc::from_bulge(p0, p1, bulge) {
@@ -1063,11 +1075,17 @@ impl crate::entities::traits::Grippable for LwPolyline {
                     label: "Add Vertex",
                     action: GripMenuAction::AddVertex,
                 },
-                GripMenuItem {
-                    label: "Remove Vertex",
-                    action: GripMenuAction::RemoveVertex,
-                },
             ]);
+            if !self.is_closed && (grip_id == 0 || grip_id == n - 1) {
+                items.push(GripMenuItem {
+                    label: "Extend Vertex",
+                    action: GripMenuAction::ExtendVertex,
+                });
+            }
+            items.push(GripMenuItem {
+                label: "Remove Vertex",
+                action: GripMenuAction::RemoveVertex,
+            });
             if breakable {
                 items.push(GripMenuItem {
                     label: "Break",
@@ -1286,6 +1304,18 @@ impl crate::entities::traits::Grippable for LwPolyline {
         let n = self.vertices.len();
         match action {
             A::Stretch => {}
+            // Start the provisional vertex on the end it extends; the grip
+            // driver then moves it with the cursor until the placement click.
+            A::ExtendVertex if !self.is_closed => {
+                if grip_id + 1 == n {
+                    append_end_vertex(self);
+                } else if let (0, Some(&first)) = (grip_id, self.vertices.first()) {
+                    let mut new_v = first;
+                    new_v.bulge = 0.0;
+                    new_v.vertex_id = 0;
+                    self.vertices.insert(0, new_v);
+                }
+            }
             A::AddVertex => {
                 if n == 0 {
                     return;
@@ -1294,11 +1324,7 @@ impl crate::entities::traits::Grippable for LwPolyline {
                 // the provisional vertex on the endpoint; the grip driver then
                 // moves it with the cursor until the placement click.
                 if grip_id == n - 1 && !self.is_closed {
-                    self.vertices[grip_id].bulge = 0.0;
-                    let mut new_v = self.vertices[grip_id];
-                    new_v.bulge = 0.0;
-                    new_v.vertex_id = 0;
-                    self.vertices.push(new_v);
+                    append_end_vertex(self);
                     return;
                 }
                 // Insert a provisional vertex midway along the following
@@ -1829,7 +1855,7 @@ mod tests {
     }
 
     #[test]
-    fn test_lwpolyline_uniform_width_shows_global_width() {
+    fn lwpolyline_uniform_width_shows_global_width() {
         let pl = make_test_lwpolyline(3, 5.0);
         assert_eq!(lwpolyline_global_width(&pl), Some(5.0));
 
@@ -1846,7 +1872,7 @@ mod tests {
     }
 
     #[test]
-    fn test_lwpolyline_varying_vertex_width_shows_varies() {
+    fn lwpolyline_varying_vertex_width_shows_varies() {
         let mut pl = make_test_lwpolyline(3, 5.0);
         pl.vertices[0].start_width = 2.0;
         pl.vertices[0].end_width = 3.0;
@@ -1866,7 +1892,7 @@ mod tests {
     }
 
     #[test]
-    fn test_lwpolyline_modifying_global_width_sets_all_vertex_widths() {
+    fn lwpolyline_modifying_global_width_sets_all_vertex_widths() {
         let mut pl = make_test_lwpolyline(3, 5.0);
         pl.vertices[0].start_width = 2.0;
         pl.vertices[0].end_width = 3.0;
@@ -1882,7 +1908,7 @@ mod tests {
     }
 
     #[test]
-    fn test_lwpolyline_modifying_segment_width_materializes_constant_width() {
+    fn lwpolyline_modifying_segment_width_materializes_constant_width() {
         let mut pl = make_test_lwpolyline(3, 5.0);
         // Initially constant_width is 5.0, vertices start/end are 0.0
         assert_eq!(pl.vertices[0].start_width, 0.0);

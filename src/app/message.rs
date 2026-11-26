@@ -2,6 +2,8 @@ use super::*;
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    /// The civil Create Points menu at the canvas's right edge.
+    PointsMenu(crate::ui::points_menu::PointsMenuMsg),
     GraphicAttributes(crate::ui::window::graphic_attributes::GraphicAttributesMsg),
     SpaceMouseWake,
     SpaceMouseFrame(iced::time::Instant),
@@ -23,6 +25,8 @@ pub enum Message {
     ControlStep(String, Box<Message>),
     ControlTaskDone(String),
     ControlScreenshot(String, Option<iced::window::Screenshot>),
+    /// Completion result from an off-UI-thread `capture` worker (`renderer: "gpu"` / `"cpu"`).
+    ControlOffscreenCaptureDone(Result<serde_json::Value, serde_json::Value>),
     /// A frame has been drawn (or the anti-hang timer expired) for a parked
     /// `capture` request: take the screenshot now, so it shows the latest
     /// state instead of the previous frame (C11).
@@ -93,7 +97,7 @@ pub enum Message {
     /// Ctrl/Cmd+A — select all layer rows when the Layer Manager is open, or all
     /// drawing objects otherwise (#236).
     SelectAllShortcut,
-    /// Open the shared Find and Replace dialog (Ctrl/Cmd+F or Ctrl/Cmd+H).
+    /// Open the shared Find and Replace dialog (Ctrl/Cmd+F).
     FindReplaceOpen,
     Find(crate::ui::window::find_replace::FindMsg),
     OverkillSettingsChanged(crate::modules::draw::modify::overkill::Settings),
@@ -290,6 +294,8 @@ pub enum Message {
     GripSizeChanged(u8),
     /// Change the object-snap marker size in pixels (1–20, SNAPMARKERSIZE).
     SnapMarkerSizeChanged(u8),
+    /// Turn the AutoSnap Magnet on or off (the crosshairs lock onto a snap point).
+    AutoSnapMagnetChanged(bool),
     /// Change Unselected Grip color ACI index (0 = Theme Primary, 1..=255 = ACI, GRIPCOLOR).
     GripColorChanged(u8),
     /// Change Selected/Hot Grip color ACI index (0 = Theme Danger, 1..=255 = ACI, GRIPHOT).
@@ -336,6 +342,8 @@ pub enum Message {
     /// F6 / UCSDETECT: toggle the dynamic UCS.
     ToggleDynamicUcs,
     TouchpadPanChanged(bool),
+    /// Options: the keypad decimal key always types a point.
+    KeypadDecimalPointChanged(bool),
     /// Options: show the pull-down menus (MENUBAR).
     MenuBarChanged(bool),
     /// Options: show the ribbon (RIBBON / RIBBONCLOSE).
@@ -515,7 +523,8 @@ pub enum Message {
         tool_id: String,
         event: ModuleEvent,
     },
-    /// Result of a plugin-requested file picker (`ModuleEvent::PluginFileDialog`).
+    /// Result of a plugin-requested file or folder picker
+    /// (`ModuleEvent::PluginFileDialog` / `PluginFolderDialog`).
     /// `path` is `None` when the user cancels. On `Some`, the host dispatches
     /// `"<command> <path>"` to the plugins with original case preserved.
     PluginFileDialogResult {
@@ -524,6 +533,54 @@ pub enum Message {
     },
     /// Live text change in a plugin modal dialog control.
     PluginDialogTextChange(String, String),
+    /// Raw pointer transition on a plugin scene surface (api v29): the
+    /// canvas resolved the scene-space position and the topmost element;
+    /// the app's `PanelEventRouter` owns the semantics (click vs drag,
+    /// coalescing, settle/cancel) and delivery to the owning plugin.
+    PanelSurfacePointer {
+        owner: String,
+        panel: String,
+        pointer: crate::app::panel_events::Pointer,
+        element: Option<ocs_plugin_api::scene::StableId>,
+        pos: ocs_plugin_api::scene::Vec2,
+    },
+    /// A widget row was ACTIVATED on a plugin widget surface (api v29).
+    PanelWidgetNodeActivated {
+        owner: String,
+        panel: String,
+        node: ocs_plugin_api::scene::StableId,
+    },
+    /// An expand affordance was toggled on a plugin widget surface; the
+    /// dispatch decides host-local toggle vs `NodeExpanded` notification
+    /// (only expanding an `Unloaded` row needs the plugin).
+    PanelWidgetExpandToggled {
+        owner: String,
+        panel: String,
+        node: ocs_plugin_api::scene::StableId,
+    },
+    /// A keystroke in a table cell editor: host-local draft state only.
+    PanelTableCellDraft {
+        owner: String,
+        panel: String,
+        row: ocs_plugin_api::scene::StableId,
+        column: ocs_plugin_api::scene::StableId,
+        text: String,
+    },
+    /// A table cell editor was submitted: the typed-commit rule runs and
+    /// a successful commit notifies `SurfaceEvent::CellEdited`.
+    PanelTableCellCommitted {
+        owner: String,
+        panel: String,
+        row: ocs_plugin_api::scene::StableId,
+        column: ocs_plugin_api::scene::StableId,
+    },
+    /// A table cell editor gained focus: host-local selection.
+    PanelTableCellSelected {
+        owner: String,
+        panel: String,
+        row: ocs_plugin_api::scene::StableId,
+        column: ocs_plugin_api::scene::StableId,
+    },
     /// Checkbox toggle in a plugin modal dialog control.
     PluginDialogBoolToggle(String, bool),
     /// Dropdown choice selection in a plugin modal dialog control.
@@ -596,6 +653,8 @@ pub enum Message {
     TabClose(u64),
     /// Save every drawing that already has a file path.
     DocTabSaveAll,
+    /// Draw again a window whose view panicked.
+    RetryWindowView(window::Id),
     /// Close every non-Start drawing tab.
     DocTabCloseAll,
     /// Close every non-Start drawing tab except the given one.
@@ -628,8 +687,6 @@ pub enum Message {
     ParametersManagerFilterMode(crate::scene::block_parameters_manager::FilterMode),
     /// Toggles the funnel's two-entry menu.
     ParametersManagerFilterMenu,
-    /// Toggles the header's column menu.
-    ParametersManagerHeaderMenu,
     /// Shows or hides one header column.
     ParametersManagerColumn(crate::ui::window::parameters_manager::Column),
     ParametersManagerSearch(String),
@@ -887,12 +944,16 @@ pub enum Message {
     LayerNameColGrab,
     /// Start dragging the divider after a Layer Manager column.
     LayerColGrab(crate::ui::window::layers::LayerSortCol),
-    /// Open or close the Layer Manager's column chooser.
-    LayerColumnsMenu(bool),
+    /// Show every Layer Manager column again (the header's right-click menu).
+    LayerColumnsShowAll,
     /// Show or hide a Layer Manager column.
     LayerColumnToggle(crate::ui::window::layers::LayerSortCol),
-    /// Move a Layer Manager column left (-1) or right (1).
-    LayerColumnMove(crate::ui::window::layers::LayerSortCol, i8),
+    /// Move a Layer Manager column past the column the header shows next to
+    /// it (the second).
+    LayerColumnMove(
+        crate::ui::window::layers::LayerSortCol,
+        crate::ui::window::layers::LayerSortCol,
+    ),
     /// Toggle the persistent literal-space mode (the `>` button): while on,
     /// every command line behaves as if it started with `>` — Space stays in
     /// the input instead of submitting. Saved in the user config.
@@ -916,6 +977,9 @@ pub enum Message {
     /// User clicked an autocomplete suggestion — fill the input with
     /// the chosen command name and dispatch it.
     CommandSuggestionPick(String),
+    /// User clicked a drawing name in the suggestions: make the layer
+    /// current, insert the block, hatch with the pattern or restore the view.
+    ContentSuggestionPick(crate::ui::command_line::ContentMatch),
     /// User clicked a command-line option button — feed its keyword to the
     /// active command as if typed (empty keyword = Enter). (#304)
     CommandOptionPick(String),
@@ -2274,6 +2338,8 @@ pub enum Message {
     FilterDialog(filter_dialog::FilterMsg),
     /// The user clicked the title-bar ✕ (fires before the window closes).
     WindowCloseRequested(window::Id),
+    /// The app's own title bar over the ribbon (see `ui::title_bar`).
+    TitleBar(crate::ui::title_bar::TitleBarMsg),
     /// A window was fully closed (fires after `window::close()` is called).
     OsWindowClosed(window::Id),
     /// No-op — used as a fallback when a TabEvent has no host mapping.
@@ -2645,6 +2711,9 @@ pub enum Message {
     /// An edit in a picked table cell window (Cell Borders, Cell Contents).
     TableCellDialog(crate::ui::window::table_cell_dialog::TableCellDialogMsg),
     AnnoScalePrompt(crate::ui::window::anno_scale_prompt::AnnoScaleMsg),
+    SurfaceList(crate::ui::window::surface_list::SurfaceListMsg),
+    PointGroup(crate::ui::window::point_group::PointGroupMsg),
+    PointTool(crate::ui::window::point_tools::PointToolMsg),
     MTextDialog(crate::ui::window::mtext_dialogs::MTextDialogMsg),
     HyperlinkDialog(crate::ui::window::hyperlink_dialog::HyperlinkMsg),
     /// Check Spelling window.
@@ -2653,6 +2722,10 @@ pub enum Message {
     /// A click or search in the Point Cloud Manager.
     PcManager(crate::ui::window::pc_manager::PcManagerMsg),
     Count(crate::ui::window::count_palette::CountMsg),
+    /// The Geometry Cleanup palette.
+    GeometryCleanup(crate::ui::window::geometry_cleanup::GeometryCleanupMsg),
+    /// The Visibility States palette of a BricsCAD parametric block.
+    BricscadVisibility(crate::ui::window::bricscad_visibility::VisMsg),
     /// The LayerWalk pallet (LAYWALK).
     Laywalk(crate::ui::window::layer_walk::LayerWalkMsg),
     /// The QuickCalc pallet.
@@ -2756,6 +2829,10 @@ pub enum Message {
     AttOutSave(String, Option<std::path::PathBuf>),
     /// ATTIN file contents, `None` when the picker was cancelled.
     AttInPicked(Option<String>),
+    /// Ctrl+V over selected table cells: the clipboard text.
+    TableCellsPaste(Option<String>),
+    /// Import from File (alignment points): the picked file's text.
+    AlignmentPointFilePicked(Option<String>),
     // ── STL export ────────────────────────────────────────────────────────
     /// Trigger STL export: collect meshes and show save dialog.
     StlExport,

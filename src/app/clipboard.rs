@@ -124,6 +124,22 @@ pub struct ClipExtObjects {
 impl ClipboardDeps {
     /// Snapshot the records `entities` reference that exist in `doc`.
     pub fn capture(doc: &document::Document, entities: &[document::EntityType]) -> Self {
+        Self::capture_layers(doc, entities, false)
+    }
+
+    /// [`Self::capture`] for a whole drawing brought in as a block (INSERT of
+    /// a file, a drawing from the Blocks palette): every layer of the drawing
+    /// comes along, used or not, as other CAD programs bring them. Layers of
+    /// attached xrefs (`Xref|Layer`) stay behind; they belong to the xref.
+    pub fn capture_drawing(doc: &document::Document, entities: &[document::EntityType]) -> Self {
+        Self::capture_layers(doc, entities, true)
+    }
+
+    fn capture_layers(
+        doc: &document::Document,
+        entities: &[document::EntityType],
+        all_layers: bool,
+    ) -> Self {
         use document::EntityType;
         use std::collections::BTreeSet;
         let (mut layers, mut ltypes, mut tstyles, mut dstyles) = (
@@ -168,6 +184,19 @@ impl ClipboardDeps {
                     dstyles.insert(l.dimension_style.clone());
                 }
                 _ => {}
+            }
+        }
+        if all_layers {
+            for layer in doc.layers.iter() {
+                if !layer.flags.xref_dependent && !layer.name.contains('|') {
+                    layers.insert(layer.name.clone());
+                }
+            }
+        }
+        // A layer brings its linetype: what is drawn ByLayer shows it.
+        for layer in layers.iter().filter_map(|n| doc.layers.get(n)) {
+            if !is_special(&layer.line_type) && !layer.line_type.eq_ignore_ascii_case("Continuous") {
+                ltypes.insert(layer.line_type.clone());
             }
         }
         // A dimension style names its text style, linetypes and arrow blocks
@@ -471,6 +500,9 @@ impl ClipboardDeps {
         let mut seen: FxHashSet<document::Handle> = FxHashSet::default();
         let mut queue = vec![root];
         let mut out = Vec::new();
+        // A dimension's DIMASSOC ties it to the source geometry; the copy
+        // carries none of it (nor the dictionary entry naming it).
+        let mut dimension_associations: FxHashSet<document::Handle> = FxHashSet::default();
         while let Some(h) = queue.pop() {
             if h.is_null() || !seen.insert(h) {
                 continue;
@@ -478,6 +510,15 @@ impl ClipboardDeps {
             let Some(obj) = doc.objects.get(&h) else {
                 continue;
             };
+            if let ObjectType::Associative(object) = obj {
+                if matches!(
+                    object.data,
+                    document::objects::AssociativeData::DimensionAssociation(_)
+                ) {
+                    dimension_associations.insert(h);
+                    continue;
+                }
+            }
             // Enqueue children referenced by this object.
             match obj {
                 ObjectType::Dictionary(d) => {
@@ -506,6 +547,14 @@ impl ClipboardDeps {
                 _ => {}
             }
             out.push((h, obj.clone()));
+        }
+        if !dimension_associations.is_empty() {
+            for (_, object) in &mut out {
+                if let ObjectType::Dictionary(d) = object {
+                    d.entries
+                        .retain(|(_, child)| !dimension_associations.contains(child));
+                }
+            }
         }
         out
     }

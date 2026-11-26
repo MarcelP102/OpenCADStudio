@@ -178,9 +178,9 @@ impl CrsDefinition {
         insertion_units: i16,
     ) -> Result<(), String> {
         self.apply_to_geodata(geo)?;
-        let valid = crate::app::properties::insunits_to_mm(insertion_units).is_some()
+        let valid = crate::entities::units::insunits_to_mm(insertion_units).is_some()
             && (1..=24).contains(&insertion_units);
-        geo.horizontal_unit_scale = crate::app::properties::insunits_to_mm(insertion_units)
+        geo.horizontal_unit_scale = crate::entities::units::insunits_to_mm(insertion_units)
             .map(|millimetres| millimetres / 1_000.0)
             .unwrap_or(1.0);
         geo.vertical_unit_scale = geo.horizontal_unit_scale;
@@ -248,6 +248,11 @@ impl CrsDefinition {
 
     pub fn units(&self) -> &str {
         self.proj.units()
+    }
+
+    /// The ellipsoid's semi-major and semi-minor axes, in meters.
+    pub fn ellipsoid(&self) -> (f64, f64) {
+        self.proj.ellipse_parameters()
     }
 
     pub fn to_meter(&self) -> f64 {

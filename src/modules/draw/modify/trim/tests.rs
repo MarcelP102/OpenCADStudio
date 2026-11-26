@@ -1967,7 +1967,7 @@ fn trim_circle_with_tangent_arcs_touching_at_endpoints() {
 }
 
 #[test]
-fn test_trim_circle_between_two_tangent_lines() {
+fn trim_circle_between_two_tangent_lines() {
     use document::entities::{Circle as CircleEnt, Line as LineEnt};
     let mut c = CircleEnt::new();
     c.common.handle = Handle::new(1);
@@ -2327,7 +2327,7 @@ fn trim_arc_selection_tracking_near_start_endpoint() {
 }
 
 #[test]
-fn test_tangent_circles_or_arcs_trim() {
+fn tangent_circles_or_arcs_trim() {
     use document::entities::{Arc as ArcEnt, Circle as CircleEnt};
     let mut c1 = CircleEnt::new();
     c1.common.handle = Handle::new(1);
@@ -2538,7 +2538,7 @@ fn test_tangent_circles_or_arcs_trim() {
 }
 
 #[test]
-fn test_skinny_ellipse_crossing_arc() {
+fn skinny_ellipse_crossing_arc() {
     use document::entities::{Arc as ArcEnt, Ellipse as EllipseEnt};
     let mut e = EllipseEnt::new();
     e.common.handle = Handle::new(100);
@@ -2601,7 +2601,7 @@ fn test_skinny_ellipse_crossing_arc() {
 }
 
 #[test]
-fn test_trim_line_tangent_to_arc() {
+fn trim_line_tangent_to_arc() {
     use document::entities::{Arc as ArcEnt, Line as LineEnt};
     let mut l1 = LineEnt::new();
     l1.common.handle = Handle::new(1);
@@ -2631,7 +2631,7 @@ fn test_trim_line_tangent_to_arc() {
 }
 
 #[test]
-fn test_trim_arc_tangent_to_two_lines() {
+fn trim_arc_tangent_to_two_lines() {
     use crate::command::{TangentObject, WorkingPlane};
     use crate::modules::draw::draw::arc::{solve_arc_3_inputs, ArcPick};
     use document::entities::{Arc as CadArc, Line as LineEnt};
@@ -2716,7 +2716,7 @@ fn test_trim_arc_tangent_to_two_lines() {
 }
 
 #[test]
-fn test_trim_arc_tangent_angled_lines() {
+fn trim_arc_tangent_angled_lines() {
     use crate::command::{TangentObject, WorkingPlane};
     use crate::modules::draw::draw::arc::{solve_arc_3_inputs, ArcPick};
     use document::entities::{Arc as CadArc, Line as LineEnt};
@@ -2810,7 +2810,7 @@ fn test_trim_arc_tangent_angled_lines() {
 }
 
 #[test]
-fn test_arc_tangent_line_precision_sweep() {
+fn arc_tangent_line_precision_sweep() {
     use crate::command::{TangentObject, WorkingPlane};
     use crate::modules::draw::draw::arc::{solve_arc_3_inputs, ArcPick};
     use document::entities::{Arc as CadArc, Line as LineEnt};
@@ -2899,4 +2899,112 @@ fn test_arc_tangent_line_precision_sweep() {
     }
     println!("Sweep results: failed_cuts={failed_cuts}, max_dist={max_dist:e}");
     assert_eq!(failed_cuts, 0, "No cuts should fail across angle sweep");
+}
+
+/// A fence that crosses one self-crossing polyline twice removes only the two
+/// pieces it touches: the crossing of the polyline with itself stays a cut
+/// after the first piece is gone (#3505).
+#[test]
+fn fence_keeps_the_self_crossing_cut_of_a_polyline() {
+    let mut poly = LwPolyline::new();
+    poly.common.handle = Handle::new(1);
+    poly.vertices = [(0.0, 0.0), (10.0, 10.0), (10.0, 0.0), (0.0, 10.0)]
+        .into_iter()
+        .map(|(x, y)| LwVertex::from_coords(x, y))
+        .collect();
+    let all = vec![EntityType::LwPolyline(poly)];
+    // Crosses the first segment at (2, 2) and the last one at (8, 2).
+    let fence = [[1.0, 3.0], [3.0, 1.0], [7.0, 1.0], [9.0, 3.0]];
+    let replacements = fence_pass(
+        &all,
+        &ModifyEntityIndex::build(&all),
+        &build_geos(&all),
+        &fence,
+        None,
+        false,
+    );
+    let (_, pieces) = replacements
+        .iter()
+        .find(|(handle, _)| *handle == Handle::new(1))
+        .expect("the polyline is trimmed");
+    assert_eq!(pieces.len(), 1, "{pieces:?}");
+    let EntityType::LwPolyline(kept) = &pieces[0] else {
+        panic!("expected a polyline piece, got {:?}", pieces[0]);
+    };
+    let ends = [kept.vertices[0].location, kept.vertices[kept.vertices.len() - 1].location];
+    let near = |p: document::types::Vector2, x: f64, y: f64| (p.x - x).abs() < 1e-6 && (p.y - y).abs() < 1e-6;
+    assert!(near(ends[0], 5.0, 5.0) && near(ends[1], 0.0, 10.0), "{ends:?}");
+}
+
+/// #3504: a TRIM preview marks only the removed part. On an arc sampled
+/// alike for the object and its kept pieces, the uncovered run is the middle
+/// third, reaching the cuts.
+#[test]
+fn trim_preview_marks_only_the_removed_part() {
+    let arc = |from: f32, to: f32, n: usize| -> Vec<[f32; 3]> {
+        (0..=n)
+            .map(|i| {
+                let a = from + (to - from) * i as f32 / n as f32;
+                [10.0 * a.cos(), 10.0 * a.sin(), 0.0]
+            })
+            .collect()
+    };
+    let whole = arc(0.0, 3.0, 60);
+    let first = arc(0.0, 1.0, 17);
+    let last = arc(2.0, 3.0, 23);
+    let runs = uncovered_runs(&whole, &[&first, &last]);
+    assert_eq!(runs.len(), 1);
+    let run = &runs[0];
+    let angle = |p: [f32; 3]| p[1].atan2(p[0]);
+    assert!((angle(run[0]) - 1.0).abs() < 0.06, "{}", angle(run[0]));
+    assert!((angle(*run.last().unwrap()) - 2.0).abs() < 0.06);
+    // Everything covered: nothing to mark; no cover: all of it.
+    assert!(uncovered_runs(&whole, &[&whole]).is_empty());
+    assert_eq!(uncovered_runs(&whole, &[]), vec![whole.clone()]);
+
+    let wires = vec![
+        WireModel::solid("trim_rm".into(), whole.clone(), TRIM_REMOVE_GRAY, false),
+        WireModel::solid("trim_keep_0".into(), first, WireModel::CYAN, false),
+        WireModel::solid("trim_keep_1".into(), last, WireModel::CYAN, false),
+    ];
+    let marked = trim_removed_only(wires);
+    assert_eq!(marked.len(), 1);
+    assert_eq!(marked[0].name, "trim_rm_0");
+}
+
+/// TRIM and EXTEND move a linear dimension's extension line on the picked
+/// side to the boundary the dimension line meets (#3434).
+#[test]
+fn trim_and_extend_move_a_linear_dimensions_extension_line() {
+    use document::entities::{Dimension, DimensionLinear};
+    let dimension = |second: f64| {
+        let mut d = DimensionLinear::horizontal(Vector3::ZERO, Vector3::new(second, 0.0, 0.0));
+        d.definition_point = Vector3::new(second, 3.0, 0.0);
+        d.base.common.handle = Handle::new(1);
+        EntityType::Dimension(Box::new(Dimension::Linear(d)))
+    };
+    let linear = |entity: &EntityType| match entity {
+        EntityType::Dimension(d) => match &**d {
+            Dimension::Linear(d) => d.clone(),
+            _ => panic!("expected a linear dimension"),
+        },
+        _ => panic!("expected a dimension"),
+    };
+
+    let all = vec![dimension(10.0), vertical_boundary(4.0, -5.0, 5.0, 2)];
+    let trimmed = pick_trim_at(&all, &build_geos(&all), Handle::new(1), 2.0, 3.0)
+        .expect("the dimension should trim to the boundary");
+    let d = linear(&trimmed[0]);
+    assert!((d.first_point.x - 4.0).abs() < 1e-9, "{:?}", d.first_point);
+    assert!((d.second_point.x - 10.0).abs() < 1e-9);
+    assert!((d.base.actual_measurement - 6.0).abs() < 1e-9);
+
+    let all = vec![dimension(4.0), vertical_boundary(7.0, -5.0, 5.0, 2)];
+    let extended = pick_extend_at(&all, &build_geos(&all), Handle::new(1), 3.5, 3.0)
+        .expect("the dimension should extend to the boundary");
+    let d = linear(&extended);
+    assert!((d.first_point.x).abs() < 1e-9);
+    assert!((d.second_point.x - 7.0).abs() < 1e-9, "{:?}", d.second_point);
+    assert!((d.definition_point.x - 7.0).abs() < 1e-9);
+    assert!((d.base.actual_measurement - 7.0).abs() < 1e-9);
 }

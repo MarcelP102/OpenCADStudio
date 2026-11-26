@@ -288,6 +288,8 @@ tool fires `ModuleEvent::Command("EX_FOO")`, which round-trips to
 `ModuleEvent::PluginFileDialog { command, title, filter_name, extensions }` lets a
 tool request a native file picker; on selection the host dispatches
 `"<command> <path>"` back with the path's original case preserved.
+`ModuleEvent::PluginFolderDialog { command, title }` (API v30) does the same with
+a folder picker.
 
 A leading `>` or the persistent literal-input toggle preserves both spaces
 and case. Automation and `ModuleEvent::PluginFileDialog` already preserve
@@ -342,6 +344,28 @@ as JSON text, or an `Err` message. See `docs/plugin-template/src/lib.rs`
   plugin's own `push_undo` calls join it.
 - Only plugins whose manifest declares v25 or newer are asked; older ones
   simply offer no tools.
+
+### More ribbon tabs and contextual tabs (API v31)
+
+`ribbon()` is the plugin's main tab. `ribbon_tabs()` returns more, each a
+`RibbonTab { module, contextual }`; the module's `id` must be unique within
+the plugin (the host names the tab `<plugin id>:<tab id>`), and all of them
+sit at the plugin's `ribbon_order`.
+
+A tab with `contextual: Some(ContextualTab { xdata_app, value_prefix })` is
+shown only while the selection holds an entity with an XDATA record of
+`xdata_app` whose string values include one starting with `value_prefix`
+(any record of the app when `None`). When such a tab appears it is brought
+forward; when the selection stops matching, the ribbon returns to the tab
+that was active before. Only plugins declaring v31 or newer are asked.
+
+### Translations
+
+The host starts every plugin runner with `OCS_LANGUAGE` set to its UI
+language (`de-DE`, `tr-TR`, ...); `ocs_plugin_api::host_language()` reads
+it. A plugin that ships its own `.ftl` files picks its labels from it when
+it builds its manifest, ribbon and dialogs. A language change reaches a
+plugin when it is next started.
 
 ### XDATA — domain persistence
 
@@ -531,6 +555,50 @@ hard-constrained drag direction), and `shape`. The declaration lifecycle:
   store walk into one frame per pass — the record-carrier twin of
   `entities_batch`. With dirty regions, a boundary pass is 2–3 frames
   instead of dozens.
+- **Categorized document delta (v27).** `DocumentChangedDelta`
+  (discriminant 15) is the exact categorized successor of
+  `DocumentChangedRegions`: the host routes it INSTEAD OF the Regions
+  notification, per plugin, to every endpoint whose manifest API is 27 or
+  newer — no endpoint receives a duplicate Regions + delta stream, and
+  legacy APIs keep the byte-identical Regions stream:
+  - `added` handles are absent before the boundary and present after;
+    `modified` handles are present on both sides whose relevant data
+    changed; `deleted` handles are present before, absent after — a deleted
+    handle STAYS in the list even though lookup now fails (the deletion
+    itself is the information).
+  - A same-handle replacement (erase + recreate reusing the handle) is
+    `modified`; a replacement through a new handle is
+    `deleted(old) + added(new)`.
+  - Repeated changes to one handle within ONE boundary fold into the net
+    classification via first-event start presence vs last-event end
+    presence: created-then-erased nets to nothing, erased-then-recreated
+    nets to `modified`. The lists are ascending and deduplicated.
+  - `records` preserves the v13 behavior: the same (entity, app-name)
+    XDATA/XRecord touch pairs the Regions notification carried.
+  - `full_refresh_required` is the honesty flag: `true` means the host
+    cannot prove the incremental sets are complete (journal gap, overflow,
+    or an unattributable whole-document mutation) and the plugin MUST
+    resynchronize the whole document; `false` with all lists empty is an
+    EXACT "nothing relevant changed" — distinct from the legacy
+    empty-set-unknown of `DocumentChangedRegions`.
+  - `snapshot` (`DocumentDeltaSnapshot { version, generation }`) correlates
+    the boundary with the tab's V4 snapshot store: `version` matches the
+    `DocumentChangedV4` notification's version for the same boundary;
+    `generation` increments when the backing file mapping is replaced
+    (resize/reopen) — versions from different generations are never
+    comparable, so a plugin seeing a foreign generation re-fetches the
+    store path and re-opens. `snapshot: None` = no V4 store open for the
+    tab (legitimate, not a failure).
+  - Coverage is central-journal based, so every boundary is captured the
+    same way: built-in commands, direct editing and grips, multi-entity
+    operations, undo/redo (resulting-state semantics — the folded lists
+    reflect the state after the whole boundary), and plugin HostApi
+    operations.
+  - Multi-document: per-tab state is keyed by stable tab ids (never UI
+    array indices). Every delta carries the `tab_id`; a wholesale document
+    replacement rides `DocumentOpened` plus a full-refresh delta
+    (`full_refresh_required=true`); `DocumentTabClosed` is the final
+    notification for a tab — deltas queued for a closing tab die with it.
 
 **MCP parity.** Plugin-declared grips appear in the automation `grips` read
 (each entry marked with its owning `plugin`), and `grip_drag` takes a `plugin`
@@ -837,7 +905,7 @@ Which surface carries what:
 | Entity XDATA | `xdata_get` / `xdata_set` | `read_record` / `write_record` / `remove_record` |
 | NOD XRecords | — | `create/read/update/delete/list_xrecord` + the v13 batches |
 | Bulk data | `batch` (batched **ops**) | `entities_batch`, record batches (batched **data**) |
-| Notifications | `events` (the session journal) | `on_notification` (`DocumentChanged`, `DocumentChangedRegions`, …) |
+| Notifications | `events` (the session journal) | `on_notification` (`DocumentChanged`, `DocumentChangedRegions`, v27 upgrades it to `DocumentChangedDelta`, …) |
 | Viewport automation | `click`, `pointer`, `getpoint`, `user_select`, `view_focus`, `capture` | — (a plugin's grip events are its gestures) |
 | Reference-only designation | — | `set_reference_only` |
 | Parametric chain staging / sampling (v14) | — (`query` reads the staged entities) | `stage_parametric_chain` / `sample_parametric` |

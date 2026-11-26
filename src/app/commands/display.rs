@@ -1179,6 +1179,11 @@ impl OpenCADStudio {
             "PRINTALL" | "PUBLISH" => {
                 return Some(Task::done(Message::PrintAllOpen));
             }
+            // A sheet list PUBLISH's step between two drawings.
+            #[cfg(not(target_arch = "wasm32"))]
+            crate::app::sheet_publish::NEXT_STEP => {
+                return Some(self.sheet_publish_step());
+            }
             // PRINTERS — what the system reports about printing, on the
             // command line: the default printer, every printer it lists (or
             // why it could not), and how a plot will reach them. The report
@@ -1259,6 +1264,13 @@ impl OpenCADStudio {
                     .split_once(char::is_whitespace)
                     .map(|(_, rest)| rest.trim())
                     .unwrap_or("");
+                // PUBLISH <list.dsd>: the sheets of a sheet list, from every
+                // drawing it names.
+                #[cfg(not(target_arch = "wasm32"))]
+                if crate::io::dsd::is_sheet_list_path(rest) {
+                    let path = std::path::PathBuf::from(rest.trim_matches('"'));
+                    return Some(self.start_sheet_publish(&path));
+                }
                 let (path_text, sheet_text) = if let Some(stripped) = rest.strip_prefix('"') {
                     match stripped.split_once('"') {
                         Some((path, tail)) => (path, tail.trim()),
@@ -1373,6 +1385,7 @@ impl OpenCADStudio {
             }
             "EXPORTPDF" => {
                 self.plot_dialog.file_svg = false;
+                self.plot_dialog.file_dwf = false;
                 return Some(Task::done(Message::PlotExport));
             }
             // EXPORTDWF <file.dwf> [ALL] — the direct form of EXPORTPDF,
@@ -1417,6 +1430,7 @@ impl OpenCADStudio {
             "EXPORTSVG" => {
                 self.plot_dialog.to_file = true;
                 self.plot_dialog.file_svg = true;
+                self.plot_dialog.file_dwf = false;
                 return Some(Task::done(Message::PlotExport));
             }
             // PLOTSTYLE — load or clear CTB/STB plot style table
@@ -2224,6 +2238,7 @@ impl OpenCADStudio {
             //   SCALELISTEDIT              prompt (Add / Delete)
             //   SCALELISTEDIT LIST         every scale with ratio and in-use count
             //   SCALELISTEDIT ADD 1:50     add (name is a paper:drawing ratio)
+            //   SCALELISTEDIT ADD Site 1:50  add under a name of its own
             //   SCALELISTEDIT DELETE 1:50  remove (not current and not in use)
             //   SCALELISTEDIT DELETE FORCE 1:50  remove and drop its contexts
             "SCALELISTEDIT" | "-SCALELISTEDIT" => {
@@ -2257,29 +2272,41 @@ impl OpenCADStudio {
                 let sub = parts.next().unwrap_or("").to_uppercase();
                 let arg = parts.next().unwrap_or("").trim();
                 match sub.as_str() {
-                    "ADD" => match arg.split_once(':') {
-                        Some((p, d)) => match (p.trim().parse::<f64>(), d.trim().parse::<f64>()) {
-                            (Ok(paper), Ok(drawing)) if paper > 0.0 && drawing > 0.0 => {
-                                self.push_undo_snapshot(i, "SCALELISTEDIT");
-                                if self.tabs[i].scene.add_scale(arg, paper, drawing) {
-                                    self.tabs[i].dirty = true;
-                                    self.command_line.push_output(
-                                        crate::tf!("Added annotation scale {arg}.").as_ref(),
-                                    );
-                                } else {
-                                    self.command_line.push_info(
-                                        crate::tf!("Scale {arg} already exists.").as_ref(),
-                                    );
+                    "ADD" => {
+                        // The ratio is the last word; words before it name
+                        // the scale. A ratio alone names the scale itself.
+                        let (arg, ratio) = match arg.rsplit_once(char::is_whitespace) {
+                            Some((name, ratio)) => (name.trim(), ratio),
+                            None => (arg, arg),
+                        };
+                        match ratio.split_once(':') {
+                            Some((p, d)) => {
+                                match (p.trim().parse::<f64>(), d.trim().parse::<f64>()) {
+                                    (Ok(paper), Ok(drawing)) if paper > 0.0 && drawing > 0.0 => {
+                                        self.push_undo_snapshot(i, "SCALELISTEDIT");
+                                        if self.tabs[i].scene.add_scale(arg, paper, drawing) {
+                                            self.tabs[i].dirty = true;
+                                            self.command_line.push_output(
+                                                crate::tf!("Added annotation scale {arg}.")
+                                                    .as_ref(),
+                                            );
+                                        } else {
+                                            self.command_line.push_info(
+                                                crate::tf!("Scale {arg} already exists.").as_ref(),
+                                            );
+                                        }
+                                    }
+                                    _ => self.command_line.push_error(
+                                        crate::t!("SCALELISTEDIT ADD: use a ratio like 1:50.")
+                                            .as_ref(),
+                                    ),
                                 }
                             }
-                            _ => self.command_line.push_error(
+                            None => self.command_line.push_error(
                                 crate::t!("SCALELISTEDIT ADD: use a ratio like 1:50.").as_ref(),
                             ),
-                        },
-                        None => self.command_line.push_error(
-                            crate::t!("SCALELISTEDIT ADD: use a ratio like 1:50.").as_ref(),
-                        ),
-                    },
+                        }
+                    }
                     "DELETE" | "REMOVE" => {
                         let current = self.tabs[i]
                             .scene
@@ -2643,6 +2670,133 @@ impl OpenCADStudio {
             }
 
             "ULAYERS" => self.open_underlay_layers_dialog(i),
+            crate::ui::points_menu::OPEN_COMMAND => self.points_menu.open = !self.points_menu.open,
+            "CREATEPOINTGROUP" => self.open_point_group_window(),
+            "CREATEPOINTSFROMCORRIDOR" => self.start_corridor_points(),
+            cmd if cmd.starts_with(crate::modules::civil::point_pick::CORRIDOR_PICKED) => {
+                if let Ok(h) = u64::from_str_radix(cmd[crate::modules::civil::point_pick::CORRIDOR_PICKED.len()..].trim(), 16) {
+                    self.open_corridor_points(document::Handle::new(h));
+                }
+            }
+            cmd if cmd.starts_with(crate::modules::civil::point_pick::CORRIDOR_RANGE_PICKED) => {
+                self.corridor_range_picked(&cmd[crate::modules::civil::point_pick::CORRIDOR_RANGE_PICKED.len()..]);
+            }
+            "CREATEBLOCKSFROMPOINTS" => self.open_point_blocks(),
+            cmd if cmd.starts_with(crate::modules::civil::point_pick::WINDOW_PICKED) => {
+                self.point_blocks_window(&cmd[crate::modules::civil::point_pick::WINDOW_PICKED.len()..]);
+            }
+            "REPLACELEGACYPOINTBLOCKS" => self.start_legacy_points(),
+            super::point_tools::LEGACY_GATHERED => self.legacy_points_gathered(),
+            "CONVERTCADPOINTS" => {
+                let c = crate::modules::civil::point_convert::selection();
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            crate::modules::civil::point_convert::GATHERED => {
+                let points: Vec<(document::Handle, glam::DVec3)> = self.tabs[i]
+                    .scene
+                    .selected_entities()
+                    .into_iter()
+                    .filter_map(|(h, e)| match e {
+                        document::EntityType::Point(p) => Some((h, glam::DVec3::new(p.location.x, p.location.y, p.location.z))),
+                        _ => None,
+                    })
+                    .collect();
+                self.tabs[i].scene.deselect_all();
+                self.refresh_properties();
+                self.refresh_selected_grips();
+                // Enter on nothing ends the command.
+                if !points.is_empty() {
+                    let c = crate::modules::civil::point_convert::DescribePointsCommand::new(points);
+                    self.command_line.push_info(&c.prompt());
+                    self.tabs[i].active_cmd = Some(Box::new(c));
+                }
+            }
+            super::point_tools::PICK_INCLUDE => self.point_group_picked(false),
+            super::point_tools::PICK_EXCLUDE => self.point_group_picked(true),
+            "CREATEPOINTMANUAL" | "CREATEPOINTNORTHINGEASTING" | "CREATEPOINTBEARING" | "CREATEPOINTAZIMUTH" | "CREATEPOINTANGLE" | "CREATEPOINTDEFLECTION" => {
+                use crate::modules::civil::point_manual::{CreatePointManualCommand, Mode};
+                let mode = match cmd {
+                    "CREATEPOINTNORTHINGEASTING" => Mode::NorthingEasting,
+                    "CREATEPOINTBEARING" => Mode::Bearing,
+                    "CREATEPOINTAZIMUTH" => Mode::Azimuth,
+                    "CREATEPOINTANGLE" => Mode::Angle,
+                    "CREATEPOINTDEFLECTION" => Mode::Deflection,
+                    _ => Mode::Manual,
+                };
+                let c = CreatePointManualCommand::with_mode(mode);
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            // Needs the drawing's coordinate system (refused without one).
+            "CREATEPTGEODETICDIR" => match crate::io::crs::document_crs(&self.tabs[i].scene.document) {
+                Ok(Some(crs)) if !crs.is_geographic() => {
+                    let c = crate::modules::civil::point_geodetic::GeodeticDirectCommand::new(crs);
+                    self.command_line.push_info(&c.prompt());
+                    self.tabs[i].active_cmd = Some(Box::new(c));
+                }
+                _ => self.command_line.push_error(&crate::t!("Coordinate transformations must be enabled for this command.")),
+            },
+            cmd if crate::modules::civil::point_object::Kind::of(cmd).is_some() => {
+                let kind = crate::modules::civil::point_object::Kind::of(cmd).unwrap();
+                let c = crate::modules::civil::point_object::ObjectPointCommand::new(kind);
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            // Import from File reads the station/offset file first.
+            "CREATEPOINTIMPORTFROMFILE" => {
+                return Some(Task::perform(
+                    async {
+                        let handle = crate::sys::file_dialog()
+                            .set_title(crate::t!("Import Alignment Station and Offset File").as_ref())
+                            .add_filter(crate::t!("Text/Template/Extract File (*.txt)").as_ref(), &["txt"])
+                            .pick_file()
+                            .await?;
+                        Some(String::from_utf8_lossy(&handle.read().await).into_owned())
+                    },
+                    Message::AlignmentPointFilePicked,
+                ));
+            }
+            cmd if crate::modules::civil::point_slope::Kind::of(cmd).is_some() => {
+                let kind = crate::modules::civil::point_slope::Kind::of(cmd).unwrap();
+                let c = crate::modules::civil::point_slope::SlopePointCommand::new(kind, &self.tabs[i].scene.document);
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            cmd if crate::modules::civil::point_surface::Kind::of(cmd).is_some() => {
+                let kind = crate::modules::civil::point_surface::Kind::of(cmd).unwrap();
+                let c = crate::modules::civil::point_surface::SurfacePointCommand::new(kind, &self.tabs[i].scene.document);
+                if let Some(line) = c.intro() {
+                    self.command_line.push_output(&line);
+                }
+                if c.ends_at_once() {
+                    return Some(Task::none());
+                }
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            cmd if crate::modules::civil::point_alignment::Kind::of(cmd).is_some() => {
+                let kind = crate::modules::civil::point_alignment::Kind::of(cmd).unwrap();
+                let c = crate::modules::civil::point_alignment::AlignmentPointCommand::new(kind);
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            cmd if crate::modules::civil::point_interp::Kind::of(cmd).is_some() => {
+                let kind = crate::modules::civil::point_interp::Kind::of(cmd).unwrap();
+                let c = crate::modules::civil::point_interp::InterpolatePointCommand::new(kind, &self.tabs[i].scene.document);
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            cmd if crate::modules::civil::point_intersect::Kind::of(cmd).is_some() => {
+                let kind = crate::modules::civil::point_intersect::Kind::of(cmd).unwrap();
+                let c = crate::modules::civil::point_intersect::IntersectionPointCommand::new(kind);
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            cmd if crate::ui::points_menu::is_pending(cmd) => {
+                self.command_line
+                    .push_info(crate::tf!("{cmd}: not yet implemented.").as_ref());
+            }
             "RECAP" | "SYNCPVIEWPORTS" => {
                 self.command_line
                     .push_info(crate::tf!("{cmd}: not yet implemented.").as_ref());

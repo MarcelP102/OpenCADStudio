@@ -1,5 +1,9 @@
 use super::*;
 
+/// How many new entities a patch looks at to tell whether it has to decline,
+/// before it stops asking and goes on.
+const DECLINE_PROBES: usize = 4;
+
 impl Scene {
     /// Unified static-hold wire builder — the ONE tessellation path every
     /// space renders through (Model tiles, BEDIT, the paper sheet block, and
@@ -221,6 +225,8 @@ impl Scene {
         self.last_tess_ms
             .set(t_tess.elapsed().as_secs_f32() * 1000.0);
         self.last_tess_wires.set(wires.len());
+        self.resident_full_builds
+            .set(self.resident_full_builds.get() + 1);
         let arc = Arc::new(wires);
         // The memo keeps one copy of what this set holds; read before the
         // previous set is evicted below, which may hold runs it still needs.
@@ -259,7 +265,8 @@ impl Scene {
             0
         } else {
             self.paper_viewport_handles().2.len()
-        };
+        }
+        .max(self.transient_prune_floor.get());
         let cur_epoch = self.geometry_epoch;
         let mut sets = self.resident_wire_sets.borrow_mut();
         let evicted = sets.insert(
@@ -689,6 +696,103 @@ impl Scene {
             == tess_memo_guard(None, anno, annotation_scale_handle, all_visible, bg, avp)
             && self.resident_tess_atlas.get() == crate::scene::text::sdf_atlas::generation()
             && self.resident_tess_complex_lt.get() == self.viewport_complex_lt_guard();
+        let tessellate = {
+            let document = &self.document;
+            let selection = &empty_sel;
+            let block_cache: &cache::block_cache::BlockCache = &blk;
+            let viewport_lt = self.viewport_lt_for(anno_scale_override);
+            let reference_only = self.reference_only.handles();
+            move |e: &EntityType| {
+                tessellate_entity(
+                    document,
+                    selection,
+                    avp,
+                    bg,
+                    anno,
+                    annotation_scale_handle,
+                    e,
+                    Some(block_cache),
+                    None,
+                    None,
+                    viewport_lt,
+                    reference_only,
+                )
+            }
+        };
+        // A new run can only go in at the tail (see the placement below). A
+        // new entity that the order update below will list before a run this
+        // patch leaves alone therefore declines the patch, unless it is
+        // hidden or draws nothing. One such entity is enough to tell, before
+        // every changed entity is looked up and tessellated for a patch that
+        // will not go in: undoing an erase the set had since been built again
+        // without spent 0.6 s on 100,000 of them, and the full build then
+        // tessellated them again.
+        {
+            let has_run = |handle: &Handle| {
+                layout.ranges.contains_key(handle) || layout.vacant.contains_key(handle)
+            };
+            let is_new = |&(handle, kind): &(Handle, ChangeKind)| {
+                !matches!(kind, ChangeKind::Removed) && !has_run(&handle)
+            };
+            if deltas.iter().any(is_new) {
+                let changed: HashSet<Handle> = deltas.iter().map(|&(handle, _)| handle).collect();
+                let cache = self.sort_cache.borrow();
+                let sort_map = cache.as_ref().and_then(|(_, index)| index.get(&block));
+                let effective = |handle: Handle| {
+                    sort_map
+                        .and_then(|map| map.get(&handle.value()))
+                        .copied()
+                        .unwrap_or(handle.value())
+                };
+                // The last run in the order that the patch leaves alone.
+                let kept = layout.order.iter().rposition(|handle| {
+                    !changed.contains(handle) && layout.ranges.contains_key(handle)
+                });
+                if let Some(kept) = kept {
+                    let kept_key = effective(layout.order[kept]);
+                    let mut probes = 0;
+                    for &(handle, _) in deltas.iter().filter(|delta| is_new(delta)) {
+                        // The usual add: a key after every listed one.
+                        let key = effective(handle);
+                        if key >= kept_key {
+                            continue;
+                        }
+                        let place = layout
+                            .order
+                            .partition_point(|&existing| effective(existing) <= key);
+                        if place > kept {
+                            continue;
+                        }
+                        if probes == DECLINE_PROBES {
+                            break;
+                        }
+                        probes += 1;
+                        // One the order already lists stands where it is, and
+                        // is left to the placement.
+                        if layout.order.contains(&handle) {
+                            continue;
+                        }
+                        let Some(entity) = self.document.get_entity(handle) else {
+                            continue;
+                        };
+                        if !self.resident_entity_visible(
+                            entity,
+                            block,
+                            frozen_layers,
+                            annotation_scale_handle,
+                            all_visible,
+                        ) {
+                            continue;
+                        }
+                        self.resident_patch_tessellated
+                            .set(self.resident_patch_tessellated.get() + 1);
+                        if !tessellate(entity).is_empty() {
+                            return declined("new-run-not-at-the-tail");
+                        }
+                    }
+                }
+            }
+        }
         // References to a block re-expanded after its definition changed
         // share one prototype: the first one comes back with the full run
         // and the others as a stub of it. Longest runs first gives the full
@@ -767,32 +871,10 @@ impl Scene {
         // references at once: tessellate on all cores, as the full build does.
         let tessellated: Vec<(Handle, Vec<WireModel>)> = {
             use crate::par::prelude::*;
-            let document = &self.document;
-            let selection = &empty_sel;
-            let block_cache: &cache::block_cache::BlockCache = &blk;
-            let viewport_lt = self.viewport_lt_for(anno_scale_override);
-            let reference_only = self.reference_only.handles();
+            let tessellate = &tessellate;
             groups
                 .par_iter()
-                .flat_map_iter(move |group| {
-                    group.iter().map(move |&(h, e)| {
-                        let wires = tessellate_entity(
-                            document,
-                            selection,
-                            avp,
-                            bg,
-                            anno,
-                            annotation_scale_handle,
-                            e,
-                            Some(block_cache),
-                            None,
-                            None,
-                            viewport_lt,
-                            reference_only,
-                        );
-                        (h, wires)
-                    })
-                })
+                .flat_map_iter(move |group| group.iter().map(move |&(h, e)| (h, tessellate(e))))
                 .collect()
         };
         for (h, mut raw) in tessellated {
@@ -818,6 +900,8 @@ impl Scene {
             new_runs.insert(h, faded);
         }
         let tessellated = memo_updates.len();
+        self.resident_patch_tessellated
+            .set(self.resident_patch_tessellated.get() + tessellated as u64);
         {
             let mut memo = self.resident_tess_memo.borrow_mut();
             for (h, run) in memo_updates {
@@ -890,19 +974,28 @@ impl Scene {
                 "every run in the resident set is listed in its order"
             );
             let listed = |handle: &Handle| has_run(handle) || ordered.contains(handle);
-            for &(handle, kind) in &deltas {
-                if matches!(kind, ChangeKind::Removed) {
-                    // Keep the order entry as a tombstone. Undo/Redo can then
-                    // restore the exact physical slot and submission position.
-                    continue;
-                }
-                if visible_changed.contains(&handle) && !listed(&handle) {
-                    let key = effective(handle);
-                    let position = layout
-                        .order
-                        .partition_point(|&existing| effective(existing) <= key);
-                    layout.order.insert(position, handle);
-                }
+            // A removed entity keeps its order entry as a tombstone. Undo/Redo
+            // can then restore the exact physical slot and submission position.
+            //
+            // The journal gives the changes in no order. Lowest key first, each
+            // new entity goes in behind the ones before it: at the end of the
+            // list for the usual add, with nothing to move. In the journal's
+            // order a copy of many entities moved the others for each one.
+            let mut unlisted: Vec<(u64, Handle)> = deltas
+                .iter()
+                .filter(|&&(handle, kind)| {
+                    !matches!(kind, ChangeKind::Removed)
+                        && visible_changed.contains(&handle)
+                        && !listed(&handle)
+                })
+                .map(|&(handle, _)| (effective(handle), handle))
+                .collect();
+            unlisted.sort_unstable_by_key(|&(key, handle)| (key, handle.value()));
+            for (key, handle) in unlisted {
+                let position = layout
+                    .order
+                    .partition_point(|&existing| effective(existing) <= key);
+                layout.order.insert(position, handle);
             }
         }
 
@@ -921,7 +1014,66 @@ impl Scene {
         };
         let mut gpu_runs: HashMap<Handle, Arc<Vec<WireModel>>> = HashMap::default();
         let mut index_edits = Vec::new();
-        for &(handle, kind) in &deltas {
+        // A new run can only go in at the tail, so the new entities are placed
+        // last and in the order of the list: each one then goes in behind the
+        // one before it. In the journal's order, which is no order, the second
+        // of two new entities could come first, leave the other with a run
+        // after its place, and send the whole set to a full build.
+        let is_new = |handle: &Handle, kind: ChangeKind| {
+            !matches!(kind, ChangeKind::Removed)
+                && !layout.ranges.contains_key(handle)
+                && !layout.vacant.contains_key(handle)
+        };
+        let new_handles: HashSet<Handle> = deltas
+            .iter()
+            .filter(|&&(handle, kind)| is_new(&handle, kind))
+            .map(|&(handle, _)| handle)
+            .collect();
+        let mut placement: Vec<(Handle, ChangeKind)> = deltas
+            .iter()
+            .copied()
+            .filter(|(handle, _)| !new_handles.contains(handle))
+            .collect();
+        let known = placement.len();
+        {
+            let mut new_in_order: Vec<(usize, Handle, ChangeKind)> = Vec::new();
+            if !new_handles.is_empty() {
+                let kinds: HashMap<Handle, ChangeKind> = deltas.iter().copied().collect();
+                for (index, handle) in layout.order.iter().enumerate() {
+                    if new_handles.contains(handle) {
+                        new_in_order.push((index, *handle, kinds[handle]));
+                    }
+                }
+            }
+            // One that the list does not hold is placed with the known ones,
+            // where it declines the patch as it did.
+            let found: HashSet<Handle> =
+                new_in_order.iter().map(|&(_, handle, _)| handle).collect();
+            let missing: Vec<(Handle, ChangeKind)> = deltas
+                .iter()
+                .copied()
+                .filter(|(handle, _)| new_handles.contains(handle) && !found.contains(handle))
+                .collect();
+            placement.extend(missing);
+            placement.extend(new_in_order.iter().map(|&(_, handle, kind)| (handle, kind)));
+        }
+        // For each new entity, where the next run after its place starts, or
+        // `None` at the tail. Read when the first new entity is placed: the
+        // known entities are all placed by then.
+        let mut next_run_start: Option<HashMap<Handle, Option<usize>>> = None;
+        for (placed, &(handle, kind)) in placement.iter().enumerate() {
+            if placed >= known && next_run_start.is_none() {
+                let mut after = None;
+                let mut starts = HashMap::default();
+                for listed in layout.order.iter().rev() {
+                    if new_handles.contains(listed) {
+                        starts.insert(*listed, after);
+                    } else if let Some(range) = layout.ranges.get(listed) {
+                        after = Some(range.0);
+                    }
+                }
+                next_run_start = Some(starts);
+            }
             let new_run = if matches!(kind, ChangeKind::Removed) {
                 Vec::new()
             } else {
@@ -1056,10 +1208,9 @@ impl Scene {
             // A genuinely new handle must append after all live entity runs.
             // Monotonic document handles make this the ordinary Add path. A
             // middle insertion (custom sort key) falls back to a full rebuild.
-            let order_index = layout.order.iter().position(|&h| h == handle)?;
-            let insertion = layout.order[order_index + 1..]
-                .iter()
-                .find_map(|next| layout.ranges.get(next).map(|range| range.0))
+            let insertion = next_run_start
+                .as_ref()
+                .and_then(|starts| starts.get(&handle))?
                 .unwrap_or(layout.marker_start);
             if insertion != layout.marker_start {
                 return declined("new-run-not-at-the-tail");
@@ -1170,7 +1321,8 @@ impl Scene {
             0
         } else {
             self.paper_viewport_handles().2.len()
-        };
+        }
+        .max(self.transient_prune_floor.get());
         let mut sets = self.resident_wire_sets.borrow_mut();
         sets.insert(
             key,
@@ -1203,5 +1355,30 @@ impl Scene {
             );
         }
         Some(arc)
+    }
+}
+
+/// The work that the display did, for the work count tests.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DisplayWork {
+    /// Resident sets assembled whole.
+    pub full_builds: u64,
+    /// Resident sets brought up to date by a patch.
+    pub patches: u64,
+    /// Tessellation contexts resolved on this thread (a scan of the
+    /// drawing's objects each).
+    pub contexts: u64,
+}
+
+#[cfg(test)]
+impl Scene {
+    /// The counters now. Subtract two readings for the work of a step.
+    pub(crate) fn display_work(&self) -> DisplayWork {
+        DisplayWork {
+            full_builds: self.resident_full_builds.get(),
+            patches: self.resident_patch_hits.get(),
+            contexts: TESSELLATION_CONTEXTS.with(|count| count.get()) as u64,
+        }
     }
 }

@@ -280,7 +280,6 @@ impl Scene {
 
     /// Batch-add several entities, publishing geometry changes once at the end.
     /// This is the fast path used by plugin `add_entities` requests.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn add_entities(&mut self, entities: Vec<EntityType>) -> Vec<Handle> {
         let mut handles = Vec::with_capacity(entities.len());
         let mut changes = Vec::with_capacity(entities.len());
@@ -586,6 +585,26 @@ impl Scene {
         } else {
             self.document.add_entity(entity).unwrap_or(Handle::NULL)
         };
+        // Delta-undo: the new handle's before-image is "nothing" (it did not
+        // exist). Poison the recording if this add also mutated non-entity
+        // state (a new layer, application ID, or block). This is the first
+        // step after the document has the entity: a panic in a later step
+        // (the display models, the material) then leaves an entity that the
+        // undo history can take back.
+        if !handle.is_null() && self.is_recording_undo() {
+            self.record_undo_before(handle, None);
+            if creates_layer
+                || creates_app_id
+                || mutates_block_structure
+                || creates_section_structure
+            {
+                self.poison_undo_recording();
+            }
+        }
+        #[cfg(test)]
+        if super::TEST_PANIC_AFTER_DOCUMENT_ADD.with(|point| point.replace(false)) {
+            panic!("test panic after the document add");
+        }
 
         if !handle.is_null() {
             Self::adopt_attributes(&mut self.document, handle);
@@ -628,19 +647,6 @@ impl Scene {
                     );
                 }
                 self.meshes.insert(handle, model);
-            }
-            // Delta-undo: the new handle's before-image is "nothing" (it did not
-            // exist). Poison the recording if this add also mutated non-entity
-            // state (a new layer, application ID, or block).
-            if self.is_recording_undo() {
-                self.record_undo_before(handle, None);
-                if creates_layer
-                    || creates_app_id
-                    || mutates_block_structure
-                    || creates_section_structure
-                {
-                    self.poison_undo_recording();
-                }
             }
             if bump {
                 if affects_blocks {
@@ -1250,15 +1256,18 @@ impl Scene {
     /// would advertise a block nobody made. Sorted by name, ignoring case,
     /// as the block lists show them.
     pub fn custom_block_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self
-            .document
+        let mut names: Vec<String> = self.placeable_block_names().map(str::to_string).collect();
+        names.sort_by_cached_key(|name| name.to_lowercase());
+        names
+    }
+
+    /// The names of [`Self::custom_block_names`], unsorted and not copied.
+    pub fn placeable_block_names(&self) -> impl Iterator<Item = &str> {
+        self.document
             .block_records
             .iter()
             .filter(|br| !br.is_standard() && !br.is_layout() && !br.is_anonymous())
-            .map(|br| br.name.clone())
-            .collect();
-        names.sort_by_cached_key(|name| name.to_lowercase());
-        names
+            .map(|br| br.name.as_str())
     }
 
     pub fn create_block_from_entities(
@@ -3197,7 +3206,8 @@ impl Scene {
         // (bit 4), and any loop one level in — a selected island of island
         // the reference flags 0 is not filled, while a first island flagged
         // 0 by another writer still cuts its hole — Outer those flagged
-        // external or outermost, Ignore only
+        // external or outermost, and a first island flagged 0 too (the
+        // hole a band such as a bent bar's outline leaves, #3503), Ignore only
         // those flagged external. A counter stored as an external loop is a
         // hole even with Ignore. When no loop carries the flag the style
         // needs, nesting depth picks them instead.
@@ -3229,7 +3239,11 @@ impl Scene {
         {
             let keep = if by_flags {
                 style_keeps(path)
-                    || (dxf.style == document::entities::HatchStyleType::Normal && depth <= 1)
+                    || (matches!(
+                        dxf.style,
+                        document::entities::HatchStyleType::Normal
+                            | document::entities::HatchStyleType::Outer
+                    ) && depth <= 1)
             } else {
                 match dxf.style {
                     document::entities::HatchStyleType::Normal => true,
@@ -3686,9 +3700,9 @@ impl Scene {
         }
     }
 
-    /// A PDF underlay's image for a plot, drawn at print resolution, and an
-    /// OLE picture's at its own size, not the view's; `None` for anything
-    /// else, which plots as it is shown.
+    /// A PDF underlay's image for a plot, drawn at print resolution, a DWF
+    /// underlay's whole, and an OLE picture's at its own size, not the
+    /// view's; `None` for anything else, which plots as it is shown.
     pub(super) fn print_underlay_image(
         &self,
         entity: &document::entities::EntityType,
@@ -3720,7 +3734,7 @@ impl Scene {
         else {
             return None;
         };
-        if def.underlay_type != document::entities::UnderlayType::Pdf {
+        if def.underlay_type == document::entities::UnderlayType::Dgn {
             return None;
         }
         let owner = u.common.owner_handle;
@@ -4977,6 +4991,31 @@ mod hatch_single_loop_depth_tests {
             let (_, fill_mesh) = model.fill_mesh();
             assert!(!fill_mesh.is_empty(), "{style:?}: fill mesh is built");
         }
+    }
+
+    /// An Outer hatch whose island is stored without flags, as the band of
+    /// a bent bar is (#3503): the island still cuts its hole.
+    #[test]
+    fn an_unflagged_first_island_cuts_its_hole_in_an_outer_hatch() {
+        let mut hatch = single_loop_hatch(HatchStyleType::Outer, true);
+        let mut island = BoundaryPath::new();
+        island.add_edge(BoundaryEdge::Polyline(PolylineEdge::new(
+            vec![
+                Vector2::new(2.0, 2.0),
+                Vector2::new(8.0, 2.0),
+                Vector2::new(8.0, 8.0),
+                Vector2::new(2.0, 8.0),
+            ],
+            true,
+        )));
+        hatch.paths.push(island);
+        let model = Scene::hatch_model_from_dxf(&hatch, [1.0, 1.0, 1.0, 1.0])
+            .expect("the hatch renders");
+        let exterior = model
+            .boundary_exterior
+            .as_ref()
+            .expect("loop exterior flags stored");
+        assert_eq!(exterior.as_ref(), &[true, false], "the island is kept as a hole");
     }
 
     #[test]

@@ -114,11 +114,13 @@ impl OpenCADStudio {
             navigation_style: self.navigation_style,
             dynamic_ucs: self.dynamic_ucs,
             touchpad_pan: self.touchpad_pan,
+            keypad_decimal_point: crate::app::view::keypad_decimal_point(),
             ui_scale_percent: self.ui_scale_percent,
             zoom_factor: self.zoom_factor,
             cursor_size: self.cursor_size,
             pick_box: self.pick_box,
             aperture: self.snapper.osnap_radius_px,
+            autosnap_magnet: self.autosnap_magnet,
             hatch_associative: self.hatch_associative,
             hatch_gap_tolerance: self.hatch_gap_tolerance,
             hatch_start_method: self.hatch_prefs.method,
@@ -174,6 +176,7 @@ impl OpenCADStudio {
             annotation_scale_prompt: crate::app::commands::annotation_scale_prompt(),
             hyperlink_options: crate::app::commands::hyperlink_options(),
             xref_fade: crate::scene::cache::block_cache::xref_fade_ctl(),
+            layer_lock_fade: crate::scene::cache::block_cache::layer_lock_fade_ctl(),
             file_dia: crate::sys::file_dia(),
             ole_hide: crate::entities::ole2frame::hide_mode(),
             ole_quality: crate::app::commands::ole_quality(),
@@ -207,6 +210,7 @@ impl OpenCADStudio {
             ucs_ortho: crate::modules::view::view_cmd::ucs_ortho(),
             ucs_view: crate::modules::view::view_cmd::ucs_view(),
             layout_create_viewport: crate::scene::layout_create_viewport(),
+            pick_locked: crate::scene::pick_locked(),
             pdf_shx_text: crate::modules::insert::pdf_shx_text::settings(),
             dgn_import: crate::modules::insert::dgn_import::settings(),
             ncopy_bind: self.ncopy_bind,
@@ -232,7 +236,6 @@ impl OpenCADStudio {
                 v
             },
             plugin_repos: self.plugin_repos.clone(),
-            literal_spaces: self.command_line.literal_spaces,
             command_history_height: self.command_line.history_height,
             osmode: crate::app::settings::osmode_from_snaps(
                 self.snapper.enabled.iter(),
@@ -288,6 +291,15 @@ impl OpenCADStudio {
             block_favorites: self.block_palette.favorites.clone(),
             block_libraries: self.block_palette.libraries.clone(),
             block_palette_view: self.block_palette.view as u8,
+            block_palette_tab: self.block_palette.tab.index(),
+            block_library_folder: self
+                .block_palette
+                .library_dir
+                .as_ref()
+                .filter(|dir| dir.is_dir())
+                .or(self.block_palette.library_resume.as_ref())
+                .map(|dir| dir.display().to_string())
+                .unwrap_or_default(),
             block_insert: self.block_palette.options.clone(),
             block_mru_list: self.block_mru_list,
             block_redefine_mode: self.block_redefine_mode,
@@ -318,6 +330,7 @@ impl OpenCADStudio {
         self.navigation_style = s.navigation_style;
         self.dynamic_ucs = s.dynamic_ucs;
         self.touchpad_pan = s.touchpad_pan;
+        crate::app::view::set_keypad_decimal_point(s.keypad_decimal_point);
         self.ui_scale_percent = crate::app::settings::clamp_ui_scale(s.ui_scale_percent);
         self.zoom_factor = crate::app::settings::clamp_zoom_factor(s.zoom_factor);
         // Like the drafting-rotation field below, the Options field edits a
@@ -327,6 +340,7 @@ impl OpenCADStudio {
         self.zoom_factor_input = self.zoom_factor.to_string();
         self.cursor_size = s.cursor_size.clamp(1, 100);
         self.pick_box = s.pick_box.clamp(0, 50);
+        self.autosnap_magnet = s.autosnap_magnet;
         self.snapper.osnap_radius_px = if s.aperture.is_finite() {
             s.aperture.clamp(
                 crate::snap::MIN_OSNAP_RADIUS_PX,
@@ -409,6 +423,7 @@ impl OpenCADStudio {
         crate::app::commands::set_annotation_scale_prompt(s.annotation_scale_prompt);
         crate::app::commands::set_hyperlink_options(s.hyperlink_options);
         crate::scene::cache::block_cache::set_xref_fade_ctl(s.xref_fade);
+        crate::scene::cache::block_cache::set_layer_lock_fade_ctl(s.layer_lock_fade);
         self.ribbon.xref_fade = crate::scene::cache::block_cache::xref_fade_ctl();
         crate::sys::set_file_dia(s.file_dia);
         crate::entities::ole2frame::set_hide_mode(s.ole_hide);
@@ -444,6 +459,7 @@ impl OpenCADStudio {
         crate::modules::view::view_cmd::set_ucs_ortho(s.ucs_ortho);
         crate::modules::view::view_cmd::set_ucs_view(s.ucs_view);
         crate::scene::set_layout_create_viewport(s.layout_create_viewport);
+        crate::scene::set_pick_locked(s.pick_locked);
         crate::modules::insert::pdf_shx_text::set_settings(s.pdf_shx_text.clone());
         crate::modules::insert::dgn_import::set_settings(s.dgn_import);
         self.ncopy_bind = s.ncopy_bind;
@@ -488,7 +504,6 @@ impl OpenCADStudio {
         self.gpu_warning_silenced = s.gpu_warning_silenced.clone();
         self.disabled_plugins = s.disabled_plugins.iter().cloned().collect();
         self.plugin_repos = s.plugin_repos.clone();
-        self.command_line.literal_spaces = s.literal_spaces;
         self.command_line.history_height = if s.command_history_height.is_finite() {
             s.command_history_height.clamp(
                 crate::ui::command_line::HISTORY_HEIGHT_MIN,
@@ -592,6 +607,10 @@ impl OpenCADStudio {
         self.block_palette.libraries = s.block_libraries.clone();
         self.block_palette.view =
             crate::ui::window::block_palette::ViewMode::from_u8(s.block_palette_view);
+        self.block_palette.tab =
+            crate::ui::window::block_palette::Tab::from_u8(s.block_palette_tab);
+        self.block_palette.library_resume = Some(std::path::PathBuf::from(&s.block_library_folder))
+            .filter(|dir| !s.block_library_folder.is_empty() && dir.is_dir());
         self.block_palette.set_options(s.block_insert.clone());
         self.trim_recent_blocks();
         // Push restored display defaults onto every drawing tab that exists now.
@@ -931,8 +950,11 @@ impl OpenCADStudio {
             show_graphic_attributes: self.show_graphic_attributes,
             show_tool_palettes: self.show_tool_palettes,
             show_command_history: self.show_command_history,
+            geometry_cleanup: self.geometry_cleanup.settings.clone(),
+            geometry_cleanup_file: self.geometry_cleanup.settings_file.clone(),
             show_layers: self.show_layers,
             show_block_palette: self.show_block_palette,
+            show_external_references: self.show_external_references,
             show_file_tabs: self.show_file_tabs,
             file_tabs_above_docks: self.file_tabs_above_docks,
             show_layout_tabs: self.show_layout_tabs,
@@ -1014,6 +1036,8 @@ impl OpenCADStudio {
         self.show_tool_palettes = cfg.show_tool_palettes;
         self.ribbon.show_tool_palettes = self.show_tool_palettes;
         self.show_command_history = cfg.show_command_history;
+        self.geometry_cleanup.settings = cfg.geometry_cleanup.clone();
+        self.geometry_cleanup.settings_file = cfg.geometry_cleanup_file.clone();
         if self.show_command_history {
             self.sync_command_history_panel();
         }
@@ -1021,6 +1045,8 @@ impl OpenCADStudio {
         self.show_layers = cfg.show_layers && self.dock.is_placed(crate::ui::dock::PanelId::Layers);
         self.show_block_palette =
             cfg.show_block_palette && self.dock.is_placed(crate::ui::dock::PanelId::BlockPalette);
+        self.show_external_references = cfg.show_external_references
+            && self.dock.is_placed(crate::ui::dock::PanelId::ExternalReferences);
         self.show_file_tabs = cfg.show_file_tabs;
         self.control.start_enabled = cfg.mcp_enabled;
         self.file_tabs_above_docks = cfg.file_tabs_above_docks;

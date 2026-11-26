@@ -97,7 +97,7 @@ impl OpenCADStudio {
         // `gain_focus` alone is ignored by most Linux WMs (focus-stealing
         // prevention), so pair it with an urgency hint so the window is at
         // least flagged for attention when the compositor blocks the raise.
-        match self.main_window {
+        let focus = match self.main_window {
             Some(id) => Task::batch([
                 iced::window::gain_focus(id),
                 iced::window::request_user_attention(
@@ -106,7 +106,9 @@ impl OpenCADStudio {
                 ),
             ]),
             None => Task::none(),
-        }
+        };
+        // A previously focused command input must not capture the answer.
+        Task::batch([focus, self.unfocus_widgets()])
     }
 
     pub(in crate::app) fn close_unsaved_dialog_window(&mut self) -> Task<Message> {
@@ -187,6 +189,23 @@ impl OpenCADStudio {
                             .add_filter(filter_name, &exts)
                             .add_filter(crate::t!("All Files").as_ref(), &["*"])
                             .pick_file()
+                            .await
+                            .map(|h| crate::sys::handle_path(&h));
+                        (command, path)
+                    },
+                    |(command, path)| Message::PluginFileDialogResult { command, path },
+                );
+            }
+            // A browser picks files, not folders.
+            #[cfg(target_arch = "wasm32")]
+            ModuleEvent::PluginFolderDialog { .. } => {}
+            #[cfg(not(target_arch = "wasm32"))]
+            ModuleEvent::PluginFolderDialog { command, title } => {
+                return Task::perform(
+                    async move {
+                        let path = crate::sys::file_dialog()
+                            .set_title(title)
+                            .pick_folder()
                             .await
                             .map(|h| crate::sys::handle_path(&h));
                         (command, path)
@@ -315,7 +334,8 @@ impl OpenCADStudio {
                 }
             };
 
-            if self.active_save_jobs.contains_key(&self.tabs[idx].id) {
+            let tab_id = self.tabs[idx].id;
+            if self.active_save_jobs.contains_key(&tab_id) && !self.autosave_is_running(tab_id) {
                 self.command_line
                     .push_info(crate::t!("Save already running for this drawing.").as_ref());
                 return Task::none();
@@ -512,6 +532,7 @@ impl OpenCADStudio {
         if entities.is_empty() {
             return Err("No model-space entities in that file.".to_string());
         }
+        let file_units = doc.header.insertion_units;
         let base = glam::DVec3::new(
             doc.header.model_space_insertion_base.x,
             doc.header.model_space_insertion_base.y,
@@ -532,7 +553,7 @@ impl OpenCADStudio {
         // Capture every table record needed by the top-level entities and their
         // nested block definitions. Importing only the definitions leaves
         // source-only layers, linetypes, and text/dimension styles dangling.
-        let deps = crate::app::ClipboardDeps::capture(&doc, &entities);
+        let deps = crate::app::ClipboardDeps::capture_drawing(&doc, &entities);
         // Capture the imported file's nested block definitions once. When a
         // name collides with a block already in the active drawing, we must
         // *preserve both*: keep the destination's block and import the file's
@@ -650,6 +671,12 @@ impl OpenCADStudio {
                 import_block_def_graph(document, def, &records);
             }
         }
+        // The block is drawn in the file's units: a reference placed later
+        // scales by them against the drawing's INSUNITS, as an XREF of the
+        // file does (#3474). A unitless file stays unitless.
+        if let Some(record) = self.tabs[i].scene.document.block_records.get_mut(&name) {
+            record.units = file_units;
+        }
         self.tabs[i].scene.populate_meshes_from_document();
         self.tabs[i].dirty = true;
         Ok(name)
@@ -710,6 +737,10 @@ impl OpenCADStudio {
             )
         };
         let tab = &mut self.tabs[i];
+        crate::io::xref::apply_native_source_status(
+            &mut self.xref_manager.entries,
+            tab.ifccad_session.as_ref(),
+        );
         for (key, mtime) in baselines {
             tab.xref_stat_cache.insert(key, mtime);
         }
@@ -757,11 +788,15 @@ impl OpenCADStudio {
             .as_ref()
             .and_then(|p| p.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let entries = crate::io::xref::collect_entries_with_prev(
+        let mut entries = crate::io::xref::collect_entries_with_prev(
             &self.tabs[i].scene.document,
             &base_dir,
             self.tabs[i].xref_unloaded.as_set(),
             &self.tabs[i].xref_stat_cache.0,
+        );
+        crate::io::xref::apply_native_source_status(
+            &mut entries,
+            self.tabs[i].ifccad_session.as_ref(),
         );
         self.tabs[i].xref_report = entries
             .iter()
@@ -797,6 +832,9 @@ impl OpenCADStudio {
     }
 
     pub(crate) fn post_ref_op(&mut self, i: usize) {
+        if let Some(session) = &self.tabs[i].ifccad_session {
+            session.invalidate_source_generation();
+        }
         self.tabs[i].scene.populate_hatches_from_document();
         self.tabs[i].scene.populate_images_from_document();
         // Image/PDF unload is intentionally session-only (the file formats do
@@ -1032,10 +1070,12 @@ impl OpenCADStudio {
                     .filter(|br| dwg_picked.iter().any(|(key, _)| *key == br.handle.value()))
                     .map(|br| br.handle)
                     .collect();
-                let infos = crate::io::xref::resolve_xrefs_for_keys(
+                let xref_session = self.tabs[i].ifccad_session.clone();
+                let infos = crate::io::xref::resolve_xrefs_for_keys_in_session(
                     &mut self.tabs[i].scene.document,
                     &base_dir,
                     &handles,
+                    xref_session.as_ref(),
                 );
                 // Targeted reload updates baselines only for selected rows.
                 {
@@ -1346,6 +1386,53 @@ mod tests {
             .document
             .layers
             .contains("Imported Fixtures"));
+    }
+
+    /// Inserting a drawing brings every layer of it, also those nothing is
+    /// drawn on yet, with their state and the linetype they name; layers of
+    /// the drawing's xrefs stay behind, and a layer the destination already
+    /// has keeps the destination's settings.
+    #[test]
+    fn import_document_as_block_brings_every_layer() {
+        use document::tables::{Layer, LineType};
+
+        let mut app = fresh();
+        let i = app.active_tab;
+        let mut doc = foreign_doc(&app);
+        let mut dashed = LineType::new("OCS_TEST_DASHED");
+        dashed.handle = doc.allocate_handle();
+        let _ = doc.line_types.add(dashed);
+        let mut empty = Layer::new("Empty Frozen");
+        empty.handle = doc.allocate_handle();
+        empty.flags.frozen = true;
+        empty.line_type = "OCS_TEST_DASHED".to_string();
+        doc.layers.add(empty).unwrap();
+        let mut xref = Layer::new("Site|Walls");
+        xref.handle = doc.allocate_handle();
+        xref.flags.xref_dependent = true;
+        doc.layers.add(xref).unwrap();
+        let mut shared = Layer::new("Shared");
+        shared.handle = doc.allocate_handle();
+        shared.flags.frozen = true;
+        doc.layers.add(shared).unwrap();
+        let mut own = Layer::new("Shared");
+        own.handle = app.tabs[i].scene.document.allocate_handle();
+        app.tabs[i].scene.document.layers.add(own).unwrap();
+
+        app.import_document_as_block(doc, "Fixture".to_string())
+            .unwrap();
+        let dest = &app.tabs[i].scene.document;
+        let layer = dest.layers.get("Empty Frozen").expect("the empty layer comes along");
+        assert!(layer.flags.frozen, "with its state");
+        assert!(
+            dest.line_types.contains("OCS_TEST_DASHED"),
+            "the layer's linetype comes with it"
+        );
+        assert!(!dest.layers.contains("Site|Walls"), "xref layers stay behind");
+        assert!(
+            !dest.layers.get("Shared").unwrap().flags.frozen,
+            "an existing layer keeps the destination's settings"
+        );
     }
 
     /// A foreign document whose model space INSERTs a `Fixture` block, whose
@@ -2075,9 +2162,11 @@ mod tests {
     }
 
     #[test]
-    fn test_interactive_dialog_action_pick_updates_table() {
-        use ocs_plugin_api::dialog::{DialogActionResponse, DialogControl, DialogDef, DialogEvent, DialogValue};
+    fn interactive_dialog_action_pick_updates_table() {
         use crate::command::{CadCommand, CmdResult};
+        use ocs_plugin_api::dialog::{
+            DialogActionResponse, DialogControl, DialogDef, DialogEvent, DialogValue,
+        };
         use std::collections::HashMap;
 
         struct MockStartupCommand {
@@ -2104,9 +2193,14 @@ mod tests {
                         let mut updates = HashMap::new();
                         updates.insert(
                             "scripts_table".to_string(),
-                            DialogValue::Table(self.scripts.iter().map(|s| vec![s.clone()]).collect()),
+                            DialogValue::Table(
+                                self.scripts.iter().map(|s| vec![s.clone()]).collect(),
+                            ),
                         );
-                        updates.insert("file_input".to_string(), DialogValue::FilePath(String::new()));
+                        updates.insert(
+                            "file_input".to_string(),
+                            DialogValue::FilePath(String::new()),
+                        );
                         return DialogActionResponse::UpdateValues(updates);
                     }
                 }
@@ -2116,7 +2210,9 @@ mod tests {
 
         let mut app = fresh();
         let i = app.active_tab;
-        app.tabs[i].active_cmd = Some(Box::new(MockStartupCommand { scripts: Vec::new() }));
+        app.tabs[i].active_cmd = Some(Box::new(MockStartupCommand {
+            scripts: Vec::new(),
+        }));
 
         let def = DialogDef::new("Startup Test")
             .with_control(DialogControl::FilePicker {
@@ -2138,7 +2234,13 @@ mod tests {
 
         app.open_plugin_dialog(def);
 
-        let initial_table = app.plugin_dialog_state.as_ref().unwrap().table_values.get("scripts_table").unwrap();
+        let initial_table = app
+            .plugin_dialog_state
+            .as_ref()
+            .unwrap()
+            .table_values
+            .get("scripts_table")
+            .unwrap();
         assert_eq!(initial_table.len(), 0);
 
         // Simulate typing into the file input (should send "change", not "pick")
@@ -2149,7 +2251,10 @@ mod tests {
         {
             let state = app.plugin_dialog_state.as_ref().unwrap();
             assert_eq!(state.table_values.get("scripts_table").unwrap().len(), 0);
-            assert_eq!(state.file_values.get("file_input").unwrap(), "C:/AutoLISP/partial");
+            assert_eq!(
+                state.file_values.get("file_input").unwrap(),
+                "C:/AutoLISP/partial"
+            );
         }
 
         // Simulate picking a file via Browse dialog (sends "pick")
@@ -2166,9 +2271,11 @@ mod tests {
     }
 
     #[test]
-    fn test_interactive_dialog_choice_static_and_dynamic_text_and_tab_routing() {
-        use ocs_plugin_api::dialog::{DialogActionResponse, DialogControl, DialogDef, DialogEvent, DialogValue};
+    fn interactive_dialog_choice_static_and_dynamic_text_and_tab_routing() {
         use crate::command::{CadCommand, CmdResult};
+        use ocs_plugin_api::dialog::{
+            DialogActionResponse, DialogControl, DialogDef, DialogEvent, DialogValue,
+        };
         use std::collections::HashMap;
         use std::sync::{Arc, Mutex};
 
@@ -2203,11 +2310,14 @@ mod tests {
                             selected_index: 1,
                         },
                     );
-                    self.pending_updates.push(("Choice Test".to_string(), updates));
+                    self.pending_updates
+                        .push(("Choice Test".to_string(), updates));
                 }
                 DialogActionResponse::None
             }
-            fn take_pending_panel_updates(&mut self) -> Vec<(String, HashMap<String, DialogValue>)> {
+            fn take_pending_panel_updates(
+                &mut self,
+            ) -> Vec<(String, HashMap<String, DialogValue>)> {
                 std::mem::take(&mut self.pending_updates)
             }
         }
@@ -2283,7 +2393,7 @@ mod tests {
     }
 
     #[test]
-    fn test_interactive_dialog_button_fallback_when_command_returns_none() {
+    fn interactive_dialog_button_fallback_when_command_returns_none() {
         use ocs_plugin_api::dialog::{DialogControl, DialogDef};
 
         let mut app = fresh();
@@ -2326,25 +2436,69 @@ mod tests {
         app.open_plugin_dialog(def);
 
         // Mutate text value, then test "clear" button fallback
-        let _ = app.update(Message::PluginDialogTextChange("txt".to_string(), "modified".to_string()));
-        let _ = app.update(Message::PluginDialogButtonClick("btn_clear".to_string(), Some("clear".to_string())));
-        assert!(app.plugin_dialog_state.as_ref().unwrap().table_values.get("tbl").unwrap().is_empty());
-        assert_eq!(app.plugin_dialog_state.as_ref().unwrap().text_values.get("txt").unwrap(), "modified");
+        let _ = app.update(Message::PluginDialogTextChange(
+            "txt".to_string(),
+            "modified".to_string(),
+        ));
+        let _ = app.update(Message::PluginDialogButtonClick(
+            "btn_clear".to_string(),
+            Some("clear".to_string()),
+        ));
+        assert!(app
+            .plugin_dialog_state
+            .as_ref()
+            .unwrap()
+            .table_values
+            .get("tbl")
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            app.plugin_dialog_state
+                .as_ref()
+                .unwrap()
+                .text_values
+                .get("txt")
+                .unwrap(),
+            "modified"
+        );
 
         // Test "reset" button fallback restores initial defaults
-        let _ = app.update(Message::PluginDialogButtonClick("btn_reset".to_string(), Some("reset".to_string())));
-        assert_eq!(app.plugin_dialog_state.as_ref().unwrap().text_values.get("txt").unwrap(), "initial");
-        assert_eq!(app.plugin_dialog_state.as_ref().unwrap().table_values.get("tbl").unwrap().len(), 1);
+        let _ = app.update(Message::PluginDialogButtonClick(
+            "btn_reset".to_string(),
+            Some("reset".to_string()),
+        ));
+        assert_eq!(
+            app.plugin_dialog_state
+                .as_ref()
+                .unwrap()
+                .text_values
+                .get("txt")
+                .unwrap(),
+            "initial"
+        );
+        assert_eq!(
+            app.plugin_dialog_state
+                .as_ref()
+                .unwrap()
+                .table_values
+                .get("tbl")
+                .unwrap()
+                .len(),
+            1
+        );
 
         // Test "close" button fallback closes the dialog
-        let _ = app.update(Message::PluginDialogButtonClick("btn_close".to_string(), Some("close".to_string())));
+        let _ = app.update(Message::PluginDialogButtonClick(
+            "btn_close".to_string(),
+            Some("close".to_string()),
+        ));
         assert!(app.plugin_dialog_state.is_none());
     }
 
     #[test]
-    fn test_interactive_dialog_autolisp_exact_flow() {
-        use ocs_plugin_api::dialog::*;
+    fn interactive_dialog_autolisp_exact_flow() {
         use crate::command::CadCommand;
+        use ocs_plugin_api::dialog::*;
 
         let mut app = fresh();
         let opening_tab = app.active_tab;
@@ -2374,37 +2528,66 @@ mod tests {
                     // Like interactive_dialog_test.lsp:
                     // (setq picked (oca-get "picker" values))
                     // (setq current-tbl (oca-get "tbl_files" values))
-                    let picked = event.current_values.get("picker").and_then(|v| match v {
-                        DialogValue::FilePath(p) => Some(p.clone()),
-                        _ => None,
-                    }).unwrap_or_default();
-                    let mut tbl = event.current_values.get("tbl_files").and_then(|v| match v {
-                        DialogValue::Table(rows) => Some(rows.clone()),
-                        _ => None,
-                    }).unwrap_or_default();
+                    let picked = event
+                        .current_values
+                        .get("picker")
+                        .and_then(|v| match v {
+                            DialogValue::FilePath(p) => Some(p.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    let mut tbl = event
+                        .current_values
+                        .get("tbl_files")
+                        .and_then(|v| match v {
+                            DialogValue::Table(rows) => Some(rows.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_default();
 
                     if !picked.is_empty() {
                         tbl.push(vec![picked, "Active".to_string()]);
                         updates.insert("tbl_files".to_string(), DialogValue::Table(tbl.clone()));
                         updates.insert("picker".to_string(), DialogValue::FilePath(String::new()));
-                        updates.insert("lbl_status".to_string(), DialogValue::Text(format!("Added file. Total in list: {}", tbl.len())));
+                        updates.insert(
+                            "lbl_status".to_string(),
+                            DialogValue::Text(format!("Added file. Total in list: {}", tbl.len())),
+                        );
                         return DialogActionResponse::UpdateValues(updates);
                     }
                 } else if event.control_id == "btn_clear" {
                     // Empty list clears table:
                     updates.insert("tbl_files".to_string(), DialogValue::Table(Vec::new()));
-                    updates.insert("lbl_status".to_string(), DialogValue::Text("List cleared. 0 items in table.".to_string()));
+                    updates.insert(
+                        "lbl_status".to_string(),
+                        DialogValue::Text("List cleared. 0 items in table.".to_string()),
+                    );
                     return DialogActionResponse::UpdateValues(updates);
                 } else if event.control_id == "btn_inspect" {
-                    let mode = event.current_values.get("cmb_mode").and_then(|v| match v {
-                        DialogValue::Choice { text, .. } => Some(text.clone()),
-                        _ => None,
-                    }).unwrap_or_default();
-                    let log = event.current_values.get("chk_log").and_then(|v| match v {
-                        DialogValue::Bool(b) => Some(*b),
-                        _ => None,
-                    }).unwrap_or(false);
-                    updates.insert("lbl_status".to_string(), DialogValue::Text(format!("Active Mode: \"{}\" | Console Log: {}", mode, if log { "ON" } else { "OFF" })));
+                    let mode = event
+                        .current_values
+                        .get("cmb_mode")
+                        .and_then(|v| match v {
+                            DialogValue::Choice { text, .. } => Some(text.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    let log = event
+                        .current_values
+                        .get("chk_log")
+                        .and_then(|v| match v {
+                            DialogValue::Bool(b) => Some(*b),
+                            _ => None,
+                        })
+                        .unwrap_or(false);
+                    updates.insert(
+                        "lbl_status".to_string(),
+                        DialogValue::Text(format!(
+                            "Active Mode: \"{}\" | Console Log: {}",
+                            mode,
+                            if log { "ON" } else { "OFF" }
+                        )),
+                    );
                     return DialogActionResponse::UpdateValues(updates);
                 }
 
@@ -2451,7 +2634,11 @@ mod tests {
             .with_control(DialogControl::Choice {
                 id: "cmb_mode".to_string(),
                 label: "Execution Mode".to_string(),
-                options: vec!["Standard".to_string(), "Fast".to_string(), "Debug".to_string()],
+                options: vec![
+                    "Standard".to_string(),
+                    "Fast".to_string(),
+                    "Debug".to_string(),
+                ],
                 default_index: 0,
             })
             .with_control(DialogControl::Checkbox {
@@ -2471,7 +2658,12 @@ mod tests {
 
         // 1. Verify initial status text
         assert_eq!(
-            app.plugin_dialog_state.as_ref().unwrap().text_values.get("lbl_status").unwrap(),
+            app.plugin_dialog_state
+                .as_ref()
+                .unwrap()
+                .text_values
+                .get("lbl_status")
+                .unwrap(),
             "Ready - Pick a file or click buttons to test reactivity"
         );
 
@@ -2562,7 +2754,12 @@ fn xref_dimension_targets(
             _ => None,
         })
         .flat_map(|association| association.references.iter().flatten())
-        .flat_map(|reference| reference.xrefs.iter().chain(&reference.intersection_objects))
+        .flat_map(|reference| {
+            reference
+                .xrefs
+                .iter()
+                .chain(&reference.intersection_objects)
+        })
         .filter(|handle| {
             doc.get_entity(**handle)
                 .is_some_and(|entity| xref_blocks.contains(&entity.common().owner_handle))

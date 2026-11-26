@@ -122,6 +122,7 @@ fn block_edits_preserve_cache_coordinates_and_arena_partition() {
 
     let line = WireModel {
         render_instance: None,
+        aabb: [10.0, 0.0, 11.0, 0.0],
         ..first.clone()
     };
     let changed = [second];
@@ -142,7 +143,8 @@ fn block_edits_preserve_cache_coordinates_and_arena_partition() {
             &[(Handle::new(2), crate::scene::ChangeKind::Added)],
             &runs,
             true,
-            &depth
+            &depth,
+            &mut None,
         ));
         assert_eq!(
             arena
@@ -153,6 +155,104 @@ fn block_edits_preserve_cache_coordinates_and_arena_partition() {
             1,
             "the block must not also enter the regular arena"
         );
+
+        let projection = glam::camera::rh::proj::directx::orthographic(-50.0, 50.0, -50.0, 50.0, 0.1, 1000.0);
+        let eye = glam::DVec3::new(0.0, 0.0, 100.0);
+        let view = wire_arena::WireCullView::new(projection, eye, 800, 800);
+        assert_eq!(arena.wire_gpus_visible(projection, eye, 800, 800).len(), 1);
+        for (x, reuse_expected, visible) in [
+            (12.0, true, true),
+            (1000.0, false, false),
+            (1001.0, true, false),
+            (10.0, false, true),
+        ] {
+            let moved = WireModel {
+                aabb: [x, 0.0, x + 1.0, 0.0],
+                geom: std::sync::Arc::new(crate::scene::WireGeom {
+                    points: vec![[x, 0.0, 0.0], [x + 1.0, 0.0, 0.0]],
+                    ..crate::scene::WireGeom::default()
+                }),
+                ..line.clone()
+            };
+            let runs = rustc_hash::FxHashMap::from_iter([(Handle::new(1), vec![&moved])]);
+            let mut reuse = Some(view);
+            assert!(arena.patch(
+                &queue,
+                &[(Handle::new(1), crate::scene::ChangeKind::Modified)],
+                &runs,
+                true,
+                &depth,
+                &mut reuse,
+            ));
+            assert_eq!(reuse.is_some(), reuse_expected);
+            assert_eq!(
+                arena.wire_gpus_visible(projection, eye, 800, 800).len(),
+                usize::from(visible),
+            );
+        }
+    }
+    queue.submit([]);
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    assert!(
+        block_on(validation.pop()).is_none(),
+        "GPU validation failed"
+    );
+}
+
+/// Slabs rewritten side by side reach the arena as one write. A patch left
+/// with a write per object costs more than building the arena again, and says
+/// so instead of making them.
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn a_wire_patch_of_many_scattered_objects_asks_for_the_rebuild() {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+        .expect("GPU adapter");
+    let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_limits: adapter.limits(),
+        ..Default::default()
+    }))
+    .expect("GPU device");
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let pipeline = Pipeline::new(&device, &queue, wgpu::TextureFormat::Bgra8UnormSrgb);
+
+    const LINES: u64 = 4096;
+    let lines_at = |shift: f32| -> Vec<WireModel> {
+        (1..=LINES)
+            .map(|handle| {
+                let y = handle as f32 + shift;
+                WireModel::solid(
+                    handle.to_string(),
+                    vec![[0.0, y, 0.0], [1.0, y, 0.0]],
+                    [1.0; 4],
+                    false,
+                )
+            })
+            .collect()
+    };
+    let (drawn, moved) = (lines_at(0.0), lines_at(0.5));
+    let drawn: Vec<&WireModel> = drawn.iter().collect();
+    let depth = rustc_hash::FxHashMap::default();
+    for layout in [pipeline.wire_const_bgl.as_ref(), None] {
+        // Move every `step`-th line of a freshly built arena.
+        let patch = |step: usize| {
+            let mut arena = wire_arena::PersistentWireArena::build(
+                &device, &queue, &drawn, &depth, layout, false,
+            )
+            .unwrap();
+            let changes: Vec<_> = (1..=LINES)
+                .step_by(step)
+                .map(|handle| (Handle::new(handle), crate::scene::ChangeKind::Modified))
+                .collect();
+            let runs = changes
+                .iter()
+                .map(|(handle, _)| (*handle, vec![&moved[handle.value() as usize - 1]]))
+                .collect();
+            arena.patch(&queue, &changes, &runs, true, &depth, &mut None)
+        };
+        assert!(patch(1), "every slab, side by side, is one write");
+        assert!(patch(64), "64 writes are not worth a rebuild");
+        assert!(!patch(2), "2,048 writes cost more than these 4,096 lines");
     }
     queue.submit([]);
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
@@ -447,7 +547,7 @@ fn instances_of_a_solid_draw_its_coarser_levels_when_they_are_small() {
     let mut drawn_at = |scale: f32| {
         let half = 500.0 / scale;
         pipeline.mesh_lod_view = Some((
-            glam::Mat4::orthographic_rh(-half, half, -half, half, -10_000.0, 10_000.0),
+            glam::camera::rh::proj::directx::orthographic(-half, half, -half, half, -10_000.0, 10_000.0),
             glam::DVec3::new(285.0, 285.0, 0.0),
             [1000.0, 1000.0],
         ));
@@ -612,7 +712,7 @@ fn late_device_errors_invalidate_uploaded_content_and_targets() {
 
 #[test]
 #[ignore = "requires a GPU adapter"]
-fn test_selected_circle_arc_ellipse_highlight_overlay() {
+fn selected_circle_arc_ellipse_highlight_overlay() {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
         .expect("GPU adapter");
@@ -737,7 +837,7 @@ fn test_selected_circle_arc_ellipse_highlight_overlay() {
 
 #[test]
 #[ignore = "requires a GPU adapter"]
-fn test_thick_and_tapered_arc_gpu_rendering() {
+fn thick_and_tapered_arc_gpu_rendering() {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
         .expect("GPU adapter");
@@ -840,7 +940,7 @@ fn test_thick_and_tapered_arc_gpu_rendering() {
 
 #[test]
 #[ignore = "requires a GPU adapter"]
-fn test_tilted_3d_donut_and_thick_arc_gpu_rendering() {
+fn tilted_3d_donut_and_thick_arc_gpu_rendering() {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
         .expect("GPU adapter");
@@ -960,7 +1060,7 @@ fn test_tilted_3d_donut_and_thick_arc_gpu_rendering() {
 
 #[test]
 #[ignore = "requires a GPU adapter"]
-fn test_selected_ellipse_overlay() {
+fn selected_ellipse_overlay() {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
         .expect("GPU adapter");
@@ -1088,7 +1188,7 @@ fn test_selected_ellipse_overlay() {
 
 #[test]
 #[ignore = "requires a GPU adapter"]
-fn test_pline_arc_switch_preview_and_render() {
+fn pline_arc_switch_preview_and_render() {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
         .expect("GPU adapter");

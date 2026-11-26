@@ -472,6 +472,9 @@ mod scroll_intent_tests;
 mod rapid_drawing_tests;
 
 #[cfg(test)]
+mod snap_cycle_tests;
+
+#[cfg(test)]
 mod zoom_dynamic_cursor_tests;
 
 #[cfg(test)]
@@ -515,6 +518,9 @@ mod stretch_shift_click_tests;
 
 #[cfg(test)]
 mod grip_mtp_tests;
+
+#[cfg(test)]
+mod grip_typed_point_tests;
 
 #[cfg(test)]
 mod pointer_move_coalescing_tests;

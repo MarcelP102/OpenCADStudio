@@ -330,6 +330,7 @@ pub(crate) fn tessellate_dimension_inner(
             text_position: text_layout.position,
             horizontal_text: text_layout.horizontal,
             text_lifted: style.map(|s| s.dimtad).unwrap_or(1) != 0 || text_splits_at_line(dim),
+            text_below: style.is_some_and(|s| s.dimtad == 4),
             text_movement,
             text_break: text_layout.break_box,
             leader_anchor: stored_text_point(dim)
@@ -408,8 +409,14 @@ pub(crate) fn tessellate_dimension_inner(
             jog_angle,
         );
     }
-    apply_dimension_breaks(document, handle, &mut geom.dim_lines, origin);
-    apply_dimension_breaks(document, handle, &mut geom.ext_lines, origin);
+    apply_dimension_breaks(document, handle, &mut geom.dim_lines, origin, None);
+    apply_dimension_breaks(
+        document,
+        handle,
+        &mut geom.ext_lines,
+        origin,
+        geom.ext2_start.as_mut(),
+    );
     geom.origin = origin;
     // Dimension entity fields that the render path doesn't yet use but are
     // preserved on save:
@@ -506,7 +513,14 @@ pub(crate) fn tessellate_dimension_inner(
         // each can carry its own pattern. Otherwise emit as a single wire.
         let split = ext1_pat_len != ext2_pat_len || ext1_pat != ext2_pat;
         if split {
-            let (ext1, ext2) = split_ext_lines(&geom.ext_lines);
+            let (ext1, ext2) = match geom.ext2_start {
+                Some(split) => {
+                    let (first, second) = geom.ext_lines.split_at(split);
+                    let start = usize::from(second.first().is_some_and(|point| point[0].is_nan()));
+                    (first.to_vec(), second[start..].to_vec())
+                }
+                None => split_ext_lines(&geom.ext_lines),
+            };
             if !ext1.is_empty() {
                 wires.push(WireModel {
                     bg_adapt: None,
@@ -748,7 +762,16 @@ pub(crate) fn tessellate_dimension_inner(
                     aci_to_rgba(&c)
                 };
                 wires.push(WireModel {
-                    bg_adapt: None,
+                    // The background mask follows the canvas on screen and
+                    // plots as the paper.
+                    bg_adapt: (!selected && s.dimtfill == 1).then(|| {
+                        Box::new(crate::scene::model::wire_model::BgAdaptInputs {
+                            raw_color: fill_color,
+                            canvas_color: true,
+                            preserve_color: true,
+                            ..Default::default()
+                        })
+                    }),
                     point_marker: None,
                     world_width: 0.0,
                     depth_override: None,

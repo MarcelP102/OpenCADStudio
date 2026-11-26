@@ -109,6 +109,7 @@ fn write_svg_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
         let _ = std::fs::remove_file(&temp_path);
         return Err(format!("Failed to replace SVG file: {error}"));
     }
+    super::remove_stale_save_temps(path);
     Ok(())
 }
 
@@ -123,7 +124,7 @@ pub fn build_svg(
     let map = PageMap {
         paper_w,
         paper_h,
-        scale: page.scale.max(1e-6) as f64,
+        scale: (page.scale as f64).max(1e-12),
         rotation_deg: page.rotation_deg,
     };
     let stamp = page.options.stamp.then(plot_stamp_label);
@@ -336,6 +337,8 @@ fn emit_page_content(
         .images
         .split_at(content.group_splits.images.min(content.images.len()));
 
+    let mut vp_clips: rustc_hash::FxHashMap<(usize, usize), String> =
+        rustc_hash::FxHashMap::default();
     for (wires, hatches, wipeouts, images) in [
         (first_wires, first_hatches, first_wipeouts, first_images),
         (second_wires, second_hatches, second_wipeouts, second_images),
@@ -388,9 +391,16 @@ fn emit_page_content(
             } else {
                 None
             };
+            let vp_clip_ring = match &item {
+                DrawItem::WireFill(w) | DrawItem::Wire(w) | DrawItem::Text(w) => {
+                    w.plot_clip.as_deref()
+                }
+                _ => None,
+            };
 
             // Emit into a scratch string so the item can go into its drawing
-            // layer's group; items in a row on one layer share a group.
+            // layer's group (and optional polygonal viewport clip); items in
+            // a row on one layer share a group.
             let mut rendered = String::new();
             match item {
                 DrawItem::WireFill(wire) => {
@@ -441,7 +451,50 @@ fn emit_page_content(
                 }
                 open_layer = layer;
             }
-            out.push_str(&rendered);
+            if !rendered.is_empty() {
+                if let Some(ring) = vp_clip_ring.filter(|r| r.len() >= 3) {
+                    let key = (ring.as_ptr() as usize, ring.len());
+                    let clip_id = if let Some(id) = vp_clips.get(&key) {
+                        id.clone()
+                    } else {
+                        let id = format!("vp-clip-{}", vp_clips.len());
+                        let mut d = String::new();
+                        let mut valid = true;
+                        for (idx, &[x, y]) in ring.iter().enumerate() {
+                            let (sx, sy) = map.apply(f64::from(x) + ox, f64::from(y) + oy);
+                            if !sx.is_finite() || !sy.is_finite() {
+                                valid = false;
+                                break;
+                            }
+                            d.push_str(&format!(
+                                "{} {} {} ",
+                                if idx == 0 { 'M' } else { 'L' },
+                                fmt(sx),
+                                fmt(sy)
+                            ));
+                        }
+                        if valid {
+                            d.push('Z');
+                            out.push_str(&format!(
+                                "<clipPath id=\"{id}\"><path d=\"{d}\" clip-rule=\"evenodd\"/></clipPath>\n"
+                            ));
+                            vp_clips.insert(key, id.clone());
+                            id
+                        } else {
+                            String::new()
+                        }
+                    };
+                    if !clip_id.is_empty() {
+                        out.push_str(&format!("<g clip-path=\"url(#{clip_id})\">\n"));
+                        out.push_str(&rendered);
+                        out.push_str("</g>\n");
+                    } else {
+                        out.push_str(&rendered);
+                    }
+                } else {
+                    out.push_str(&rendered);
+                }
+            }
         }
         if open_layer.is_some() {
             out.push_str("</g>\n");
@@ -1479,6 +1532,18 @@ mod tests {
     }
 
     #[test]
+    fn an_svg_export_removes_the_temporary_file_of_a_stopped_export() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("plan.svg");
+        let stopped = crate::io::stopped_save_temp(&path);
+
+        export_svg(&page_with(Default::default(), 210.0, 297.0), &path).unwrap();
+
+        assert!(path.exists());
+        assert!(!stopped.exists());
+    }
+
+    #[test]
     fn empty_page_builds_a_valid_svg_shell() {
         let page = page_with(Default::default(), 210.0, 297.0);
         let svg = build_svg(&page, None).expect("builds");
@@ -2318,5 +2383,27 @@ mod tests {
             svg.contains("x=\"10\" y=\"227\" width=\"100\" height=\"50\""),
             "{svg}"
         );
+    }
+
+    #[test]
+    fn wire_plot_clip_emits_evenodd_clip_path() {
+        let mut wire = WireModel::default();
+        wire.points = vec![[0.0, 0.0, 0.0], [100.0, 100.0, 0.0]];
+        wire.color = [0.0, 0.0, 0.0, 1.0];
+        wire.plot_clip = Some(std::sync::Arc::from(
+            [[10.0, 10.0], [90.0, 10.0], [50.0, 90.0]].as_slice(),
+        ));
+        let content = crate::io::plot::PlotContent {
+            wires: std::sync::Arc::new(vec![PlotWire {
+                wire,
+                draw_depth: 0.5,
+            }]),
+            ..Default::default()
+        };
+        let svg = build_svg(&page_with(content, 100.0, 100.0), None).expect("builds");
+        assert!(svg.contains("<clipPath id=\"vp-clip-0\">"), "{svg}");
+        assert!(svg.contains("clip-rule=\"evenodd\""), "{svg}");
+        assert!(svg.contains("<g clip-path=\"url(#vp-clip-0)\">"), "{svg}");
+        roxmltree::Document::parse(&svg).expect("valid SVG XML");
     }
 }

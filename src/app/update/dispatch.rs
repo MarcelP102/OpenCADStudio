@@ -210,6 +210,10 @@ impl OpenCADStudio {
                 self.control_screenshot(path, screenshot);
                 Task::none()
             }
+            Message::ControlOffscreenCaptureDone(result) => {
+                self.control_offscreen_capture_done(result);
+                Task::none()
+            }
             Message::ControlCaptureFrame { redrew } => self.on_control_capture_frame(redrew),
             Message::Graph(message) => self.on_graph(message),
             Message::GraphFileRead(read) => self.finish_graph_file_read(*read),
@@ -1316,11 +1320,12 @@ impl OpenCADStudio {
                             let handle = crate::sys::file_dialog()
                                 .set_title(crate::t!("Select External Reference File").as_ref())
                                 .add_filter(
-                                    crate::t!("CAD Files").as_ref(),
-                                    &["dwg", "dxf", "bak", "DWG", "DXF", "BAK"],
+                                    crate::tr!("ifc2plan", "reference-files"),
+                                    &["dwg", "dxf", "bak", "ifc", "DWG", "DXF", "BAK", "IFC"],
                                 )
                                 .add_filter(crate::t!("DWG Files").as_ref(), &["dwg", "DWG"])
                                 .add_filter(crate::t!("DXF Files").as_ref(), &["dxf", "DXF"])
+                                .add_filter("IFC (*.ifc)", &["ifc", "IFC"])
                                 .add_filter(crate::t!("Backup Files").as_ref(), &["bak", "BAK"])
                                 .pick_file()
                                 .await;
@@ -1363,6 +1368,7 @@ impl OpenCADStudio {
                             .set_title(&title)
                             .set_file_name("block.dwg")
                             .add_filter(crate::t!("DWG Files").as_ref(), &["dwg"])
+                            .add_filter(crate::t!("DXF Files").as_ref(), &["dxf"])
                             .save_file()
                             .await
                             .map(|h| crate::sys::handle_path(&h));
@@ -1533,7 +1539,25 @@ impl OpenCADStudio {
                 self.on_attout_save(text, path);
                 Task::none()
             }
+            Message::AlignmentPointFilePicked(None) => Task::none(),
+            Message::AlignmentPointFilePicked(Some(text)) => {
+                use crate::command::CadCommand;
+                let i = self.active_tab;
+                let c = crate::modules::civil::point_alignment::AlignmentPointCommand::import(text);
+                if let Some(menu) = c.intro() {
+                    self.command_line.push_output(&menu);
+                }
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+                Task::none()
+            }
             Message::AttOutSave(_, None) | Message::AttInPicked(None) => Task::none(),
+            Message::TableCellsPaste(text) => {
+                if let Some(text) = text {
+                    self.paste_into_table_cells(&text);
+                }
+                Task::none()
+            }
             Message::AttInPicked(Some(text)) => {
                 self.on_attin_text(text);
                 Task::none()
@@ -1933,12 +1957,17 @@ impl OpenCADStudio {
             Message::DimInspect(message) => self.update_dim_inspect(message),
             Message::TableCellDialog(message) => self.update_table_cell_dialog(message),
             Message::AnnoScalePrompt(message) => self.on_anno_scale_prompt(message),
+            Message::SurfaceList(message) => self.on_surface_list(message),
+            Message::PointGroup(message) => self.on_point_group(message),
+            Message::PointTool(message) => self.on_point_tool(message),
             Message::MTextDialog(message) => self.on_mtext_dialog(message),
             Message::HyperlinkDialog(message) => self.update_hyperlink_dialog(message),
             Message::Spell(message) => self.update_spell(message),
             Message::PdfShxDialog(message) => self.update_pdf_shx_dialog(message),
             Message::PcManager(message) => self.update_pc_manager(message),
             Message::Count(message) => self.on_count(message),
+            Message::GeometryCleanup(message) => self.on_geometry_cleanup(message),
+            Message::BricscadVisibility(message) => self.on_bricscad_visibility(message),
             Message::Laywalk(message) => self.on_layer_walk(message),
             Message::QuickCalc(message) => self.on_quick_calc(message),
             Message::Assistant(message) => self.on_assistant(message),
@@ -2066,6 +2095,10 @@ impl OpenCADStudio {
                 follow.map_or_else(Task::none, Task::done)
             }
 
+            Message::PointsMenu(msg) => {
+                self.points_menu.update(msg);
+                Task::none()
+            }
             Message::RibbonToolClick { tool_id, event } => {
                 // A tool clicked in a minimized ribbon's popup closes it.
                 self.ribbon.close_popup();
@@ -2083,6 +2116,143 @@ impl OpenCADStudio {
                         self.command_line
                             .push_error(crate::tf!("No plugin handled: {command}").as_ref());
                     }
+                }
+                Task::none()
+            }
+
+            Message::PanelSurfacePointer {
+                owner,
+                panel,
+                pointer,
+                element,
+                pos,
+            } => {
+                // The router owns the semantics (click vs drag, coalescing,
+                // settle/cancel). Delivery is owner-targeted and
+                // best-effort — the same law as every v4 notification.
+                // Desktop-only: the web runtime has no plugin host, so its
+                // routed events simply die here (honest no-op — the paired
+                // stub convention; no scene surface can exist on web).
+                let routed =
+                    self.panel_event_router
+                        .on_pointer(&panel, pointer, element, pos);
+                #[cfg(not(target_arch = "wasm32"))]
+                for ev in routed {
+                    crate::plugin::v4_support::publish_surface_event_to_plugin(
+                        &owner, ev.panel_id, ev.sequence, ev.event,
+                    );
+                }
+                #[cfg(target_arch = "wasm32")]
+                let _ = (owner, routed);
+                Task::none()
+            }
+
+            Message::PanelWidgetNodeActivated {
+                owner,
+                panel,
+                node,
+            } => {
+                // Activation is the one widget gesture the plugin needs:
+                // best-effort, owner-targeted, sequence-identified.
+                let routed = self.panel_event_router.on_node_activated(&panel, node);
+                #[cfg(not(target_arch = "wasm32"))]
+                crate::plugin::v4_support::publish_surface_event_to_plugin(
+                    &owner, routed.panel_id, routed.sequence, routed.event,
+                );
+                #[cfg(target_arch = "wasm32")]
+                let _ = (owner, routed);
+                Task::none()
+            }
+            Message::PanelWidgetExpandToggled {
+                owner,
+                panel,
+                node,
+            } => {
+                // Host-local toggle; ONLY expanding an `Unloaded` row
+                // notifies the plugin — it is the data source for those
+                // children (lazy expansion, finding F4).
+                let children = self
+                    .panel_surfaces
+                    .widget(&owner, &panel)
+                    .and_then(|surface| surface.rows.get(&node))
+                    .map(|row| row.children.clone());
+                let ui = self.panel_widget_ui.entry(panel.clone()).or_default();
+                let notify = match children.as_ref() {
+                    Some(children) => ui.toggle_expanded(node, children),
+                    None => false,
+                };
+                if notify {
+                    let routed = self.panel_event_router.on_node_expanded(&panel, node);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    crate::plugin::v4_support::publish_surface_event_to_plugin(
+                        &owner, routed.panel_id, routed.sequence, routed.event,
+                    );
+                    #[cfg(target_arch = "wasm32")]
+                    let _ = routed;
+                }
+                Task::none()
+            }
+
+            Message::PanelTableCellDraft {
+                owner,
+                panel,
+                row,
+                column,
+                text,
+            } => {
+                // Host-local draft state; the stored table is untouched.
+                self.panel_table_ui
+                    .entry(panel.clone())
+                    .or_default()
+                    .set_draft(row, column, text);
+                let _ = owner;
+                Task::none()
+            }
+            Message::PanelTableCellSelected { owner, panel, row, column } => {
+                self.panel_table_ui
+                    .entry(panel.clone())
+                    .or_default()
+                    .select((row, column));
+                let _ = owner;
+                Task::none()
+            }
+            Message::PanelTableCellCommitted {
+                owner,
+                panel,
+                row,
+                column,
+            } => {
+                // Typed-commit rule: the edited value takes the existing
+                // cell's type; a failed parse keeps the draft. A commit
+                // notifies the plugin (best-effort, owner-targeted) — the
+                // plugin stays the data authority and canonicalizes with
+                // its own table patch.
+                let stored = self
+                    .panel_surfaces
+                    .table(&owner, &panel)
+                    .and_then(|surface| {
+                        let index = surface.columns.iter().position(|c| c.id == column)?;
+                        surface
+                            .rows
+                            .get(&row)
+                            .and_then(|cells| cells.get(index))
+                            .cloned()
+                    });
+                let value = self
+                    .panel_table_ui
+                    .entry(panel.clone())
+                    .or_default()
+                    .commit_draft(row, column, stored.as_ref());
+                if let Ok(value) = value {
+                    let routed = self
+                        .panel_event_router
+                        .on_cell_edited(&panel, row, column, value);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    crate::plugin::v4_support::publish_surface_event_to_plugin(
+                        &owner, routed.panel_id, routed.sequence, routed.event,
+                    );
+                    #[cfg(target_arch = "wasm32")]
+                    let _ = routed;
                 }
                 Task::none()
             }
@@ -2919,6 +3089,13 @@ impl OpenCADStudio {
             }
 
             Message::DocTabSaveAll => self.dispatch_command("SAVEALL"),
+            Message::RetryWindowView(window_id) => {
+                self.failed_views
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .retain(|failed| *failed != window_id);
+                Task::none()
+            }
 
             // Both close-* variants resolve ids against the live tab list at
             // handling time (like `TabClose` above), so a batch that closed
@@ -3096,6 +3273,7 @@ impl OpenCADStudio {
                         };
 
                     self.command_line.set_contextual_suggestions(suggestions);
+                    self.refresh_content_suggestions();
 
                     if should_update {
                         self.command_line.set_step_options(opts);
@@ -3140,6 +3318,10 @@ impl OpenCADStudio {
                 {
                     return Task::none();
                 }
+                let (cycled, moved) = self.cycle_object_snap();
+                if cycled {
+                    return Task::batch([moved, self.focus_cmd_input()]);
+                }
 
                 let i = self.active_tab;
                 let n = self.tabs[i].dyn_fields.len();
@@ -3149,7 +3331,7 @@ impl OpenCADStudio {
                     // to the constrained point now (#356).
                     self.refresh_active_cmd_preview(i);
                 }
-                self.focus_cmd_input()
+                Task::batch([moved, self.focus_cmd_input()])
             }
 
             Message::DynTabPrev => {
@@ -3561,6 +3743,11 @@ impl OpenCADStudio {
                 self.command_line.input.clear();
                 self.command_line.autocomplete_cursor = None;
                 self.dispatch_command(&value)
+            }
+
+            Message::ContentSuggestionPick(item) => {
+                self.command_line.close_history();
+                self.run_content_suggestion(item)
             }
 
             Message::CommandOptionPick(kw) => {
@@ -5390,7 +5577,27 @@ impl OpenCADStudio {
             // after the first resize.
             Message::WindowOpened(id, w, h) => {
                 if Some(id) == self.main_window {
-                    return self.update(Message::WindowResized(w, h));
+                    let resized = self.update(Message::WindowResized(w, h));
+                    // The drawn maximize button answers as the system's own,
+                    // for the Snap Layouts flyout.
+                    #[cfg(target_os = "windows")]
+                    if self.draws_title_bar() {
+                        use iced::window::raw_window_handle::RawWindowHandle;
+                        let snap = iced::window::run(id, |window| {
+                            if let Ok(handle) = window.window_handle() {
+                                if let RawWindowHandle::Win32(handle) = handle.as_raw() {
+                                    // Without it the app draws the edges
+                                    // and the button stays its own.
+                                    if !crate::ui::title_bar::windows::install(handle.hwnd.get()) {
+                                        log::warn!("title bar: subclassing the main window failed");
+                                    }
+                                }
+                            }
+                        })
+                        .discard();
+                        return Task::batch([resized, snap]);
+                    }
+                    return resized;
                 }
                 Task::none()
             }
@@ -5398,7 +5605,17 @@ impl OpenCADStudio {
                 self.vp_size = ((w - 440.0).max(200.0), h);
                 self.win_size = (w, h);
                 self.ribbon.set_window_size((w, h));
-                Task::none()
+                // A resize may have maximized or restored the window (a
+                // double click, a snap, the system menu): the title bar's
+                // maximize button follows.
+                match self.main_window {
+                    Some(id) if self.draws_title_bar() => {
+                        iced::window::is_maximized(id).map(|max| {
+                            Message::TitleBar(crate::ui::title_bar::TitleBarMsg::Maximized(max))
+                        })
+                    }
+                    _ => Task::none(),
+                }
             }
 
             Message::ViewCubeSnap(region) => self.on_view_cube_snap(region),
@@ -5656,6 +5873,8 @@ impl OpenCADStudio {
             Message::ToggleGridSnap => {
                 self.snapper.toggle_grid_snap();
                 self.sync_vport_display(self.active_tab);
+                let snap_on = self.snapper.grid_snap();
+                self.show_toggle_in_drafting_settings(|state| state.snap_on = snap_on);
                 Task::none()
             }
             Message::ToggleIsometricDrafting => {
@@ -5697,6 +5916,8 @@ impl OpenCADStudio {
             Message::ToggleGrid => {
                 self.show_grid ^= true;
                 self.sync_vport_display(self.active_tab);
+                let grid_on = self.show_grid;
+                self.show_toggle_in_drafting_settings(|state| state.grid_on = grid_on);
                 Task::none()
             }
             Message::ToggleOrtho => {
@@ -6789,6 +7010,17 @@ impl OpenCADStudio {
                         &self.tabs[i].scene.document.header,
                     ),
                 );
+                // Same relabel-only note as the status-bar unit menu: a new
+                // unit with the geometry sitting still reads as a no-op. (#3683)
+                if state.insertion_units != units_before {
+                    let label = crate::modules::draw::units::label(state.insertion_units);
+                    self.command_line.push_output(
+                        crate::tf!(
+                            "Drawing unit is now {label}. Geometry unchanged — use DWGUNITS to convert it."
+                        )
+                        .as_ref(),
+                    );
+                }
                 Task::none()
             }
             Message::BlockDefName(name) => {
@@ -7319,6 +7551,19 @@ impl OpenCADStudio {
                     )
                     .as_ref(),
                 );
+                // Engineering / Architectural lengths read as feet and inches
+                // whatever the unit, so a metric unit alone still shows inches
+                // while drawing (#3683).
+                let metric = matches!(code, 4..=7 | 12..=17);
+                let lunits = self.tabs[i].scene.document.header.linear_unit_format;
+                if metric && matches!(lunits, 3 | 4) {
+                    self.command_line.push_output(
+                        crate::t!(
+                            "Lengths still show in feet and inches: set Length type to Decimal in UNITS."
+                        )
+                        .as_ref(),
+                    );
+                }
                 Task::none()
             }
             Message::ToggleIsolatePopup => {
@@ -7941,21 +8186,7 @@ impl OpenCADStudio {
                 }
                 let handles: Vec<_> = self.tabs[i].scene.selected.iter().cloned().collect();
                 if !handles.is_empty() {
-                    // Erase is delta-safe unless a target is in a group (group
-                    // cleanup rewrites document.objects).
-                    let delta_safe = self.delta_erase_safe(i, &handles);
-                    let pending = self.begin_undo(i, "ERASE", handles.len(), delta_safe);
-                    // Stash the erased entities so OOPS can restore them.
-                    self.oops_cache = handles
-                        .iter()
-                        .filter_map(|h| self.tabs[i].scene.document.get_entity_arc(*h))
-                        .collect();
-                    self.tabs[i].scene.erase_entities(&handles);
-                    self.tabs[i].dirty = true;
-                    self.refresh_properties();
-                    if let Some(pd) = pending {
-                        self.commit_undo_delta(i, pd);
-                    }
+                    self.erase_selected_handles(i, &handles);
                 }
                 Task::none()
             }
@@ -8500,6 +8731,23 @@ impl OpenCADStudio {
                 use super::super::PasteFocus;
                 if focus == PasteFocus::Field {
                     Task::none()
+                } else if self.mtext_editor.is_none()
+                    && self.tabs[self.active_tab].scene.table_cells.is_some()
+                {
+                    // Selected cells take the clipboard text; the command
+                    // line's own paste of it is undone.
+                    if focus == PasteFocus::CommandLine {
+                        self.command_line.input.clear();
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    return Task::perform(
+                        crate::sys::read_clipboard_text(),
+                        Message::TableCellsPaste,
+                    );
+                    #[cfg(not(target_arch = "wasm32"))]
+                    iced::clipboard::read_text().map(|result| {
+                        Message::TableCellsPaste(result.ok().map(|text| (*text).clone()))
+                    })
                 } else if !self.clipboard.is_empty() {
                     self.update(Message::Command("PASTECLIP".to_string()))
                 } else if focus == PasteFocus::CommandLine
@@ -9056,14 +9304,9 @@ impl OpenCADStudio {
                 let i = self.active_tab;
                 let handles = self.property_target_handles(i);
                 if handles.is_empty() {
-                    if self.has_property_selection(i) {
-                        return Task::none();
-                    }
-                    self.tabs[i].scene.document.header.current_line_weight = lw.value();
-                    self.tabs[i].dirty = true;
-                    self.ribbon.active_lineweight = lw;
+                    let task = self.on_ribbon_lineweight_changed(lw);
                     self.refresh_properties();
-                    return Task::none();
+                    return task;
                 }
                 self.apply_property_op(i, "CHPROP", &handles, |app, handle| {
                     if let Some(entity) = app.tabs[i].scene.document.get_entity_mut(handle) {
@@ -10464,6 +10707,9 @@ impl OpenCADStudio {
                 if key == "ESCAPE" && self.cancel_layer_manager_edit() {
                     return Task::none();
                 }
+                if self.mtext_navigation_key(&key) {
+                    return Task::none();
+                }
                 if let Some(task) = self.layer_manager_key(&key) {
                     return task;
                 }
@@ -10573,6 +10819,7 @@ impl OpenCADStudio {
                 async {
                     let handle = rfd::AsyncFileDialog::new()
                         .add_filter(crate::t!("Command aliases (*.pgp)").as_ref(), &["pgp"])
+                        .add_filter("Excel (*.xlsx)", &["xlsx"])
                         .pick_file()
                         .await?;
                     #[cfg(not(target_arch = "wasm32"))]
@@ -11253,6 +11500,12 @@ impl OpenCADStudio {
                 Task::none()
             }
 
+            Message::AutoSnapMagnetChanged(on) => {
+                self.autosnap_magnet = on;
+                self.persist_settings_if_changed();
+                Task::none()
+            }
+
             Message::GripColorChanged(color) => {
                 self.model_space.grip_color = color;
                 self.sync_model_space_theme(false);
@@ -11422,6 +11675,8 @@ impl OpenCADStudio {
                 Task::none()
             }
 
+            Message::TitleBar(msg) => self.on_title_bar(msg),
+
             Message::RibbonVisibleChanged(shown) => {
                 self.ribbon_closed = !shown;
                 self.persist_settings_if_changed();
@@ -11448,6 +11703,12 @@ impl OpenCADStudio {
 
             Message::TouchpadPanChanged(enabled) => {
                 self.touchpad_pan = enabled;
+                self.persist_settings_if_changed();
+                Task::none()
+            }
+
+            Message::KeypadDecimalPointChanged(enabled) => {
+                crate::app::view::set_keypad_decimal_point(enabled);
                 self.persist_settings_if_changed();
                 Task::none()
             }
@@ -12553,9 +12814,9 @@ impl OpenCADStudio {
                 self.tabs[i].layers.filter = f;
                 Task::none()
             }
-            Message::LayerColumnsMenu(open) => {
-                let i = self.active_tab;
-                self.tabs[i].layers.columns_menu = open;
+            Message::LayerColumnsShowAll => {
+                crate::ui::window::layers::show_all_columns();
+                self.save_config();
                 Task::none()
             }
             Message::LayerColumnToggle(col) => {
@@ -12563,8 +12824,8 @@ impl OpenCADStudio {
                 self.save_config();
                 Task::none()
             }
-            Message::LayerColumnMove(col, step) => {
-                crate::ui::window::layers::move_column(col, step);
+            Message::LayerColumnMove(col, past) => {
+                crate::ui::window::layers::move_column(col, past);
                 self.save_config();
                 Task::none()
             }
@@ -13329,16 +13590,10 @@ impl OpenCADStudio {
                 panel.filter_menu = !panel.filter_menu;
                 Task::none()
             }
-            Message::ParametersManagerHeaderMenu => {
-                let panel = &mut self.tabs[self.active_tab].parameters_panel;
-                panel.header_menu = !panel.header_menu;
-                Task::none()
-            }
             Message::ParametersManagerColumn(column) => {
                 let panel = &mut self.tabs[self.active_tab].parameters_panel;
                 let index = column.index();
                 panel.columns[index] = !panel.columns[index];
-                panel.header_menu = false;
                 Task::none()
             }
             Message::ParametersManagerSearch(value) => {
@@ -13817,7 +14072,7 @@ impl OpenCADStudio {
                 // SVG choice proposes `stem.svg` up front; EXPORTDWF
                 // proposes `stem.dwf`.
                 #[cfg(not(target_arch = "wasm32"))]
-                let svg = if dwf {
+                let svg = if dwf || self.plot_dialog.file_dwf {
                     crate::io::pdf_export::PlotFileKind::Dwf
                 } else if self.plot_dialog.file_svg {
                     crate::io::pdf_export::PlotFileKind::Svg
@@ -13858,7 +14113,9 @@ impl OpenCADStudio {
                     return Task::done(Message::PlotWindowExportPath(Some(path)));
                 }
                 #[cfg(not(target_arch = "wasm32"))]
-                let svg = if self.plot_dialog.file_svg {
+                let svg = if self.plot_dialog.file_dwf {
+                    crate::io::pdf_export::PlotFileKind::Dwf
+                } else if self.plot_dialog.file_svg {
                     crate::io::pdf_export::PlotFileKind::Svg
                 } else {
                     crate::io::pdf_export::PlotFileKind::Pdf

@@ -353,9 +353,7 @@ fn geometric_center(entity: &EntityType) -> Option<glam::DVec3> {
 /// doc(hidden) public only so `benches/wires_rebuild_stages.rs` can time the
 /// production double-single split stage in isolation.
 #[doc(hidden)]
-pub fn points_to_ds(
-    src: impl IntoIterator<Item = [f64; 3]>,
-) -> (Vec<[f32; 3]>, Vec<[f32; 3]>) {
+pub fn points_to_ds(src: impl IntoIterator<Item = [f64; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 3]>) {
     let it = src.into_iter();
     let (lo, hi) = it.size_hint();
     let cap = hi.unwrap_or(lo);
@@ -2597,7 +2595,13 @@ fn tessellate_wires(
                                 plinegen: true,
                                 geom: std::sync::Arc::new(crate::scene::WireGeom {
                                     points: base.points[start..end].to_vec(),
-                                    points_low: base.points_low.iter().skip(start).take(end - start).collect::<Vec<_>>().into(),
+                                    points_low: base
+                                        .points_low
+                                        .iter()
+                                        .skip(start)
+                                        .take(end - start)
+                                        .collect::<Vec<_>>()
+                                        .into(),
                                     pattern_stations: Vec::new(),
                                     snap_pts: Vec::new(),
                                     tangent_geoms: Vec::new(),
@@ -3161,7 +3165,6 @@ fn custom_arrow_from_block(
         || record.is_paper_space()
         || record.flags.is_xref
         || record.flags.is_xref_overlay
-        || record.flags.is_external
     {
         return None;
     }
@@ -3199,6 +3202,41 @@ fn custom_arrow_from_block(
             lines,
             fill,
         })
+    }
+}
+
+#[cfg(test)]
+mod external_arrow_tests {
+    use super::*;
+    #[test]
+    fn an_external_dependent_ordinary_block_remains_a_custom_arrow() {
+        let mut doc = Document::new();
+        let mut record = document::tables::BlockRecord::new("XREF|ARROW");
+        record.handle = doc.allocate_handle();
+        let handle = record.handle;
+        doc.block_records.add(record).unwrap();
+        let mut line = document::entities::Line::from_coords(-1., 0., 0., 0., 0., 0.);
+        line.common.owner_handle = handle;
+        doc.add_entity(EntityType::Line(line)).unwrap();
+        assert!(custom_arrow_from_block(
+            &doc,
+            doc.block_records.get("XREF|ARROW").unwrap(),
+            1.,
+            false
+        )
+        .is_some());
+        doc.block_records
+            .get_mut("XREF|ARROW")
+            .unwrap()
+            .flags
+            .is_external = true;
+        assert!(custom_arrow_from_block(
+            &doc,
+            doc.block_records.get("XREF|ARROW").unwrap(),
+            1.,
+            false
+        )
+        .is_some());
     }
 }
 
@@ -3435,6 +3473,8 @@ fn append_custom_fill_points(
 }
 
 pub(crate) struct DimGeom {
+    /// Boundary between the angular extension lines, including when either is suppressed.
+    pub(crate) ext2_start: Option<usize>,
     pub(crate) ext_lines: Vec<[f32; 3]>,
     pub(crate) dim_lines: Vec<[f32; 3]>,
     /// Arrowhead / tick outlines of a dimension: drawn solid, never in the
@@ -3453,6 +3493,7 @@ pub(crate) struct DimGeom {
 impl DimGeom {
     pub(crate) fn new() -> Self {
         Self {
+            ext2_start: None,
             ext_lines: Vec::new(),
             dim_lines: Vec::new(),
             arrow_lines: Vec::new(),
@@ -3891,7 +3932,7 @@ mod tests {
     }
 
     #[test]
-    fn test_split_mixed_polyline_straight_lines_have_taper_widths() {
+    fn split_mixed_polyline_straight_lines_have_taper_widths() {
         let tg_line = TangentGeom::Line {
             p1: [0.0, 0.0, 0.0],
             p2: [10.0, 0.0, 0.0],
@@ -4010,7 +4051,7 @@ mod tests {
     }
 
     #[test]
-    fn test_split_mixed_polyline_zero_width_segments_after_tapered_segment() {
+    fn split_mixed_polyline_zero_width_segments_after_tapered_segment() {
         let tg_line = TangentGeom::Line {
             p1: [0.0, 0.0, 0.0],
             p2: [10.0, 0.0, 0.0],
@@ -4082,7 +4123,7 @@ mod tests {
     }
 
     #[test]
-    fn test_split_mixed_polyline_reversed_arc_aligns_endpoints() {
+    fn split_mixed_polyline_reversed_arc_aligns_endpoints() {
         // Clockwise arc from (10.0, 0.0) to (15.0, 5.0).
         // bulge_arc_to_tangent inverts angles so start_angle is at (15.0, 5.0) and end_angle at (10.0, 0.0).
         let tg_arc_reversed = TangentGeom::Arc {
@@ -4210,7 +4251,10 @@ mod tests {
         assert!(fills(0x00).is_empty(), "no background");
         let own = fills(0x01);
         assert_eq!(own.len(), 1, "a fill of its own colour");
-        assert!(own[0].bg_adapt.is_none(), "its own colour is not the canvas");
+        assert!(
+            own[0].bg_adapt.is_none(),
+            "its own colour is not the canvas"
+        );
         let window = fills(0x03);
         assert_eq!(window.len(), 1, "a fill of the window's colour");
         assert!(

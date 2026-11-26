@@ -9,9 +9,7 @@ fn xref_source_path(
     base_dir: &std::path::Path,
 ) -> Result<std::path::PathBuf, String> {
     let Some(record) = doc.block_records.get(name) else {
-        return Err(format!(
-            "XOPEN: no definition for \"{name}\"."
-        ));
+        return Err(format!("XOPEN: no definition for \"{name}\"."));
     };
     if !record.flags.is_xref && !record.flags.is_xref_overlay {
         return Err("XOPEN: select an external reference (xref) to open.".to_string());
@@ -78,6 +76,12 @@ impl OpenCADStudio {
                     .push_info(crate::tf!("XREF  Unloaded (skipped): \"{}\"", info.name).as_ref());
             }
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        if crate::io::xref::ifc_slice::is_ifc(std::path::Path::new(&info.path)) {
+            for diagnostic in &info.diagnostics {
+                self.command_line.push_warning(diagnostic);
+            }
+        }
     }
 
     /// The selection as SVG on the system clipboard, so other programs
@@ -87,8 +91,8 @@ impl OpenCADStudio {
         i: usize,
         handles: &[document::Handle],
     ) -> Task<Message> {
-        let Some(svg) = crate::io::svg_clipboard::selection_svg(&self.tabs[i].scene, handles)
-        else {
+        let strokes = crate::io::svg_clipboard::selection_strokes(&self.tabs[i].scene, handles);
+        let Some(svg) = crate::io::svg_clipboard::strokes_svg(&strokes) else {
             return Task::none();
         };
         #[cfg(target_arch = "wasm32")]
@@ -98,7 +102,15 @@ impl OpenCADStudio {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            iced::clipboard::write(svg).discard()
+            // Where the platform has a registered SVG format, the markup
+            // goes there as well as text, in one write; drawing programs
+            // read it from there (#2018); on Windows a metafile goes with it
+            // (#3431). Elsewhere the toolkit writes text.
+            if crate::sys::clipboard_svg::write(&svg, &strokes) {
+                Task::none()
+            } else {
+                iced::clipboard::write(svg).discard()
+            }
         }
     }
 
@@ -1468,10 +1480,12 @@ impl OpenCADStudio {
                                 .filter(|br| reload_keys.contains(&br.handle.value()))
                                 .map(|br| br.handle)
                                 .collect();
-                            let infos = crate::io::xref::resolve_xrefs_for_keys(
+                            let xref_session = self.tabs[i].ifccad_session.clone();
+                            let infos = crate::io::xref::resolve_xrefs_for_keys_in_session(
                                 &mut self.tabs[i].scene.document,
                                 base_dir,
                                 &handles,
+                                xref_session.as_ref(),
                             );
                             // Targeted reload updates only the selected rows.
                             {
@@ -2078,22 +2092,24 @@ impl OpenCADStudio {
                     .into_iter()
                     .find(|(_, e)| matches!(e, document::EntityType::Insert(_)))
                 {
-                    return Some(match xref_source_path(
-                        &self.tabs[i].scene.document,
-                        &insert.block_name,
-                        &base_dir,
-                    ) {
-                        Ok(path) => {
-                            self.command_line.push_output(
-                                crate::tf!("XOPEN: opening \"{}\".", path.display()).as_ref(),
-                            );
-                            Task::done(Message::OpenRecent(path))
-                        }
-                        Err(message) => {
-                            self.command_line.push_error(&message);
-                            self.finish_dispatch(cmd)
-                        }
-                    });
+                    return Some(
+                        match xref_source_path(
+                            &self.tabs[i].scene.document,
+                            &insert.block_name,
+                            &base_dir,
+                        ) {
+                            Ok(path) => {
+                                self.command_line.push_output(
+                                    crate::tf!("XOPEN: opening \"{}\".", path.display()).as_ref(),
+                                );
+                                Task::done(Message::OpenRecent(path))
+                            }
+                            Err(message) => {
+                                self.command_line.push_error(&message);
+                                self.finish_dispatch(cmd)
+                            }
+                        },
+                    );
                 }
                 if had_selection {
                     self.command_line.push_error(
@@ -2117,8 +2133,7 @@ impl OpenCADStudio {
                     })
                     .collect();
                 use crate::command::CadCommand;
-                let command =
-                    crate::modules::insert::xref_cmd::XOpenPickCommand::new(references);
+                let command = crate::modules::insert::xref_cmd::XOpenPickCommand::new(references);
                 self.command_line.push_info(&command.prompt());
                 self.tabs[i].active_cmd = Some(Box::new(command));
                 return Some(Task::none());
@@ -2145,22 +2160,24 @@ impl OpenCADStudio {
                         return Some(self.finish_dispatch(cmd));
                     }
                 };
-                return Some(match xref_source_path(
-                    &self.tabs[i].scene.document,
-                    &insert.block_name,
-                    &base_dir,
-                ) {
-                    Ok(path) => {
-                        self.command_line.push_output(
-                            crate::tf!("XOPEN: opening \"{}\".", path.display()).as_ref(),
-                        );
-                        Task::done(Message::OpenRecent(path))
-                    }
-                    Err(message) => {
-                        self.command_line.push_error(&message);
-                        self.finish_dispatch(cmd)
-                    }
-                });
+                return Some(
+                    match xref_source_path(
+                        &self.tabs[i].scene.document,
+                        &insert.block_name,
+                        &base_dir,
+                    ) {
+                        Ok(path) => {
+                            self.command_line.push_output(
+                                crate::tf!("XOPEN: opening \"{}\".", path.display()).as_ref(),
+                            );
+                            Task::done(Message::OpenRecent(path))
+                        }
+                        Err(message) => {
+                            self.command_line.push_error(&message);
+                            self.finish_dispatch(cmd)
+                        }
+                    },
+                );
             }
 
             "NCOPY" | "NCOPYALL" => {
@@ -2367,6 +2384,67 @@ mod tests {
             .expect("-INSERT stays active after the listing");
         assert_eq!(cmd.prompt(), "Enter block name or [?]:");
         assert!(out.contains("Enter block name or [?]:"), "{out}");
+    }
+
+    /// A drawing named at -INSERT's block prompt comes in at the scale its
+    /// INSUNITS asks for against the host's, as an XREF of it does: a 10 m
+    /// line in a millimetre drawing is 10,000 mm long. (#3474)
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn insert_of_a_drawing_file_converts_its_units() {
+        const MILLIMETERS: i16 = 4;
+        let cases = [
+            ("metres", 6, 1000.0),
+            ("feet", 2, 304.8),
+            ("inches", 1, 25.4),
+            ("millimetres", MILLIMETERS, 1.0),
+            ("unitless", 0, 1.0),
+        ];
+        let mut scales = Vec::new();
+        for (name, units, _) in cases {
+            let mut source = fresh_app();
+            let s = source.active_tab;
+            let mut line = document::entities::Line::new();
+            line.end = document::types::Vector3::new(10.0, 0.0, 0.0);
+            source.tabs[s]
+                .scene
+                .add_entity(document::EntityType::Line(line));
+            source.tabs[s].scene.document.header.insertion_units = units;
+            let dir = tempfile::tempdir().expect("a temporary directory");
+            let path = dir.path().join(format!("{name}.dwg"));
+            crate::io::save(&source.tabs[s].scene.document, &path).expect("write the source drawing");
+
+            let mut app = fresh_app();
+            let i = app.active_tab;
+            app.tabs[i].scene.document.header.insertion_units = MILLIMETERS;
+            let _ = app.run_command_line(&format!("-INSERT {} 0,0 1 1 0", path.display()));
+            let transcript = app
+                .command_line
+                .history
+                .iter()
+                .map(|e| e.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" | ");
+            let scale = app.tabs[i]
+                .scene
+                .document
+                .entities()
+                .find_map(|entity| match entity {
+                    document::EntityType::Insert(insert) => Some(insert.x_scale()),
+                    _ => None,
+                });
+            scales.push((name, scale, transcript));
+        }
+        for ((name, _, expected), (_, scale, transcript)) in cases.iter().zip(&scales) {
+            let scale =
+                scale.unwrap_or_else(|| panic!("{name}: no block reference was inserted: {transcript}"));
+            assert!(
+                (scale - expected).abs() < 1e-9,
+                "{name} drawing inserted into a millimetre drawing at scale {scale}, expected \
+                 {expected}; all scales: {:?}",
+                scales.iter().map(|(n, s, _)| (n, s)).collect::<Vec<_>>()
+            );
+        }
     }
 
     // ATTMAN and BATTMAN open the Block Attribute Manager. A drawing without
@@ -3325,6 +3403,83 @@ mod tests {
         assert_eq!(
             app.block_palette.source_block_epoch,
             app.tabs[other].scene.block_epoch
+        );
+    }
+}
+
+/// Ctrl+C puts the selection on the system clipboard as SVG for other
+/// programs (#2018). They look for it under the `image/svg+xml` format (a
+/// registered clipboard format on Windows, a selection target on X11);
+/// text alone is pasted as text or not at all.
+#[cfg(all(test, any(target_os = "windows", target_os = "linux")))]
+mod svg_clipboard_format_tests {
+    use crate::app::OpenCADStudio;
+    use document::entities::Line;
+    use document::EntityType;
+
+    /// The clipboard writes a task leaves to the GUI toolkit, which writes
+    /// text only.
+    fn toolkit_clipboard_writes(task: iced::Task<crate::app::Message>) -> Vec<String> {
+        use iced::futures::StreamExt;
+        let mut writes = Vec::new();
+        let Some(mut stream) = iced_runtime::task::into_stream(task) else {
+            return writes;
+        };
+        while let Some(action) = iced::futures::executor::block_on(stream.next()) {
+            if let iced_runtime::Action::Clipboard(iced_runtime::clipboard::Action::Write {
+                content,
+                ..
+            }) = action
+            {
+                writes.push(format!("{content:?}"));
+            }
+        }
+        writes
+    }
+
+    #[test]
+    fn copyclip_does_not_leave_the_svg_to_a_text_only_write() {
+        let mut app = OpenCADStudio::new_for_test();
+        app.automation_op(r#"{"op":"new"}"#);
+        let i = app.active_tab;
+        let line = app.tabs[i]
+            .scene
+            .add_entity(EntityType::Line(Line::from_coords(
+                0.0, 0.0, 0.0, 40.0, 20.0, 0.0,
+            )));
+        app.tabs[i].scene.select_entity(line, true);
+        let task = app.dispatch_command("COPYCLIP");
+        let writes = toolkit_clipboard_writes(task);
+        let written = crate::sys::clipboard_svg::test_record::take();
+        assert_eq!(written.len(), 1, "one write of the system clipboard");
+        let formats: Vec<&str> = written[0]
+            .iter()
+            .map(|(format, _)| format.as_ref())
+            .collect();
+        if cfg!(target_os = "windows") {
+            assert_eq!(formats, ["CF_UNICODETEXT", "image/svg+xml"]);
+        } else {
+            assert_eq!(
+                formats,
+                ["UTF8_STRING", "text/plain;charset=utf-8", "image/svg+xml"]
+            );
+        }
+        let (_, svg) = written[0]
+            .iter()
+            .find(|(format, _)| *format == "image/svg+xml")
+            .expect("the SVG format");
+        let svg = std::str::from_utf8(svg).expect("UTF-8 markup");
+        assert!(
+            svg.starts_with("<?xml") && svg.contains("<svg"),
+            "{svg:.60}"
+        );
+        assert!(
+            writes.is_empty(),
+            "the SVG went to the clipboard as text only: {:?}",
+            writes
+                .iter()
+                .map(|write| write.chars().take(60).collect::<String>())
+                .collect::<Vec<_>>()
         );
     }
 }

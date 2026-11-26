@@ -12,11 +12,208 @@ use serde_json::Value;
 pub struct IfccadSession(
     Option<Arc<Mutex<document::IfccadRoundtripContext>>>,
     Arc<BTreeMap<document::Handle, document::ifccad::IfccadPlotStyleSource>>,
+    pub(crate) Arc<Mutex<super::xref_sources::XrefSourceRegistry>>,
+    pub(crate) Arc<Mutex<BTreeMap<document::ifccad::IfccadExternalSourceId, String>>>,
 );
 
+/// Explicit browser choice, scoped to one open drawing and stored locator.
+#[derive(Clone, Debug)]
+pub struct ExternalSourceBytes {
+    pub resource_id: u64,
+    pub file_name: String,
+    pub bytes: Arc<Vec<u8>>,
+}
+
 impl IfccadSession {
+    /// Last successfully loaded identity belongs to this tab, even when two
+    /// native files share a name/header and allocate the same local source IDs.
+    pub fn observe_external_source_guid(
+        &self,
+        handle: document::Handle,
+        guid: &str,
+    ) -> Option<bool> {
+        let source = self.external_source(handle)?;
+        if source.source.format() == document::ifccad::IfccadExternalSourceFormat::Ifccad {
+            return Some(false);
+        }
+        let Some(loaded) = document::ifccad::normalize_ifccad_fingerprint_guid(guid) else {
+            return Some(false);
+        };
+        let fingerprint_guid = source.source.fingerprint_guid().map(str::to_owned);
+        let previous = self
+            .3
+            .lock()
+            .ok()?
+            .insert(source.id, loaded.clone())
+            .or(fingerprint_guid);
+        Some(previous.is_some_and(|previous| previous != loaded))
+    }
+    pub fn external_source_bytes(
+        &self,
+        handle: document::Handle,
+        path: &str,
+    ) -> Option<ExternalSourceBytes> {
+        let source = self.external_source(handle)?;
+        self.resource_binding(1, source.id.0, path)
+    }
+
+    pub fn bind_external_source_bytes(
+        &self,
+        handle: document::Handle,
+        path: &str,
+        file_name: String,
+        bytes: Arc<Vec<u8>>,
+    ) -> Result<(), String> {
+        let source = self
+            .external_source(handle)
+            .ok_or("Unknown native external source")?;
+        self.bind_resource_bytes(1, source.id.0, path, file_name, bytes)
+            .map(|_| ())
+    }
+
+    pub(crate) fn source_by_id(&self, id: u64) -> Option<document::ifccad::IfccadExternalSource> {
+        self.0
+            .as_ref()?
+            .lock()
+            .ok()?
+            .external_source_definitions()
+            .find(|(_, s)| s.id.0 == id)
+            .map(|(_, s)| s.clone())
+    }
+
     pub fn has_native_context(&self) -> bool {
         self.0.is_some()
+    }
+
+    pub fn external_source(
+        &self,
+        handle: document::Handle,
+    ) -> Option<document::ifccad::IfccadExternalSource> {
+        self.0
+            .as_ref()?
+            .lock()
+            .ok()?
+            .external_source(handle)
+            .cloned()
+    }
+
+    /// Remember source metadata read during an explicit native attachment.
+    pub fn register_external_source(
+        &self,
+        doc: &Document,
+        handle: document::Handle,
+        content: document::ifccad::IfccadExternalSourceContent,
+    ) -> Result<(), String> {
+        let Some(context) = &self.0 else {
+            return Ok(());
+        };
+        let record = doc
+            .block_records
+            .iter()
+            .find(|r| r.handle == handle)
+            .ok_or("XREF definition is unavailable")?;
+        context
+            .lock()
+            .map_err(|_| "IFCCAD source state is unavailable")?
+            .register_external_source(
+                handle,
+                record.name.clone(),
+                record.xref_path.clone(),
+                content,
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// A changed source basis/unit needs an explicit placement reassessment.
+    /// A changed GUID alone continues through the shared DWG warning policy.
+    pub fn check_external_source_reload(
+        &self,
+        handle: document::Handle,
+        content: &document::ifccad::IfccadExternalSourceContent,
+    ) -> Result<(), String> {
+        let Some(source) = self.external_source(handle) else {
+            return Ok(());
+        };
+        if source.source.format() != content.format()
+            || source.source.base_point() != content.base_point()
+            || source
+                .source
+                .insertion_unit()
+                .is_some_and(|unit| Some(unit) != content.insertion_unit())
+        {
+            return Err(format!("XREF {}: source format, base point or insertion unit changed; reassess placement and scale before reloading",source.name));
+        }
+        Ok(())
+    }
+
+    /// Restore external definition metadata in a disposable CAD save copy.
+    pub fn prepare_cad_external_sources(&self, doc: &mut Document) -> Result<(), String> {
+        let Some(context) = &self.0 else {
+            return Ok(());
+        };
+        let context = context
+            .lock()
+            .map_err(|_| "IFCCAD source state is unavailable")?;
+        let sources = doc
+            .block_records
+            .iter()
+            .filter_map(|r| {
+                if !r.flags.is_xref {
+                    return None;
+                }
+                Some(
+                    context
+                        .external_source_for_path(r.handle, &r.xref_path)
+                        .map(|source| {
+                            source
+                                .map(|s| (r.handle, r.block_entity_handle, r.xref_path.clone(), s))
+                        }),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        for (handle, marker, path, source) in sources.into_iter().flatten() {
+            if source.source.format() != document::ifccad::IfccadExternalSourceFormat::Dwg {
+                return Err(format!(
+                    "XREF {}: convert the external source to DWG before CAD export",
+                    source.name
+                ));
+            }
+            let base_point = source.source.base_point();
+            let fingerprint_guid = source.source.fingerprint_guid();
+            let base = document::Vector3::new(base_point[0], base_point[1], base_point[2]);
+            if let Some(record) = doc.block_records.iter_mut().find(|r| r.handle == handle) {
+                record.base_point = base;
+            }
+            if let Some(document::EntityType::Block(block)) = doc.get_entity_mut(marker) {
+                block.base_point = base;
+            }
+            if let Some(guid) = fingerprint_guid {
+                let dependency = doc
+                    .file_dependencies
+                    .iter_mut()
+                    .find(|d| d.feature.eq_ignore_ascii_case("Acad:XRef") && d.file_name == path);
+                if let Some(dependency) = dependency {
+                    dependency.fingerprint_guid =
+                        Some(format!("{{{}}}", guid.to_ascii_uppercase()));
+                } else {
+                    doc.file_dependencies
+                        .push(document::acadrust::document::FileDependency {
+                            feature: "Acad:XRef".into(),
+                            file_name: path,
+                            found_path: String::new(),
+                            fingerprint_guid: Some(format!("{{{}}}", guid.to_ascii_uppercase())),
+                            version_guid: None,
+                            timestamp: 0,
+                            file_size: 0,
+                            affects_graphics: true,
+                            reference_count: 1,
+                        });
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn bind_plot_style(
@@ -87,6 +284,17 @@ impl IfccadSession {
             "dxf" | "dwg" | "dwt" | "dws"
         ) {
             self.check_cad_plot_style_bindings(doc)?;
+            for record in doc.block_records.iter().filter(|r| r.flags.is_xref) {
+                if let Some(source) = self.external_source(record.handle) {
+                    if source.source.format() != document::ifccad::IfccadExternalSourceFormat::Dwg {
+                        return Err(format!(
+                            "XREF {}: convert the external source to DWG before CAD export",
+                            source.name
+                        ));
+                    }
+                }
+            }
+            document::validate_cad_external_sources(doc).map_err(|e| e.to_string())?;
         }
         if super::is_ifccad_extension(ext) || !self.has_blocked_entities() {
             Ok(())
@@ -172,6 +380,35 @@ fn ifccad_plot_layout(doc: &Document, name: &str) -> Option<document::Handle> {
         })
 }
 
+/// Parsed native source with its owning drawing context; no external IO.
+#[derive(Debug)]
+pub struct IfccadSourceRead {
+    pub outcome: document::ReadOutcome,
+    pub content: document::ifccad::IfccadExternalSourceContent,
+    pub context: document::IfccadRoundtripContext,
+}
+
+pub fn read_ifccad_source(bytes: &[u8]) -> Result<IfccadSourceRead, String> {
+    if bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+        return Err("Zstd-compressed IFCCAD sources are unavailable in this host build".into());
+    }
+    let read = || -> Result<_, Error> {
+        let drawing = if bytes.iter().find(|byte| !byte.is_ascii_whitespace()) == Some(&b'{') {
+            document::ifccad::load_ifccad_bytes(bytes, Default::default())?.into_document()
+        } else {
+            document::ifccad::load_ifccad_cbor_bytes(bytes, Default::default())?.into_document()
+        };
+        let content = document::ifccad_external_source_content(&drawing)?;
+        let (outcome, context) = document::Ifcx.import_ifccad_preserving(&drawing)?;
+        Ok(IfccadSourceRead {
+            outcome: super::external_read_outcome(outcome.document, outcome.losses),
+            content,
+            context,
+        })
+    };
+    read().map_err(|error| error.to_string())
+}
+
 /// Read IFCCAD for a drawing tab. A context is needed while it retains roots.
 pub fn read_ifccad_for_edit(
     bytes: &[u8],
@@ -202,6 +439,8 @@ pub fn read_ifccad_for_edit(
     let session = Some(IfccadSession(
         Some(Arc::new(Mutex::new(context))),
         Arc::new(sources),
+        Default::default(),
+        Default::default(),
     ));
     Ok((
         super::external_read_outcome(outcome.document, outcome.losses),

@@ -46,7 +46,8 @@ These are the default shortcuts. Change them under `CUI` › **Keyboard Shortcut
 | Ctrl+Shift+V | Paste as block |
 | Ctrl+A | Select all |
 | Delete | Erase the selection |
-| Ctrl+F, Ctrl+H | Find and replace |
+| Ctrl+F | Find and replace |
+| Ctrl+H, Ctrl+Shift+A | Group selection on/off |
 | Ctrl+K | Hyperlink |
 | Ctrl+W | Selection cycling on/off |
 
@@ -58,6 +59,8 @@ These are the default shortcuts. Change them under `CUI` › **Keyboard Shortcut
 | Ctrl+9 | Command line on/off |
 | Ctrl+0 | Clean screen |
 | Ctrl+R | Next viewport |
+| Ctrl+PgDn | Next layout tab |
+| Ctrl+PgUp | Previous layout tab |
 | Alt | Ribbon key tips |
 
 ## At the command line

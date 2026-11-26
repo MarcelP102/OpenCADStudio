@@ -1091,6 +1091,10 @@ impl OpenCADStudio {
                 } else {
                     let (go, gr) = self.drafting_grid_basis(i);
                     self.snapper.from_point = self.last_point;
+                    self.snapper.tangent_lines = self.tabs[i]
+                        .active_cmd
+                        .as_ref()
+                        .is_some_and(|c| c.tangent_to_lines());
 
                     let construction_ray = if free_point {
                         None
@@ -1228,7 +1232,9 @@ impl OpenCADStudio {
                         pt.z = 0.0;
                     }
                 }
-                let otrack = if axis_lock.is_none() {
+                // An object pick tests the bare cursor: tracking from the
+                // previous point would pull it off the object under it.
+                let otrack = if axis_lock.is_none() && !needs_entity_click {
                     self.active_otrack_hit(
                         i,
                         raw,
@@ -1260,6 +1266,7 @@ impl OpenCADStudio {
                     }
                 } else if axis_lock.is_none()
                     && !free_point
+                    && !needs_entity_click
                     && !uses_command_cursor_plane
                     && !snap_hit.is_some_and(|s| s.snap_type != crate::snap::SnapType::Grid)
                 {
@@ -1573,8 +1580,10 @@ impl OpenCADStudio {
                             .map(|(entity, _)| entity)
                             .or_else(|| self.tabs[i].scene.document.get_entity(handle).cloned())
                         {
-                            if let Some(cmd) = self.tabs[i].active_cmd.as_mut() {
+                            let tab = &mut self.tabs[i];
+                            if let Some(cmd) = tab.active_cmd.as_mut() {
                                 cmd.inject_picked_entity(entity);
+                                cmd.inject_picked_from(&tab.scene.document);
                                 if let Some(area) = surface_area {
                                     cmd.inject_picked_surface_area(area);
                                 }
@@ -1794,6 +1803,7 @@ impl OpenCADStudio {
                 self.snapper.clear_override();
                 self.dyn_user_reshaped = false;
                 self.dyn_coord_absolute = self.dyn_pointer_absolute;
+                self.dyn_coord_wcs = false;
                 self.sync_dyn_fields();
                 self.reset_tracking_after_point();
                 // A running Tangent snap may carry a tangent object; a
@@ -2443,6 +2453,27 @@ was_selected={}",
                     // Selection filter: keep only allowed types.
                     handles.retain(|&h| self.tabs[i].scene.passes_selection_filter(h));
                     self.filter_handles_reject_locked(i, &mut handles);
+                    // Ctrl+window picks the polyline segments the box
+                    // catches, as Ctrl+click picks one (sub-objects).
+                    let mut sub_picked = false;
+                    if self.ctrl_down && self.tabs[i].active_cmd.is_none() && !is_gathering {
+                        let (view_rot, eye, _) = self.pick_view(i, &edit_cam, bounds);
+                        let to_screen = |world: glam::DVec3| {
+                            let s = scene::pick::hit_test::world_to_screen(
+                                world, view_rot, eye, bounds,
+                            );
+                            [f64::from(s.x), f64::from(s.y)]
+                        };
+                        let min = [f64::from(a.x.min(p.x)), f64::from(a.y.min(p.y))];
+                        let max = [f64::from(a.x.max(p.x)), f64::from(a.y.max(p.y))];
+                        let mut picked = false;
+                        for &handle in &handles {
+                            picked |= self.tabs[i]
+                                .scene
+                                .add_box_sub_segments(handle, to_screen, min, max, crossing);
+                        }
+                        sub_picked = picked;
+                    }
                     let polygon = [a, Point::new(p.x, a.y), p, Point::new(a.x, p.y)];
                     let marker_hit = is_gathering
                         && self.select_command_marker_region(
@@ -2456,16 +2487,20 @@ was_selected={}",
                         );
                     let filter_ms = t_filter.map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0);
                     let t_apply = crate::perf::enabled().then(Instant::now);
-                    self.commit_area_selection(
-                        i,
-                        &handles,
-                        marker_hit,
-                        selection_pick_add,
-                        is_gathering,
-                    );
+                    if !sub_picked {
+                        self.commit_area_selection(
+                            i,
+                            &handles,
+                            marker_hit,
+                            selection_pick_add,
+                            is_gathering,
+                        );
+                    }
                     let apply_ms = t_apply.map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0);
                     let t_props = crate::perf::enabled().then(Instant::now);
-                    self.pick_authoring_box(a, p, crossing, !handles.is_empty());
+                    if !sub_picked {
+                        self.pick_authoring_box(a, p, crossing, !handles.is_empty());
+                    }
                     self.queue_properties_refresh(i);
                     if crate::perf::enabled() {
                         crate::perf_record!(

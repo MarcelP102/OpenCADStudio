@@ -26,6 +26,10 @@ pub(super) async fn pick(title: String, filters: Vec<(String, Vec<String>)>) -> 
         let extensions: Vec<&str> = extensions.iter().map(String::as_str).collect();
         dialog = dialog.add_filter(name.as_str(), &extensions);
     }
+    pick_from(dialog).await
+}
+
+pub(super) async fn pick_from(dialog: rfd::AsyncFileDialog) -> Option<String> {
     let handle = dialog.pick_file().await?;
     let path = crate::sys::handle_path(&handle)
         .to_string_lossy()
@@ -87,6 +91,7 @@ fn read_dgn_window(path: &str, code_page: Option<u16>) -> Option<DgnWindowRead> 
 
 /// The importer a file goes to.
 enum Route {
+    IfcPlan,
     Pdf,
     /// A DGN model if the read on a worker finds one; else the error.
     Dgn(String),
@@ -127,6 +132,7 @@ fn route(path: &str, format: Option<usize>) -> Result<Route, String> {
         Some("Metafile") => return Ok(Route::Wmf),
         Some("SVG") => return Ok(Route::Svg),
         Some("3D Studio") => return Ok(Route::Tds),
+        Some("IFC (*.ifc)") => return Ok(Route::IfcPlan),
         _ => {}
     }
     let pdf = if by_extension {
@@ -182,6 +188,8 @@ impl OpenCADStudio {
             // A file named after IMPORT (or typed at its prompt).
             ("IMPORT" | "_IMPORTFILE", false) => Some(self.import_routed(rest, None)),
             ("_IMPORTFILE", true) => Some(Task::none()),
+            ("IFC2PLAN", true) => Some(self.begin_ifc_plan()),
+            ("IFC2PLAN", false) => Some(self.read_ifc_plan(rest)),
             ("DGNIMPORT", true) if dialog => Some(self.pick_dgn_file()),
             ("DGNIMPORT" | "-DGNIMPORT", _) => {
                 use crate::command::CadCommand;
@@ -515,6 +523,7 @@ impl OpenCADStudio {
             return Task::none();
         }
         match route(path, format) {
+            Ok(Route::IfcPlan) => self.read_ifc_plan(path),
             Ok(Route::Pdf) => {
                 self.remember_import(path);
                 self.dispatch_command(&format!("_PDFIMPORTFILE {path}"))
@@ -628,6 +637,7 @@ impl OpenCADStudio {
                 }
             }
             ImportDialogMsg::Picked(None) => {}
+            ImportDialogMsg::IfcPlan(event) => return self.update_ifc_plan(event),
             ImportDialogMsg::ImportOk => {
                 let Some(s) = self.import_dialogs.file.as_ref() else {
                     return Task::none();
@@ -646,6 +656,7 @@ impl OpenCADStudio {
                     None => route(&path, Some(format)),
                 };
                 match routed {
+                    Ok(Route::IfcPlan) => return self.read_ifc_plan(&path),
                     Err(error) => {
                         if let Some(s) = self.import_dialogs.file.as_mut() {
                             s.error = Some(error);
@@ -1410,6 +1421,12 @@ fn place_converted(
         }
         entity
     };
+    // The definitions are invalidated together once they are all in: one
+    // pass per definition walked the whole drawing each time, which made a
+    // file with thousands of cells take minutes (#3596).
+    let mut added: Vec<(document::Handle, crate::scene::ChangeKind)> = Vec::new();
+    let mut records = Vec::new();
+    let mut names = Vec::new();
     for (name, entities) in converted.blocks {
         let target = &blocks[&name];
         if scene.document.block_records.get(target).is_some() {
@@ -1419,11 +1436,17 @@ fn place_converted(
             .into_iter()
             .map(|e| placed_dimension_text(&scene.document, fix(e)))
             .collect();
-        if let Ok(handles) =
-            scene.define_block_from_owned_entities(entities, target, glam::DVec3::ZERO)
+        if let Ok((record, handles)) =
+            scene.define_block_from_owned_entities_unbumped(entities, target, glam::DVec3::ZERO)
         {
             scene.bind_outline_hatches(&handles);
+            added.extend(handles.into_iter().map(|h| (h, crate::scene::ChangeKind::Added)));
+            records.push(record);
+            names.push(target.clone());
         }
+    }
+    if !records.is_empty() {
+        scene.bump_entities_restyled_with_block_deps(&added, &records, &names);
     }
     let mut handles = Vec::new();
     for entity in converted.entities {

@@ -16,13 +16,13 @@
 //! and must not block. For heavy work, forward the notification to a channel.
 
 use std::path::Path;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use crate::host::{HostApi, HostNotification, PluginNotification};
 use crate::process::{PluginError, PluginProcess};
-use crate::ribbon::owned::{to_shared_module, OwnedEntityClasses, SharedCadModule};
+use crate::ribbon::owned::{OwnedEntityClasses, SharedCadModule, to_shared_module};
 
 /// Maximum notifications parked in the boot-window `attach.pending` queue
 /// (review finding 6): a plugin that never acks its ChannelReady cannot grow
@@ -36,6 +36,9 @@ pub type NotificationHandler = Arc<dyn Fn(&str, Option<u64>, PluginNotification)
 pub struct PluginManager {
     plugins: Vec<LoadedPlugin>,
     notification_handler: Option<NotificationHandler>,
+}
+
+thread_local! {
     /// Ids of plugins whose spawn/bootstrap is IN FLIGHT (`load_with_expected_id`
     /// began and has not returned): owner-scoped declarations (entity classes,
     /// quad panels, custom grips) arrive as nested requests during that window —
@@ -43,12 +46,21 @@ pub struct PluginManager {
     /// but the registry entry does not exist until the load returns, and the
     /// empty-identity manifest call used to refuse them. Cleared when the load
     /// finishes (entry inserted) or fails, so a marker never outlives a plugin.
-    booting: std::sync::Mutex<std::collections::HashSet<String>>,
+    ///
+    /// Kept per THREAD, not per manager (#3602): the host's startup load fills
+    /// a local manager and installs it only after every plugin has loaded, so
+    /// a marker on that manager was invisible to the installed (empty) one the
+    /// declaration law asks. Boot and its nested requests run on one thread.
+    static BOOTING: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
 }
 
 struct LoadedPlugin {
     process: Arc<PluginProcess>,
     module: SharedCadModule,
+    /// Extra tabs (API v27), in `process.ribbon_tabs()` order; ids are
+    /// `<plugin id>:<tab id>`.
+    tabs: Vec<SharedCadModule>,
     /// API v13 notification-attach state (interior: broadcasts reach the
     /// manager through a shared reference): notifications to this process
     /// are deferred (parked) until its runner acks
@@ -124,7 +136,6 @@ impl PluginManager {
         Self {
             plugins: Vec::new(),
             notification_handler: None,
-            booting: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -172,6 +183,20 @@ impl PluginManager {
             Some(h) => Arc::clone(h),
             None => Arc::new(|_id, _cmd, _notif| {}),
         };
+        // A notification that arrives before the spawn pins the manifest id
+        // carries the empty placeholder. The package-declared id names this
+        // process from the start, so the ChannelReady ack of one of several
+        // plugins booting together is not ambiguous (#3581).
+        let handler: NotificationHandler = match expected_id {
+            Some(expected) if !expected.is_empty() => {
+                let expected = expected.to_string();
+                Arc::new(move |id, command, notification| {
+                    let id = if id.is_empty() { expected.as_str() } else { id };
+                    handler(id, command, notification)
+                })
+            }
+            _ => handler,
+        };
         // The spawn bootstrap IS the declaration window: quad panels/classes/
         // grips register while GetManifest is still in flight (the spawn
         // attributes them to the package-declared id). Mark the boot so the
@@ -195,9 +220,21 @@ impl PluginManager {
             }
             let name = process.manifest().name.clone();
             let module = to_shared_module(id.clone(), name, process.ribbon().to_vec());
+            let tabs = process
+                .ribbon_tabs()
+                .iter()
+                .map(|tab| {
+                    to_shared_module(
+                        format!("{id}:{}", tab.id),
+                        tab.title.clone(),
+                        tab.groups.clone(),
+                    )
+                })
+                .collect();
             self.plugins.push(LoadedPlugin {
                 process: Arc::new(process),
                 module,
+                tabs,
                 attach: std::sync::Mutex::new(NotificationAttach {
                     grace_deadline: Some(std::time::Instant::now() + notification_boot_grace()),
                     ..Default::default()
@@ -376,7 +413,7 @@ impl PluginManager {
         match self
             .plugins
             .iter()
-            .position(|p| p.process.id() == plugin_id)
+            .position(|p| p.process.id().eq_ignore_ascii_case(plugin_id))
         {
             Some(index) => self.attach_by_index(index),
             None => AttachOutcome::UnknownPlugin,
@@ -448,9 +485,34 @@ impl PluginManager {
             .plugins
             .iter()
             .filter(|p| !is_disabled(p.process.id()) && p.process.is_alive())
-            .map(|p| (p.process.manifest().ribbon_order, p.module.clone()))
+            .flat_map(|p| {
+                let order = p.process.manifest().ribbon_order;
+                std::iter::once(&p.module)
+                    .chain(&p.tabs)
+                    .map(move |module| (order, module.clone()))
+            })
             .collect();
         out.sort_by_key(|(order, _)| *order);
+        out
+    }
+
+    /// The contextual tabs (API v27) of alive, non-disabled plugins, as
+    /// `(ribbon module id, rule)`.
+    pub fn contextual_tabs<F: Fn(&str) -> bool>(
+        &self,
+        is_disabled: F,
+    ) -> Vec<(&'static str, crate::ribbon::ContextualTab)> {
+        let mut out = Vec::new();
+        for p in &self.plugins {
+            if is_disabled(p.process.id()) || !p.process.is_alive() {
+                continue;
+            }
+            for (module, tab) in p.tabs.iter().zip(p.process.ribbon_tabs()) {
+                if let Some(rule) = &tab.contextual {
+                    out.push((crate::ribbon::CadModule::id(module), rule.clone()));
+                }
+            }
+        }
         out
     }
 
@@ -532,22 +594,16 @@ impl PluginManager {
     /// Mark a plugin's boot as in flight: between this and [`Self::end_boot`],
     /// the owner-scoped declaration laws treat `id` as a live, authenticated
     /// transport (the spawn is actively talking to that process — see the
-    /// struct docs for `booting`). Callers must pair this with `end_boot` on
+    /// docs on `BOOTING`). Callers must pair this with `end_boot` on
     /// every return path (a leaked marker would make a never-loaded id
     /// declare owner-scoped state forever).
     pub fn begin_boot(&self, id: &str) {
-        self.booting
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(id.to_string());
+        BOOTING.with(|b| b.borrow_mut().insert(id.to_string()));
     }
 
     /// Close the in-flight boot marker for `id` (idempotent).
     pub fn end_boot(&self, id: &str) {
-        self.booting
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(id);
+        BOOTING.with(|b| b.borrow_mut().remove(id));
     }
 
     /// Whether owner-scoped declarations from `id` are attributable to a real,
@@ -556,16 +612,10 @@ impl PluginManager {
     /// confirm the id before the load returns). This is the declaration law's
     /// gate ONLY — grip event routing keeps the stricter live-channel check.
     pub fn declaration_endpoint_alive(&self, id: &str) -> bool {
-        if self
-            .grip_endpoint(id)
-            .is_some_and(|(_, _, alive)| alive)
-        {
+        if self.grip_endpoint(id).is_some_and(|(_, _, alive)| alive) {
             return true;
         }
-        self.booting
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .contains(id)
+        BOOTING.with(|b| b.borrow().contains(id))
     }
 
     /// Command names advertised by every alive, non-disabled plugin: each
@@ -580,6 +630,11 @@ impl PluginManager {
             }
             for group in p.process.ribbon() {
                 out.append(&mut group.command_ids());
+            }
+            for tab in p.process.ribbon_tabs() {
+                for group in &tab.groups {
+                    out.append(&mut group.command_ids());
+                }
             }
             out.extend(p.process.manifest().command_prefixes.iter().cloned());
         }
@@ -623,6 +678,14 @@ impl PluginManager {
             if let Err(e) = p.process.drain_requests(host, on_start_interactive) {
                 eprintln!("[plugin] drain_requests failed for {}: {e}", p.process.id());
             }
+        }
+    }
+
+    /// Show the command-line messages plugins sent during calls that had no
+    /// host surface (an interactive step, a prompt query).
+    pub fn replay_held_messages(&self, host: &mut dyn HostApi) {
+        for p in &self.plugins {
+            p.process.replay_held_messages(host);
         }
     }
 
@@ -815,6 +878,7 @@ mod tests {
                 "test.live",
             ))),
             module: to_shared_module("test.live".into(), "Live".into(), vec![]),
+            tabs: Vec::new(),
             attach: std::sync::Mutex::new(NotificationAttach {
                 grace_deadline: Some(std::time::Instant::now() + notification_boot_grace()),
                 ..Default::default()
@@ -823,6 +887,7 @@ mod tests {
         manager.plugins.push(LoadedPlugin {
             process: Arc::new(PluginProcess::fake(plain_manifest("test.plain"))),
             module: to_shared_module("test.plain".into(), "Plain".into(), vec![]),
+            tabs: Vec::new(),
             attach: std::sync::Mutex::new(NotificationAttach {
                 grace_deadline: Some(std::time::Instant::now() + notification_boot_grace()),
                 ..Default::default()
@@ -833,6 +898,7 @@ mod tests {
                 "test.off",
             ))),
             module: to_shared_module("test.off".into(), "Off".into(), vec![]),
+            tabs: Vec::new(),
             attach: std::sync::Mutex::new(NotificationAttach {
                 grace_deadline: Some(std::time::Instant::now() + notification_boot_grace()),
                 ..Default::default()
@@ -866,6 +932,7 @@ mod tests {
                 "test.live",
             ))),
             module: to_shared_module("test.live".into(), "Live".into(), vec![]),
+            tabs: Vec::new(),
             attach: std::sync::Mutex::new(NotificationAttach {
                 grace_deadline: Some(std::time::Instant::now() + notification_boot_grace()),
                 ..Default::default()
@@ -885,6 +952,215 @@ mod tests {
         assert!(
             manager.entity_class_declarations(|_| false).is_empty(),
             "a dead plugin process must contribute no declarations"
+        );
+    }
+
+    fn owned_manifest_with_api(
+        id: &str,
+        api_version: u32,
+    ) -> crate::ribbon::owned::OwnedPluginManifest {
+        crate::ribbon::owned::OwnedPluginManifest {
+            id: id.to_string(),
+            name: format!("{id} name"),
+            version: "0.1.0".to_string(),
+            description: "test".to_string(),
+            api_version,
+            ribbon_order: 0,
+            xdata_apps: vec![],
+            command_prefixes: vec![],
+            entity_classes: None,
+        }
+    }
+
+    /// A V4-connected fake like [`crate::process::PluginProcess::fake`], but
+    /// with a real `V4Connection` over a local socket pair (no subprocess, no
+    /// cdylib): the sibling of the plain fake that `broadcast_for_api` can
+    /// fan out to. Returns the runner-side peer stream the test reads the
+    /// delivered frames from.
+    fn v4_connected_process(
+        manifest: crate::ribbon::owned::OwnedPluginManifest,
+    ) -> (PluginProcess, interprocess::local_socket::Stream) {
+        use interprocess::local_socket::{
+            GenericNamespaced, ListenerOptions, ToNsName,
+            traits::{Listener, Stream as StreamTrait},
+        };
+
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let name = format!(
+            "ocs_manager_v4_test_{}_{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        let name_ref = name
+            .clone()
+            .to_ns_name::<GenericNamespaced>()
+            .expect("valid name");
+        let listener = ListenerOptions::new()
+            .name(name_ref)
+            .create_sync()
+            .expect("listener");
+        let client_name = name.clone();
+        let client = std::thread::spawn(move || {
+            StreamTrait::connect(client_name.to_ns_name::<GenericNamespaced>().unwrap())
+                .expect("connect")
+        });
+        let host_stream = listener.accept().expect("accept");
+        let runner_stream = client.join().expect("client thread");
+
+        // No runner child to watch (the test peer keeps the socket open), and
+        // the V3 stream cell stays empty: the V4 path moved the stream into
+        // the connection, exactly like `PluginProcess::spawn` does.
+        let v4_connection = crate::process::v4::V4Connection::new(
+            host_stream,
+            Arc::new(|_: Option<u64>, _: PluginNotification| {}),
+            None,
+        )
+        .expect("V4 connection over the socket pair");
+        let process = PluginProcess {
+            stream: Arc::new(std::sync::Mutex::new(None)),
+            v4: Some(v4_connection),
+            child: Arc::new(std::sync::Mutex::new(None)),
+            id: manifest.id.clone(),
+            manifest,
+            ribbon: vec![],
+            ribbon_tabs: vec![],
+            io_lines: std::sync::Mutex::new(None),
+            held_messages: std::sync::Mutex::new(Vec::new()),
+        };
+        (process, runner_stream)
+    }
+
+    /// Read the host→plugin frames the way a REAL runner would: notifications
+    /// are collected, and the graceful `HostRequest::Shutdown` directive ends
+    /// the connection (the peer closing its own socket is what unblocks the
+    /// host's reader, so EOF-awaiting would deadlock the harness).
+    fn collect_delivered_notifications(
+        mut socket: interprocess::local_socket::Stream,
+    ) -> Vec<HostNotification> {
+        use crate::ipc::protocol::HostRequest;
+        use crate::ipc::transport::recv;
+        use crate::ipc::v4::protocol::{HostToPluginV4, NotificationEnvelope};
+
+        let mut notifications = Vec::new();
+        loop {
+            match recv::<HostToPluginV4>(&mut socket) {
+                Ok(HostToPluginV4::Notification(NotificationEnvelope {
+                    command_id: _,
+                    payload,
+                })) => notifications.push(payload),
+                Ok(HostToPluginV4::Request {
+                    payload: HostRequest::Shutdown,
+                    ..
+                }) => return notifications,
+                Ok(_) => continue,
+                Err(_) => return notifications,
+            }
+        }
+    }
+
+    /// The per-endpoint routing of one document boundary ([`LoadedPlugin`]
+    /// manifest api majors: 26 keeps the exact legacy v13 Regions stream, 27
+    /// receives the categorized `DocumentChangedDelta` instead — and neither
+    /// endpoint ever receives both).
+    #[test]
+    fn document_delta_broadcast_routes_per_endpoint_api_version() {
+        let mut manager = PluginManager::new();
+        let (pre27_process, pre27_peer) =
+            v4_connected_process(owned_manifest_with_api("test.delta.pre27", 26));
+        let (v27_process, v27_peer) =
+            v4_connected_process(owned_manifest_with_api("test.delta.v27", 27));
+        manager.plugins.push(LoadedPlugin {
+            process: Arc::new(pre27_process),
+            module: to_shared_module("test.delta.pre27".into(), "Pre27".into(), vec![]),
+            tabs: Vec::new(),
+            attach: std::sync::Mutex::new(NotificationAttach {
+                attached: true,
+                ..Default::default()
+            }),
+        });
+        manager.plugins.push(LoadedPlugin {
+            process: Arc::new(v27_process),
+            module: to_shared_module("test.delta.v27".into(), "V27".into(), vec![]),
+            tabs: Vec::new(),
+            attach: std::sync::Mutex::new(NotificationAttach {
+                attached: true,
+                ..Default::default()
+            }),
+        });
+        let handle_pre27 = std::thread::spawn(move || collect_delivered_notifications(pre27_peer));
+        let handle_v27 = std::thread::spawn(move || collect_delivered_notifications(v27_peer));
+
+        // One boundary, both representations — the exact pair
+        // `publish_document_delta` offers to `broadcast_for_api`.
+        let regions = HostNotification::DocumentChangedRegions {
+            tab_id: 7,
+            version: 41,
+            entities: vec![document::Handle::from(0x2A)],
+            records: vec![(document::Handle::from(0x8A), "CVIFC".to_owned())],
+        };
+        let delta = HostNotification::DocumentChangedDelta {
+            tab_id: 7,
+            version: 41,
+            added: vec![document::Handle::from(5)],
+            modified: vec![document::Handle::from(9)],
+            deleted: vec![document::Handle::from(11)],
+            records: Vec::new(),
+            snapshot: Some(crate::host::DocumentDeltaSnapshot {
+                version: 41,
+                generation: 2,
+            }),
+            full_refresh_required: false,
+        };
+        manager.broadcast_for_api(None, &|api: u32| {
+            if api >= 27 {
+                Some(delta.clone())
+            } else {
+                Some(regions.clone())
+            }
+        });
+
+        // Dropping the manager requests the graceful shutdown (a
+        // `HostRequest::Shutdown` frame per endpoint); the peer collectors end
+        // on it — mirroring a real runner — and return what they gathered.
+        // Every frame written above is still readable (the socket buffers
+        // hold it), so nothing is lost to the teardown.
+        drop(manager);
+        let pre27 = handle_pre27.join().expect("pre-27 collector thread");
+        let v27 = handle_v27.join().expect("v27 collector thread");
+
+        // A pre-27 endpoint receives EXACTLY the legacy v13 Regions stream —
+        // never the new variant.
+        assert_eq!(
+            pre27.len(),
+            1,
+            "a pre-27 endpoint receives exactly one notification: {pre27:?}"
+        );
+        assert!(
+            matches!(pre27[0], HostNotification::DocumentChangedRegions { .. }),
+            "a pre-27 endpoint keeps the v13 Regions stream: {pre27:?}"
+        );
+        assert!(
+            !pre27
+                .iter()
+                .any(|n| matches!(n, HostNotification::DocumentChangedDelta { .. })),
+            "a pre-27 endpoint must never receive the delta: {pre27:?}"
+        );
+
+        // A v27 endpoint receives EXACTLY the categorized delta — the
+        // Regions stream is replaced, never duplicated.
+        assert_eq!(
+            v27.len(),
+            1,
+            "a v27 endpoint receives exactly one notification: {v27:?}"
+        );
+        assert!(
+            matches!(v27[0], HostNotification::DocumentChangedDelta { .. }),
+            "a v27 endpoint receives the categorized delta: {v27:?}"
+        );
+        assert!(
+            !v27.iter()
+                .any(|n| matches!(n, HostNotification::DocumentChangedRegions { .. })),
+            "a v27 endpoint must never receive the legacy Regions stream: {v27:?}"
         );
     }
 }

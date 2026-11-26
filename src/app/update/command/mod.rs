@@ -34,6 +34,8 @@ mod clipboard;
 mod qselect_cmd;
 mod properties;
 
+mod content_search;
+
 pub(crate) use self::tabs::*;
 pub(crate) use self::submit::*;
 pub(crate) use self::layer_manager::*;
@@ -83,12 +85,16 @@ impl OpenCADStudio {
             // switches rather than command-line text. Consuming them
             // here keeps the prefix out of the command buffer while
             // the following digits continue into the dynamic fields.
-            if matches!(s.as_str(), "@" | "#")
+            // `*` (world coordinates) only before anything is typed: after
+            // a digit it multiplies.
+            let untyped = self.tabs[i].dyn_fields.iter().all(|f| f.buffer.is_none());
+            if (matches!(s.as_str(), "@" | "#") || (s == "*" && untyped))
                 && self.command_line.input.is_empty()
                 && self.dyn_input
                 && self.dyn_has_coordinate_fields(i)
             {
-                self.dyn_set_coordinate_mode(s == "#");
+                self.dyn_set_coordinate_mode(s != "@");
+                self.dyn_coord_wcs = s == "*";
                 self.command_line.autocomplete_cursor = None;
                 self.refresh_active_cmd_preview(i);
                 return self.focus_cmd_input();
@@ -170,6 +176,7 @@ impl OpenCADStudio {
                     };
 
                 self.command_line.set_contextual_suggestions(suggestions);
+                self.refresh_content_suggestions();
 
                 if should_update {
                     self.command_line.set_step_options(opts);
@@ -247,6 +254,7 @@ impl OpenCADStudio {
                 }
             }
         }
+        self.refresh_content_suggestions();
         self.focus_cmd_input()
     }
 
@@ -276,9 +284,13 @@ impl OpenCADStudio {
     /// `<angle` at a point prompt locks the next point's direction from the
     /// last point; a bare distance then runs along it. True when consumed.
     pub(in crate::app) fn try_angle_override(&mut self, text: &str) -> bool {
-        let (Some(angle), Some(_)) = (text.trim().strip_prefix('<'), self.last_point) else {
+        let Some(angle) = text.trim().strip_prefix('<') else {
             return false;
         };
+        // The direction runs from the last point, or from a hot grip.
+        if self.last_point.is_none() && !self.grip_point_prompt(self.active_tab) {
+            return false;
+        }
         let Some(angle) = crate::entities::common::parse_typed_direction(angle) else {
             return false;
         };
@@ -291,6 +303,27 @@ impl OpenCADStudio {
         self.command_line
             .push_output(crate::tf!("Angle Override: {shown}").as_ref());
         true
+    }
+
+    /// A typed coordinate in world coordinates: read in the current UCS unless
+    /// it is starred, and added to `base` when it is relative (absolute when
+    /// there is no base).
+    pub(in crate::app) fn typed_coordinate_wcs(
+        &self,
+        i: usize,
+        coord: glam::DVec3,
+        kind: CoordKind,
+        base: Option<glam::DVec3>,
+    ) -> glam::DVec3 {
+        let ucs = self.tabs[i]
+            .active_ucs
+            .as_ref()
+            .filter(|_| !kind.is_world());
+        match (kind.is_relative(), base) {
+            // The offset turns with the UCS axes; the origin does not move it.
+            (true, Some(base)) => base + ucs.map_or(coord, |u| ucs_rotate_vec(coord, u)),
+            _ => ucs.map_or(coord, |u| ucs_to_wcs(coord, u)),
+        }
     }
 
     pub(in crate::app) fn try_direct_distance_entry(
@@ -325,8 +358,19 @@ impl OpenCADStudio {
             let w = self.tabs[i].last_cursor_world;
             let xf = self.tabs[i].ucs_xform();
             let d_ucs = xf.vec_to_ucs(w - anchor);
-            let dx = d_ucs.x;
-            let dy = d_ucs.y;
+            let (mut dx, mut dy) = (d_ucs.x, d_ucs.y);
+            // Tracking moves along the plane axis nearest the cursor.
+            if self.tabs[i]
+                .active_cmd
+                .as_ref()
+                .is_some_and(|c| c.name() == "TRACKING")
+            {
+                if dx.abs() >= dy.abs() {
+                    dy = 0.0;
+                } else {
+                    dx = 0.0;
+                }
+            }
             // In the plane unless the cursor is tracked straight up or down
             // (#2796), where what is left in the plane is only noise.
             let in_plane = (dx * dx + dy * dy).sqrt();
@@ -347,6 +391,7 @@ impl OpenCADStudio {
         self.last_point = Some(pt);
         self.dyn_user_reshaped = false;
         self.dyn_coord_absolute = self.dyn_pointer_absolute;
+        self.dyn_coord_wcs = false;
         self.sync_dyn_fields();
         self.reset_tracking_after_point();
         self.snapper.clear_override();
@@ -808,7 +853,11 @@ std::thread_local! {
 }
 
 #[cfg(test)]
+mod content_search_tests;
+#[cfg(test)]
 mod grip_ctrl_cycle_tests;
+#[cfg(test)]
+mod grip_extend_vertex_tests;
 #[cfg(test)]
 mod layer_name_target_tests;
 #[cfg(test)]

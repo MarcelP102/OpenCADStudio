@@ -234,58 +234,6 @@ impl OpenCADStudio {
                     None => crate::tf!("{} point(s) created.", changes.len()).into_owned(),
                 }
             }
-            "CREATEPOINTGROUP" => {
-                let doc = &self.tabs[i].scene.document;
-                let numbers: Vec<u32> = req.objects[0]
-                    .iter()
-                    .filter_map(|h| match doc.get_entity(*h)? {
-                        EntityType::Extended(x) => match &x.data {
-                            document::entities::ExtendedEntityData::Arch(a) => a.cogo_point_number(),
-                            _ => None,
-                        },
-                        _ => None,
-                    })
-                    .collect();
-                let patterns = |key: &str| {
-                    req.text(key).map(|t| t.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect::<Vec<_>>())
-                };
-                let (low, high) = (req.values.get("elevation_min").copied(), req.values.get("elevation_max").copied());
-                // One criterion: the selected points, or a name, description or elevation rule.
-                let mut criteria = Vec::new();
-                if !numbers.is_empty() {
-                    criteria.push(c3d::PointQuery::Numbers(numbers.clone()));
-                }
-                if let Some(names) = patterns("name") {
-                    criteria.push(c3d::PointQuery::Names(names));
-                }
-                if let Some(descriptions) = patterns("description") {
-                    criteria.push(c3d::PointQuery::RawDescription(descriptions));
-                }
-                match (low, high) {
-                    (Some(low), Some(high)) => criteria.push(c3d::PointQuery::ElevationRange(low.min(high), low.max(high))),
-                    (Some(low), None) => criteria.push(c3d::PointQuery::Elevation(c3d::Comparison::GreaterOrEqual, low)),
-                    (None, Some(high)) => criteria.push(c3d::PointQuery::Elevation(c3d::Comparison::LessOrEqual, high)),
-                    (None, None) => {}
-                }
-                let query = match criteria.len() {
-                    0 => return Err(crate::t!("No COGO points selected.").into_owned()),
-                    1 => criteria.remove(0),
-                    _ => return Err(crate::t!("Use one of: selected points, a name pattern, a description pattern or an elevation range.").into_owned()),
-                };
-                let group = next_name(doc, "AECC_POINT_PG", "Point Group");
-                self.push_undo_snapshot(i, name);
-                let doc = &mut self.tabs[i].scene.document;
-                match query {
-                    c3d::PointQuery::Numbers(_) => {
-                        c3d::add_point_group(doc, &group, None, &numbers).map_err(refused)?;
-                        crate::tf!("Point group {} created with {} point(s).", group, numbers.len()).into_owned()
-                    }
-                    query => {
-                        c3d::add_point_group_query(doc, &group, None, &query).map_err(refused)?;
-                        crate::tf!("Point group {} created.", group).into_owned()
-                    }
-                }
-            }
             "CREATEPOINTLABELSTYLE" => {
                 let points = req.objects[0].clone();
                 let height = req.values.get("height").copied();
@@ -1041,6 +989,39 @@ impl OpenCADStudio {
             self.tabs[i].scene.bump_entities(&changes);
         }
         Ok(message)
+    }
+
+    /// A point of CREATEPOINTMANUAL: written at once on the layer the drawing's
+    /// point creation settings name (else the current layer), then its
+    /// northing and easting echoed. The command's points are one undo step.
+    pub(super) fn add_created_cogo_point(&mut self, at: glam::DVec3, description: Option<String>, elevation: Option<f64>, echo: bool) {
+        let i = self.active_tab;
+        if self.tabs[i].history.pending.is_none() {
+            let label = self.tabs[i].active_cmd.as_ref().map_or("CREATEPOINTMANUAL", |c| c.name());
+            self.push_undo_snapshot(i, label);
+        }
+        let current = self.tabs[i].active_layer.clone();
+        let doc = &mut self.tabs[i].scene.document;
+        let layer = c3d::point_creation_layer(doc).filter(|l| doc.layers.get(l).is_some()).unwrap_or(current);
+        let z = elevation.unwrap_or(c3d::NO_ELEVATION);
+        match c3d::create_cogo_point(doc, Vector3::new(at.x, at.y, z), description.as_deref(), Some(&layer)) {
+            Ok((point, _)) => {
+                // Coordinates as the drawing's units show them: 4 places, m or '.
+                let unit = match doc.header.insertion_units {
+                    6 => "m",
+                    2 | 21 => "'",
+                    _ => "",
+                };
+                let (n, e) = (format!("{:.4}{unit}", at.y), format!("{:.4}{unit}", at.x));
+                self.tabs[i].dirty = true;
+                self.tabs[i].scene.bump_entities(&[(point, ChangeKind::Added)]);
+                if echo {
+                    self.command_line.push_output(&crate::tf!("N: {}   E: {}", n, e));
+                }
+            }
+            Err(document::error::DxfError::Parse(message)) => self.command_line.push_error(&message),
+            Err(e) => self.command_line.push_error(&e.to_string()),
+        }
     }
 
     /// The Name row of a selected COGO point: the typed name, none when cleared.

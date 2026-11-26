@@ -106,7 +106,15 @@ impl OpenCADStudio {
                     "GRIDMODE" => (self.show_grid as i32).to_string(),
                     "QPMODE" => (self.quick_properties as i32).to_string(),
                     "QPLOCATION" => (self.quick_properties_float as i32).to_string(),
-                    _ => format!("{},{}", self.grid_spacing_x, self.grid_spacing_y),
+                    _ => format!(
+                        "{},{}",
+                        crate::ui::window::drafting_settings::format_snap_spacing(
+                            self.grid_spacing_x
+                        ),
+                        crate::ui::window::drafting_settings::format_snap_spacing(
+                            self.grid_spacing_y
+                        ),
+                    ),
                 };
                 let Some(value) = value else {
                     self.command_line
@@ -137,10 +145,12 @@ impl OpenCADStudio {
                         }
                     }
                     ("GRIDUNIT", _) => {
-                        let mut parts = value.split(',').map(|p| p.trim().parse::<f32>());
-                        let x = parts.next().and_then(Result::ok).filter(|v| *v > 0.0);
+                        let mut parts = value
+                            .split(',')
+                            .map(crate::ui::window::drafting_settings::parse_snap_spacing);
+                        let x = parts.next().flatten();
                         let y = match parts.next() {
-                            Some(p) => p.ok().filter(|v| *v > 0.0),
+                            Some(p) => p,
                             None => x,
                         };
                         let (Some(x), Some(y)) = (x, y) else {
@@ -439,13 +449,11 @@ impl OpenCADStudio {
                     for (kind, list) in lists.iter().enumerate() {
                         let scene = &mut self.tabs[i].scene;
                         gone[kind] = match kind {
-                            pk::BLOCKS => list
-                                .iter()
-                                // The service erases the definition, its
-                                // members, both delimiters and any stale
-                                // draw-order table, as a delete does.
-                                .filter(|n| crate::scene::block_service::erase(scene, n).is_some())
-                                .count(),
+                            // The service erases the definitions, their
+                            // members, both delimiters and any stale
+                            // draw-order table, as a delete does, all in one
+                            // pass.
+                            pk::BLOCKS => crate::scene::block_service::erase_unreferenced(scene, list),
                             pk::ZERO_LENGTH | pk::EMPTY_TEXT => {
                                 let handles: Vec<document::Handle> =
                                     list.iter().filter_map(|n| pk::item_handle(n)).collect();
@@ -903,6 +911,16 @@ impl OpenCADStudio {
                 self.tabs[i].active_cmd = Some(Box::new(c));
             }
 
+            // ── SNAPANG — bare form asks for a number or two points ─────
+            // The picked direction becomes the angle; `SNAPANG <value>` and
+            // SETVAR still set it through the variable arm below.
+            "SNAPANG" => {
+                use crate::modules::view::snapang_cmd::SnapAngCommand;
+                let c = SnapAngCommand::new(self.snap_angle_deg);
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+
             // ── SETVAR — read / write system variables ───────────────────
             // SETVAR <name>          → report the value
             // SETVAR <name> <value>  → set it
@@ -1025,6 +1043,7 @@ impl OpenCADStudio {
                     | "UCSORTHO"
                     | "UCSVIEW"
                     | "LAYOUTCREATEVIEWPORT"
+                    | "PICKLOCKED"
                     | "PDFIMPORTMODE"
                     | "PDFIMPORTFILTER"
                     | "PDFIMPORTLAYERS"
@@ -1033,6 +1052,7 @@ impl OpenCADStudio {
                     | "PDFSHXBESTFONT"
                     | "PDFSHXTEXTSETTINGS"
                     | "XDWGFADECTL"
+                    | "LAYLOCKFADECTL"
                     | "POINTCLOUDCLIPFRAME"
                     | "POINTCLOUDDENSITY"
                     | "POINTCLOUDPOINTSIZE"
@@ -1231,30 +1251,31 @@ impl OpenCADStudio {
                         }
                         return Some(self.finish_dispatch(cmd));
                     }
-                    if name == "XDWGFADECTL" {
-                        let current = crate::scene::cache::block_cache::xref_fade_ctl();
+                    if name == "XDWGFADECTL" || name == "LAYLOCKFADECTL" {
+                        let locked = name == "LAYLOCKFADECTL";
+                        let current = if locked {
+                            crate::scene::cache::block_cache::layer_lock_fade_ctl()
+                        } else {
+                            crate::scene::cache::block_cache::xref_fade_ctl()
+                        };
                         if let Some(value) = &value {
                             match value.parse::<i32>().ok().filter(|v| (-90..=90).contains(v)) {
+                                Some(fade) if locked => self.set_layer_lock_fade(fade),
                                 Some(fade) => self.set_xref_fade(fade),
                                 // Refused: say why and ask again.
                                 None => {
                                     self.command_line
                                         .push_rejection("Requires an integer between -90 and 90.");
                                     self.command_line.push_output(
-                                        &crate::ui::command_line::value_prompt(
-                                            "XDWGFADECTL",
-                                            &current,
-                                        ),
+                                        &crate::ui::command_line::value_prompt(&name, &current),
                                     );
                                     self.pending_setvar = Some(name.clone());
                                 }
                             }
                         } else {
-                            self.command_line
-                                .push_output(&crate::ui::command_line::value_prompt(
-                                    "XDWGFADECTL",
-                                    &current,
-                                ));
+                            self.command_line.push_output(
+                                &crate::ui::command_line::value_prompt(&name, &current),
+                            );
                             self.pending_setvar = Some(name.clone());
                         }
                         return Some(self.finish_dispatch(cmd));
@@ -1421,13 +1442,15 @@ impl OpenCADStudio {
                         }
                         return Some(self.finish_dispatch(cmd));
                     }
-                    if name == "LAYOUTCREATEVIEWPORT" {
+                    if matches!(name.as_str(), "LAYOUTCREATEVIEWPORT" | "PICKLOCKED") {
                         // A profile switch shown and taken as ON / OFF or 1 / 0.
-                        let current = if crate::scene::layout_create_viewport() {
-                            "ON"
+                        let pick_locked = name == "PICKLOCKED";
+                        let is_on = if pick_locked {
+                            crate::scene::pick_locked()
                         } else {
-                            "OFF"
+                            crate::scene::layout_create_viewport()
                         };
+                        let current = if is_on { "ON" } else { "OFF" };
                         let parsed = value.as_deref().map(|v| {
                             match v
                                 .trim()
@@ -1442,8 +1465,26 @@ impl OpenCADStudio {
                         });
                         match parsed {
                             Some(Some(on)) => {
-                                if crate::scene::layout_create_viewport() != on {
-                                    crate::scene::set_layout_create_viewport(on);
+                                if is_on != on {
+                                    if pick_locked {
+                                        crate::scene::set_pick_locked(on);
+                                        // What is already selected on a locked
+                                        // layer leaves the selection with it.
+                                        if !on {
+                                            for tab in &mut self.tabs {
+                                                let locked: Vec<_> = tab
+                                                    .scene
+                                                    .selected_entities()
+                                                    .into_iter()
+                                                    .map(|(handle, _)| handle)
+                                                    .filter(|&h| tab.scene.is_layer_locked(h))
+                                                    .collect();
+                                                tab.scene.deselect_entities(&locked);
+                                            }
+                                        }
+                                    } else {
+                                        crate::scene::set_layout_create_viewport(on);
+                                    }
                                     self.save_config();
                                 }
                             }
@@ -2390,6 +2431,7 @@ impl OpenCADStudio {
                                         "0" | "1" => {
                                             *flag = (v.trim() == "1") != inverted;
                                             self.dyn_coord_absolute = self.dyn_pointer_absolute;
+                                            self.dyn_coord_wcs = false;
                                             Ok((format!("{name} = {}", v.trim()), true))
                                         }
                                         _ => Err("SETVAR: 0 or 1 required.".into()),
@@ -5063,6 +5105,59 @@ mod tests {
         app
     }
 
+    /// Through the messages the command line sends when the user presses Enter.
+    fn typed(app: &mut OpenCADStudio, line: &str) {
+        let _ = app.update(crate::app::Message::CommandInput(line.to_string()));
+        let _ = app.update(crate::app::Message::CommandSubmit);
+    }
+
+    /// Bare `SNAPANG` takes a typed angle, or the direction of two points as
+    /// an angle prompt does in other CAD programs; Enter keeps the angle.
+    #[test]
+    fn snapang_takes_a_typed_angle_or_two_points() {
+        let mut app = fresh_app();
+        let i = app.active_tab;
+
+        typed(&mut app, "SNAPANG");
+        assert_eq!(app.tabs[i].active_cmd.as_ref().unwrap().name(), "SNAPANG");
+        typed(&mut app, "30");
+        assert_eq!(app.snap_angle_deg, 30.0);
+        assert!(app.tabs[i].active_cmd.is_none());
+
+        // Two points: the second one relative to the first.
+        typed(&mut app, "SNAPANG");
+        typed(&mut app, "100,100");
+        assert!(
+            app.tabs[i].active_cmd.is_some(),
+            "waits for the second point"
+        );
+        typed(&mut app, "@10<135");
+        assert!(
+            (app.snap_angle_deg - 135.0).abs() < 1e-3,
+            "{}",
+            app.snap_angle_deg
+        );
+        assert!(app.tabs[i].active_cmd.is_none());
+
+        // Enter keeps it, and so does text that is neither.
+        typed(&mut app, "SNAPANG");
+        typed(&mut app, "ABC");
+        assert!(app.tabs[i].active_cmd.is_some(), "asks again");
+        typed(&mut app, "");
+        assert!(app.tabs[i].active_cmd.is_none());
+        assert!((app.snap_angle_deg - 135.0).abs() < 1e-3);
+
+        // One line, as a script or the automation feeder sends it.
+        let _ = app.run_command_line("SNAPANG 0,0 0,10");
+        assert!(
+            (app.snap_angle_deg - 90.0).abs() < 1e-3,
+            "{}",
+            app.snap_angle_deg
+        );
+        let _ = app.run_command_line("SNAPANG 15");
+        assert_eq!(app.snap_angle_deg, 15.0);
+    }
+
     /// `SETVAR ZOOMFACTOR` is the system variable, so it keeps the range
     /// the variable has — the Options window is where a wheel faster than
     /// that is set, and a value set there is still what the variable
@@ -5149,7 +5244,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cad_selection_and_model_space_sysvars() {
+    fn cad_selection_and_model_space_sysvars() {
         let mut app = fresh_app();
 
         // SELECTIONAREA toggle
@@ -5204,7 +5299,7 @@ mod tests {
     }
 
     #[test]
-    fn test_background_command_modes() {
+    fn background_command_modes() {
         let mut app = fresh_app();
         let i = app.active_tab;
 
@@ -5246,7 +5341,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reviewer_feedback_fixes() {
+    fn reviewer_feedback_fixes() {
         let mut app = fresh_app();
 
         // An empty background restores MatchTheme.
@@ -5279,7 +5374,7 @@ mod tests {
     }
 
     #[test]
-    fn test_grip_and_desk_surround_sysvars() {
+    fn grip_and_desk_surround_sysvars() {
         let mut app = fresh_app();
 
         // 1. Desk surround background message
@@ -5562,6 +5657,18 @@ impl OpenCADStudio {
             )
             .as_ref(),
         );
+    }
+
+    /// LAYLOCKFADECTL: store it in the profile and redraw every tab.
+    pub(in crate::app) fn set_layer_lock_fade(&mut self, fade: i32) {
+        crate::scene::cache::block_cache::set_layer_lock_fade_ctl(fade);
+        self.save_config();
+        for tab in &mut self.tabs {
+            if !tab.is_start {
+                tab.scene.recolor_meshes();
+                tab.scene.bump_geometry();
+            }
+        }
     }
 
     /// XDWGFADECTL: store it in the profile, show it on the ribbon and redraw

@@ -2,7 +2,7 @@
 use super::*;
 
 impl Scene {
-    pub(super) fn paper_viewport_handles(&self) -> (Handle, Handle, Arc<Vec<Handle>>) {
+    pub(crate) fn paper_viewport_handles(&self) -> (Handle, Handle, Arc<Vec<Handle>>) {
         {
             let cache = self.paper_viewport_cache.borrow();
             if let Some(cache) = cache.get(&self.current_layout) {
@@ -161,6 +161,7 @@ impl Scene {
                         active: i == active,
                         grid_on: tile.grid_on,
                         paper_sheet: false,
+                        sheet_over: false,
                     }
                 })
                 .collect();
@@ -195,6 +196,7 @@ impl Scene {
             active: false,
             grid_on: sheet_grid_on,
             paper_sheet: true,
+            sheet_over: false,
         });
         for &handle in content_handles.iter() {
             let Some(EntityType::Viewport(vp)) = self.document.get_entity(handle) else {
@@ -229,9 +231,74 @@ impl Scene {
                 active: self.active_viewport == Some(h),
                 grid_on: vp.status.grid_on,
                 paper_sheet: false,
+                sheet_over: false,
             });
         }
         out
+    }
+
+    /// Appends the second sheet pass to a frame's `instances` when the sheet
+    /// has entities after the first content viewport in draw order: they go
+    /// over the viewports. `tint_selected` as the frame's sheet pass has it;
+    /// `enabled` false keeps the sheet whole. The frame's sheet passes read
+    /// the outcome through [`Self::sheet_split_for`].
+    pub(super) fn push_sheet_over(&self, instances: &mut Vec<ViewportInstance>, tint_selected: bool, enabled: bool) {
+        let over = enabled
+            .then(|| instances.iter().find(|i| i.paper_sheet && !i.sheet_over))
+            .flatten()
+            .filter(|_| instances.iter().any(|i| !i.paper_sheet))
+            .filter(|_| self.paper_sheet_split(tint_selected).is_some())
+            .map(|sheet| ViewportInstance { sheet_over: true, grid_on: false, ..sheet.clone() });
+        self.paper_sheet_split_cache.borrow_mut().frame_split = over.is_some();
+        instances.extend(over);
+    }
+
+    /// The split a sheet pass of this frame draws with (see
+    /// [`Self::push_sheet_over`]); `None` for every other view.
+    pub(super) fn sheet_split_for(&self, inst: &ViewportInstance, tint_selected: bool) -> Option<SheetSplit> {
+        (inst.paper_sheet && self.paper_sheet_split_cache.borrow().frame_split)
+            .then(|| self.paper_sheet_split(tint_selected))
+            .flatten()
+    }
+
+    /// Where the sheet splits into the passes under and over the content
+    /// viewports: after the first content viewport shown, in draw order.
+    /// `None` in Model, without a content viewport on, or when nothing of the
+    /// sheet comes after it.
+    pub(super) fn paper_sheet_split(&self, tint_selected: bool) -> Option<SheetSplit> {
+        if self.current_layout == "Model" {
+            return None;
+        }
+        let (_, _, content) = self.paper_viewport_handles();
+        let depths = self.draw_depth_map();
+        let first = content
+            .iter()
+            .filter(|h| self.viewport_displays_content(**h))
+            .filter_map(|h| depths.get(&h.value()).copied())
+            .min_by(|a, b| (a[0], a[1]).partial_cmp(&(b[0], b[1])).unwrap_or(std::cmp::Ordering::Equal))?;
+        let key = self.geometry_epoch.rotate_left(32)
+            ^ (Arc::as_ptr(&depths) as usize as u64)
+            ^ (u64::from(first[0].to_bits()) << 32 | u64::from(first[1].to_bits())).rotate_left(7);
+        let viewports = content.iter().map(|h| h.value()).collect();
+        let split = SheetSplit { depths, first, viewports, key };
+        let wires = self.paper_sheet_wires_arc();
+        let (hatches, wipeouts, images) = self.paper_sheet_render_models_for_view(tint_selected);
+        let sources = key
+            ^ (Arc::as_ptr(&wires) as usize as u64).rotate_left(11)
+            ^ (Arc::as_ptr(&hatches) as usize as u64).rotate_left(23)
+            ^ (Arc::as_ptr(&wipeouts) as usize as u64).rotate_left(37)
+            ^ (Arc::as_ptr(&images) as usize as u64).rotate_left(51);
+        let known = self.paper_sheet_split_cache.borrow().any_over.filter(|(k, _)| *k == sources);
+        let any_over = known.map(|(_, any)| any).unwrap_or_else(|| {
+            let entity_over = |e: &Option<Handle>| e.is_some_and(|h| split.is_over(h.value()));
+            let any = wires.iter().any(|w| split.is_over_name(&w.name))
+                || hatches.iter().any(|h| entity_over(&h.entity))
+                || wipeouts.iter().any(|h| entity_over(&h.entity))
+                || images.iter().any(|i| entity_over(&i.entity));
+            self.paper_sheet_split_cache.borrow_mut().any_over = Some((sources, any));
+            any
+        });
+        any_over.then_some(split)
     }
 
     pub(super) fn paper_sheet_render_models(
@@ -725,7 +792,7 @@ impl Scene {
     /// Build a Camera oriented and scaled to match a paper-space Viewport entity.
     /// Used by `active_viewports` to render model-space content through each
     /// content viewport's own view direction and scale.
-    pub(super) fn camera_for_viewport(&self, vp_handle: Handle) -> Option<view::camera::Camera> {
+    pub(crate) fn camera_for_viewport(&self, vp_handle: Handle) -> Option<view::camera::Camera> {
         let mut camera = self.viewport_view_camera(vp_handle)?;
         // The view decides where the camera looks; its depth range must still
         // hold the whole model. Sized from the view height alone (64 times
@@ -754,6 +821,118 @@ impl Scene {
             camera.clip_depth = (front, back);
         }
         Some(camera)
+    }
+
+    /// How the model is seen through the viewports of the sheet in view: the
+    /// scale of the one that shows it largest (model units per pixel) and
+    /// the plan rectangle of the model that those in sight show, each for
+    /// the part of it that is in sight. No rectangle when one of them does
+    /// not look straight down; `None` when none is in sight.
+    ///
+    /// A raster has one part drawn again at the scale of the view, of
+    /// `REGION_SIDE` pixels at most. When what the viewports show together
+    /// is longer than that at the scale of the one that shows the model
+    /// largest, say a whole plan beside a detail of it, the rectangle is that
+    /// one's alone: the detail is drawn at its scale, and the plan is left
+    /// to the whole raster.
+    pub(super) fn sheet_model_view(&self) -> Option<(f32, Option<[f64; 4]>)> {
+        let sheet_per_pixel = f64::from(self.layout_world_per_pixel()?);
+        let in_sight = self.layout_plan_view_rect();
+        let mut finest: Option<f64> = None;
+        let mut finest_shows: Option<[f64; 4]> = None;
+        let mut shown: Option<[f64; 4]> = None;
+        let mut all_plan = true;
+        for &handle in self.layout_content_viewports().iter() {
+            let Some(EntityType::Viewport(vp)) = self.document.get_entity(handle) else {
+                continue;
+            };
+            if !vp.is_on() || vp.width <= 0.0 || vp.height <= 0.0 {
+                continue;
+            }
+            // The viewport on the sheet, and the part of it in sight.
+            let frame = [
+                vp.center.x - vp.width * 0.5,
+                vp.center.y - vp.height * 0.5,
+                vp.center.x + vp.width * 0.5,
+                vp.center.y + vp.height * 0.5,
+            ];
+            let part = match in_sight {
+                Some(view) => [
+                    frame[0].max(view[0]),
+                    frame[1].max(view[1]),
+                    frame[2].min(view[2]),
+                    frame[3].min(view[3]),
+                ],
+                None => frame,
+            };
+            if part[0] >= part[2] || part[1] >= part[3] {
+                continue;
+            }
+            let Some(camera) = self.viewport_view_camera(handle) else {
+                continue;
+            };
+            if !matches!(camera.projection, view::camera::Projection::Orthographic) {
+                continue;
+            }
+            let model_per_sheet = 2.0 * f64::from(camera.ortho_size()) / vp.height;
+            if !(model_per_sheet.is_finite() && model_per_sheet > 0.0) {
+                continue;
+            }
+            let per_pixel = sheet_per_pixel * model_per_sheet;
+            let leads = finest.is_none_or(|finest| per_pixel < finest);
+            if leads {
+                finest = Some(per_pixel);
+                finest_shows = None;
+            }
+            let Some(model) = Self::plan_rect_of(&camera, vp.width / vp.height) else {
+                all_plan = false;
+                continue;
+            };
+            // A view that is not turned shows the model in step with the
+            // sheet, so the part in sight is the same part of its rectangle;
+            // a turned one is taken whole.
+            let straight = (camera.rotation * glam::Vec3::X).x > 0.9999;
+            let model = if straight {
+                let along = |at: f64, from: f64, to: f64, low: f64, high: f64| {
+                    low + (at - from) / (to - from) * (high - low)
+                };
+                [
+                    along(part[0], frame[0], frame[2], model[0], model[2]),
+                    along(part[1], frame[1], frame[3], model[1], model[3]),
+                    along(part[2], frame[0], frame[2], model[0], model[2]),
+                    along(part[3], frame[1], frame[3], model[1], model[3]),
+                ]
+            } else {
+                model
+            };
+            if leads {
+                finest_shows = Some(model);
+            }
+            shown = Some(match shown {
+                Some(have) => [
+                    have[0].min(model[0]),
+                    have[1].min(model[1]),
+                    have[2].max(model[2]),
+                    have[3].max(model[3]),
+                ],
+                None => model,
+            });
+        }
+        let finest = finest?;
+        if !(finest.is_finite() && finest > 0.0) {
+            return None;
+        }
+        let together = shown.filter(|_| all_plan);
+        let too_long = together.is_some_and(|all| {
+            (all[2] - all[0]).max(all[3] - all[1]) / finest
+                > crate::scene::model::pdf_raster::REGION_SIDE
+        });
+        let rect = if too_long {
+            finest_shows.or(together)
+        } else {
+            together
+        };
+        Some((finest as f32, rect))
     }
 
     /// The camera a floating viewport's view (or its auto-fit) aims, before
@@ -893,13 +1072,17 @@ impl Scene {
     ) -> Arc<Vec<WireModel>> {
         use rustc_hash::FxHashSet as HSet;
 
-        // The viewport's frozen-layer set is the only resident-geometry input.
-        // Its live zoom is camera magnification, not CANNOSCALE: tying
-        // annotation geometry to view_height rebuilt the entire model on every
-        // wheel tick whenever the drawing contained one annotative object.
+        // The viewport's live zoom is camera magnification, not CANNOSCALE:
+        // tying annotation geometry to view_height rebuilt the entire model on
+        // every wheel tick whenever the drawing contained one annotative object.
         // Explicit viewport annotation-scale changes still rebuild the resident
         // set; PSLTSCALE is a viewport GPU uniform, except for complex linetypes,
         // which rebuild once when the zoom settles.
+        //
+        // The resident set is built without the viewport's frozen layers and
+        // they are left out of it afterwards: a set per frozen-layer list was
+        // tessellated in full, past the per-entity memo, for every viewport of
+        // a sheet set, seconds each time a layout was opened (#3260).
         let frozen: HSet<Handle> = self.viewport_hidden_handles(vp_handle);
 
         let scale_handle = self.viewport_scale_handle(vp_handle);
@@ -909,20 +1092,21 @@ impl Scene {
             self.model_space_block_handle(),
             Some(self.viewport_annotation_multiplier(vp_handle)),
             scale_handle,
-            Some(&frozen),
+            Some(&HSet::default()),
             Some(vp_handle),
         );
         self.viewport_complex_lt.set(None);
         self.without_viewport_frozen_members(wires, &frozen)
     }
 
-    /// `wires` without the block lines on a layer the viewport freezes.
+    /// `wires` without what the viewport hides: the objects it hides by
+    /// handle or on a layer it freezes, and the block lines on such a layer.
     ///
-    /// The resident set leaves out the objects on those layers, but a block
-    /// reference is drawn from definitions shared by every viewport, so the
-    /// lines its members draw on a frozen layer came along. Each such line
-    /// knows the layer it shows on (`effective_layer`); a copy of a block
-    /// drawn as a stub is expanded only when its definition holds one.
+    /// A block reference is drawn from definitions shared by every viewport,
+    /// so the lines its members draw on a frozen layer come along with it.
+    /// Each such line knows the layer it shows on (`effective_layer`); a copy
+    /// of a block drawn as a stub is expanded only when its definition holds
+    /// one.
     fn without_viewport_frozen_members(
         &self,
         wires: Arc<Vec<WireModel>>,
@@ -956,11 +1140,40 @@ impl Scene {
                     .get(layer)
                     .is_some_and(|record| frozen.contains(&record.handle))
         };
-        // `None`: no block line to leave out, the set is drawn as it is. The
-        // set itself is not kept here: an edit patches it in place only while
-        // the scene alone holds it (#358).
-        let kept =
-            crate::scene::model::instance_model::without_layers(&wires, layer_frozen).map(Arc::new);
+        // An object's wires carry its handle as their name.
+        let object_hidden = |wire: &WireModel| {
+            wire.name
+                .parse::<u64>()
+                .ok()
+                .and_then(|value| self.document.get_entity(Handle::new(value)))
+                .is_some_and(|entity| {
+                    let common = entity.common();
+                    frozen.contains(&common.handle)
+                        || self
+                            .document
+                            .layers
+                            .get(&common.layer)
+                            .is_some_and(|record| frozen.contains(&record.handle))
+                })
+        };
+        let shown: Option<Vec<WireModel>> = wires.iter().any(object_hidden).then(|| {
+            wires
+                .iter()
+                .filter(|wire| !object_hidden(wire))
+                .cloned()
+                .collect()
+        });
+        // `None`: nothing to leave out, the set is drawn as it is. The set
+        // itself is not kept here: an edit patches it in place only while the
+        // scene alone holds it (#358).
+        let kept = match shown {
+            Some(shown) => Some(Arc::new(
+                crate::scene::model::instance_model::without_layers(&shown, layer_frozen)
+                    .unwrap_or(shown),
+            )),
+            None => crate::scene::model::instance_model::without_layers(&wires, layer_frozen)
+                .map(Arc::new),
+        };
         let mut cache = self.viewport_frozen_member_cache.borrow_mut();
         // A set that was replaced takes its result along.
         cache.retain(|_, (source, _)| source.strong_count() > 0);
@@ -1036,4 +1249,76 @@ impl Scene {
     ) -> Arc<Vec<WireModel>> {
         self.model_wires_for_viewport(vp_handle, screen_height_px)
     }
+}
+
+/// The draw order a layout's sheet splits at (see
+/// [`Scene::paper_sheet_split`]).
+pub(super) struct SheetSplit {
+    depths: Arc<HashMap<u64, [f32; 2]>>,
+    first: [f32; 2],
+    /// The content viewports, whose frames stay under.
+    viewports: HashSet<u64>,
+    /// Changes whenever the split can: the edit epoch, the order, the
+    /// threshold.
+    pub(super) key: u64,
+}
+
+impl SheetSplit {
+    /// `true` for an entity drawn after the first content viewport, other
+    /// than a content viewport's own frame.
+    pub(super) fn is_over(&self, handle: u64) -> bool {
+        !self.viewports.contains(&handle)
+            && self
+                .depths
+                .get(&handle)
+                .is_some_and(|d| (d[0], d[1]) > (self.first[0], self.first[1]))
+    }
+
+    /// [`Self::is_over`] for a wire, named by its entity's handle (synthetic
+    /// wires stay under).
+    pub(super) fn is_over_name(&self, name: &str) -> bool {
+        name.parse::<u64>().is_ok_and(|h| self.is_over(h))
+    }
+}
+
+/// One model list split under / over, kept while its source and the split
+/// stay the same.
+pub(super) struct SplitList<T> {
+    key: Option<(usize, u64)>,
+    /// Held so the source's address is not reused while it is the key.
+    source: Option<Arc<Vec<T>>>,
+    under: Arc<Vec<T>>,
+    over: Arc<Vec<T>>,
+}
+
+impl<T> Default for SplitList<T> {
+    fn default() -> Self {
+        Self { key: None, source: None, under: Arc::new(Vec::new()), over: Arc::new(Vec::new()) }
+    }
+}
+
+impl<T: Clone> SplitList<T> {
+    pub(super) fn part(&mut self, source: &Arc<Vec<T>>, key: u64, over: bool, is_over: impl Fn(&T) -> bool) -> Arc<Vec<T>> {
+        let id = (Arc::as_ptr(source) as usize, key);
+        if self.key != Some(id) {
+            let (o, u): (Vec<T>, Vec<T>) = source.iter().cloned().partition(|m| is_over(m));
+            self.over = Arc::new(o);
+            self.under = Arc::new(u);
+            self.key = Some(id);
+            self.source = Some(Arc::clone(source));
+        }
+        Arc::clone(if over { &self.over } else { &self.under })
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct SheetSplitCache {
+    /// Whether anything of the sheet is over, by split and sources.
+    any_over: Option<(u64, bool)>,
+    /// The frame being built has the pass over the viewports.
+    frame_split: bool,
+    pub(super) wires: SplitList<WireModel>,
+    pub(super) hatches: SplitList<HatchModel>,
+    pub(super) wipeouts: SplitList<HatchModel>,
+    pub(super) images: SplitList<ImageModel>,
 }

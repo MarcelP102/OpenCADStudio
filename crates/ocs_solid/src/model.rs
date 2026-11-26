@@ -21,6 +21,14 @@ pub fn open(brep: &Brep) -> Result<(Body, Order), Error> {
 pub fn record(body: &Body) -> Result<Brep, Error> {
     let (mut record, _) = body.to_record()?;
     for face in &mut record.faces {
+        // Solidcore records some planes with axes off square (by 1e-15 to 1e-12) and refuses them
+        // when it reads them back. Made square, no point moves by anything near its tolerance.
+        if let r::Surface::Plane { u_axis, v_axis, .. } = &mut face.surface {
+            let off = dot(*u_axis, *v_axis) / dot(*u_axis, *u_axis);
+            if off != 0.0 && off.abs() < 1e-9 {
+                *v_axis = crate::geometry::sub(*v_axis, scale(*u_axis, off));
+            }
+        }
         if face.nurbs.is_none() {
             if let Some(quadric) = crate::geometry::quadric_of(&face.surface, face.domain) {
                 face.nurbs = Some(std::mem::replace(&mut face.surface, quadric));
@@ -870,7 +878,16 @@ pub fn aabb(brep: &Brep) -> Option<crate::geometry::Aabb> {
 /// A closed polyhedron: `faces` polygons (vertex indices running counter-clockwise seen from
 /// outside) on `vertices`, assembled into a solid.
 pub fn faceted_solid(vertices: &[[f64; 3]], faces: &[Vec<usize>]) -> Option<Brep> {
-    use solidcore_step::assembly::{Assembly, Bound, Kind};
+    faceted(vertices, faces, solidcore_step::assembly::Kind::Solid)
+}
+
+/// A surface model of planar `faces` on `vertices`, open or closed.
+pub fn faceted_sheet(vertices: &[[f64; 3]], faces: &[Vec<usize>]) -> Option<Brep> {
+    faceted(vertices, faces, solidcore_step::assembly::Kind::Model)
+}
+
+fn faceted(vertices: &[[f64; 3]], faces: &[Vec<usize>], kind: solidcore_step::assembly::Kind) -> Option<Brep> {
+    use solidcore_step::assembly::{Assembly, Bound};
     static TRACED: crate::geometry::Traced = crate::geometry::Traced;
     let mut assembly = Assembly::new(1e-6, Some(&TRACED));
     let ids: Vec<u32> = vertices.iter().map(|p| assembly.add_vertex(*p).ok()).collect::<Option<_>>()?;
@@ -906,5 +923,5 @@ pub fn faceted_solid(vertices: &[[f64; 3]], faces: &[Vec<usize>]) -> Option<Brep
         let added = assembly.add_face(index as u64, surface, vec![Bound::Edges(uses)], Some(0), true).ok()?;
         shell.push((added, true));
     }
-    assembly.finish(0, String::new(), vec![shell], Kind::Solid).ok().map(|solid| solid.brep)
+    assembly.finish(0, String::new(), vec![shell], kind).ok().map(|solid| solid.brep)
 }

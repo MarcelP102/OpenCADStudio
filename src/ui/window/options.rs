@@ -1,12 +1,12 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod graphics;
 pub(crate) mod spacemouse;
+use crate::app::Message;
 use crate::app::config::UiThemeConfig;
 use crate::app::settings;
 use crate::app::settings::{CursorType, RightClickMode};
-use crate::app::Message;
 use crate::ui::style::form::{dialog_button, dialog_button_styled_opt};
-use iced::widget::{button, column, container, row, scrollable, slider, text, text_input, Space};
+use iced::widget::{Space, button, column, container, row, scrollable, slider, text, text_input};
 use iced::{Background, Border, Element, Fill, Theme};
 use std::fmt;
 
@@ -78,6 +78,8 @@ pub struct AppPrefs {
     pub navigation_style: crate::app::settings::NavigationStyle,
     /// Scroll pans and Ctrl+scroll zooms (touchpads).
     pub touchpad_pan: bool,
+    /// The numeric keypad's decimal key always types a decimal point.
+    pub keypad_decimal_point: bool,
     /// Interface scale in percent.
     pub ui_scale_percent: u16,
     /// ZOOMFACTOR. The slider sets the range the system variable has; the
@@ -94,6 +96,8 @@ pub struct AppPrefs {
     pub annotation_auto_scale: i8,
     /// Polar tracking increment in degrees.
     pub polar_increment_deg: f32,
+    /// The AutoSnap Magnet: the crosshairs lock onto an object snap point.
+    pub autosnap_magnet: bool,
     /// NAVVCUBE: show the navigation cube.
     pub show_viewcube: bool,
     /// UCSICON: show the UCS icon.
@@ -1559,6 +1563,18 @@ pub fn view_window<'a>(
         ]
         .spacing(8)
         .align_y(iced::Center),
+        Space::new().height(8),
+        row![
+            iced::widget::checkbox(prefs.keypad_decimal_point)
+                .on_toggle(Message::KeypadDecimalPointChanged)
+                .size(15),
+            text(crate::t!(
+                "Numeric keypad: the decimal key always types a point (off: the layout's character, so a comma separates coordinates)"
+            ))
+            .size(12),
+        ]
+        .spacing(8)
+        .align_y(iced::Center),
         Space::new().height(12),
         row![
             text(crate::t!("Zoom factor")).size(12).width(150),
@@ -1939,6 +1955,21 @@ pub fn view_window<'a>(
         ]
         .spacing(10)
         .align_y(iced::Center),
+        Space::new().height(14),
+        row![
+            iced::widget::checkbox(prefs.autosnap_magnet)
+                .on_toggle(Message::AutoSnapMagnetChanged)
+                .size(15),
+            text(crate::t!("Magnet")).size(12),
+        ]
+        .spacing(8)
+        .align_y(iced::Center),
+        Space::new().height(6),
+        text(crate::t!(
+            "The crosshairs lock onto the object snap point while its marker shows (AUTOSNAP)."
+        ))
+        .size(11)
+        .width(sizing.width),
         Space::new().height(24),
         text(crate::t!("Snap and Grid")).size(15),
         Space::new().height(10),

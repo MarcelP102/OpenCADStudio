@@ -4,18 +4,23 @@
 //! widget trees with rows, columns, inputs, checkboxes, pick lists, and buttons,
 //! matching the OpenCADStudio design system and theme.
 
-use std::collections::{HashMap, HashSet};
 use iced::widget::{
-    button, checkbox, column, container, pick_list, row, rule, scrollable, text, text_input, Space,
+    Space, button, checkbox, column, container, pick_list, row, rule, scrollable, text, text_input,
 };
 use iced::{Element, Fill, Length, Theme};
 use ocs_plugin_api::dialog::{
     DialogControl, DialogDef, DialogResponse, DialogValue, HorizontalAlign, TextStyle,
     VerticalAlign,
 };
+use std::collections::{HashMap, HashSet};
 
 use crate::app::Message;
 use crate::ui::style::form::{button_style, dialog_button, field_style};
+
+/// Height cap of a long table's scroll box in a plugin dialog.
+const TABLE_MAX_HEIGHT_PX: f32 = 420.0;
+/// Tables up to this many rows take their natural height.
+const TABLE_SHRINK_ROWS: usize = 14;
 
 /// State backing an active declarative plugin modal dialog.
 #[derive(Debug, Clone, PartialEq)]
@@ -387,8 +392,17 @@ impl PluginDialogState {
                 let val = self.bool_values.get(id).copied().unwrap_or(*default);
                 Some((id.clone(), DialogValue::Bool(val)))
             }
-            DialogControl::Choice { id, options, default_index, .. } => {
-                let idx = self.choice_values.get(id).copied().unwrap_or(*default_index);
+            DialogControl::Choice {
+                id,
+                options,
+                default_index,
+                ..
+            } => {
+                let idx = self
+                    .choice_values
+                    .get(id)
+                    .copied()
+                    .unwrap_or(*default_index);
                 let effective_options = self.dynamic_choice_options.get(id).unwrap_or(options);
                 let text = effective_options.get(idx).cloned().unwrap_or_default();
                 Some((id.clone(), DialogValue::Choice { index: idx, text }))
@@ -528,7 +542,10 @@ impl PluginDialogState {
 
             let mut any_visible = false;
             for control in &r.controls {
-                if control.id().is_some_and(|id| self.hidden_controls.contains(id)) {
+                if control
+                    .id()
+                    .is_some_and(|id| self.hidden_controls.contains(id))
+                {
                     continue;
                 }
                 any_visible = true;
@@ -540,15 +557,18 @@ impl PluginDialogState {
             }
 
             let row_container: Element<'a, Message> = match r.align_h {
-                Some(HorizontalAlign::Left) => {
-                    container(row_widget).width(Fill).align_x(iced::alignment::Horizontal::Left).into()
-                }
-                Some(HorizontalAlign::Center) => {
-                    container(row_widget).width(Fill).align_x(iced::alignment::Horizontal::Center).into()
-                }
-                Some(HorizontalAlign::Right) => {
-                    container(row_widget).width(Fill).align_x(iced::alignment::Horizontal::Right).into()
-                }
+                Some(HorizontalAlign::Left) => container(row_widget)
+                    .width(Fill)
+                    .align_x(iced::alignment::Horizontal::Left)
+                    .into(),
+                Some(HorizontalAlign::Center) => container(row_widget)
+                    .width(Fill)
+                    .align_x(iced::alignment::Horizontal::Center)
+                    .into(),
+                Some(HorizontalAlign::Right) => container(row_widget)
+                    .width(Fill)
+                    .align_x(iced::alignment::Horizontal::Right)
+                    .into(),
                 None => row_widget.into(),
             };
 
@@ -642,8 +662,10 @@ impl<'a> FormControlView<'a> {
                 return Space::new().width(0).height(0).into();
             }
         }
-        let is_disabled =
-            parent_disabled || control.id().is_some_and(|id| self.disabled_controls.contains(id));
+        let is_disabled = parent_disabled
+            || control
+                .id()
+                .is_some_and(|id| self.disabled_controls.contains(id));
         let panel_id = self.panel_id.map(str::to_string);
         const LABEL_WIDTH: f32 = 110.0;
         match control {
@@ -678,10 +700,7 @@ impl<'a> FormControlView<'a> {
                 let current = self.bool_values.get(id).copied().unwrap_or(false);
                 let id_clone = id.clone();
                 let pid = panel_id.clone();
-                let mut cb = checkbox(current)
-                    .label(label)
-                    .size(14)
-                    .text_size(12);
+                let mut cb = checkbox(current).label(label).size(14).text_size(12);
                 if !is_disabled {
                     cb = cb.on_toggle(move |checked| {
                         if let Some(p) = pid.clone() {
@@ -744,15 +763,19 @@ impl<'a> FormControlView<'a> {
             }
             DialogControl::Color { id, label, .. } => {
                 let rgb = self.color_values.get(id).copied().unwrap_or([255, 0, 0]);
-                let color_preview = container(Space::new().width(24).height(16))
-                    .style(move |theme: &Theme| container::Style {
-                        background: Some(iced::Background::Color(iced::Color::from_rgb8(rgb[0], rgb[1], rgb[2]))),
-                        border: iced::Border {
-                            color: theme.palette().background.neutral.color,
-                            width: 1.0,
-                            radius: 2.0.into(),
-                        },
-                        ..Default::default()
+                let color_preview =
+                    container(Space::new().width(24).height(16)).style(move |theme: &Theme| {
+                        container::Style {
+                            background: Some(iced::Background::Color(iced::Color::from_rgb8(
+                                rgb[0], rgb[1], rgb[2],
+                            ))),
+                            border: iced::Border {
+                                color: theme.palette().background.neutral.color,
+                                width: 1.0,
+                                radius: 2.0.into(),
+                            },
+                            ..Default::default()
+                        }
                     });
 
                 row![
@@ -827,8 +850,10 @@ impl<'a> FormControlView<'a> {
                 return Space::new().width(0).height(0).into();
             }
         }
-        let is_disabled =
-            parent_disabled || control.id().is_some_and(|id| self.disabled_controls.contains(id));
+        let is_disabled = parent_disabled
+            || control
+                .id()
+                .is_some_and(|id| self.disabled_controls.contains(id));
         let panel_id = self.panel_id.map(str::to_string);
         match control {
             DialogControl::InfoText { text: msg, align_h }
@@ -839,9 +864,11 @@ impl<'a> FormControlView<'a> {
                     .id()
                     .and_then(|id| self.text_values.get(id))
                     .map_or(msg.as_str(), String::as_str);
-                let mut t = text(display_msg).size(12).style(|theme: &Theme| text::Style {
-                    color: Some(crate::ui::style::readable::muted_text(theme)),
-                });
+                let mut t = text(display_msg)
+                    .size(12)
+                    .style(|theme: &Theme| text::Style {
+                        color: Some(crate::ui::style::readable::muted_text(theme)),
+                    });
                 if let Some(h) = align_h {
                     match h {
                         HorizontalAlign::Left => {
@@ -892,15 +919,18 @@ impl<'a> FormControlView<'a> {
                     row_el = row_el.push(self.view_control_inner(c, is_disabled));
                 }
                 match align_h {
-                    Some(HorizontalAlign::Left) => {
-                        container(row_el).width(Fill).align_x(iced::alignment::Horizontal::Left).into()
-                    }
-                    Some(HorizontalAlign::Center) => {
-                        container(row_el).width(Fill).align_x(iced::alignment::Horizontal::Center).into()
-                    }
-                    Some(HorizontalAlign::Right) => {
-                        container(row_el).width(Fill).align_x(iced::alignment::Horizontal::Right).into()
-                    }
+                    Some(HorizontalAlign::Left) => container(row_el)
+                        .width(Fill)
+                        .align_x(iced::alignment::Horizontal::Left)
+                        .into(),
+                    Some(HorizontalAlign::Center) => container(row_el)
+                        .width(Fill)
+                        .align_x(iced::alignment::Horizontal::Center)
+                        .into(),
+                    Some(HorizontalAlign::Right) => container(row_el)
+                        .width(Fill)
+                        .align_x(iced::alignment::Horizontal::Right)
+                        .into(),
                     None => row_el.width(Fill).into(),
                 }
             }
@@ -929,15 +959,18 @@ impl<'a> FormControlView<'a> {
                     col_el = col_el.push(self.view_control_inner(c, is_disabled));
                 }
                 match align_v {
-                    Some(VerticalAlign::Top) => {
-                        container(col_el).height(Fill).align_y(iced::alignment::Vertical::Top).into()
-                    }
-                    Some(VerticalAlign::Middle) => {
-                        container(col_el).height(Fill).align_y(iced::alignment::Vertical::Center).into()
-                    }
-                    Some(VerticalAlign::Bottom) => {
-                        container(col_el).height(Fill).align_y(iced::alignment::Vertical::Bottom).into()
-                    }
+                    Some(VerticalAlign::Top) => container(col_el)
+                        .height(Fill)
+                        .align_y(iced::alignment::Vertical::Top)
+                        .into(),
+                    Some(VerticalAlign::Middle) => container(col_el)
+                        .height(Fill)
+                        .align_y(iced::alignment::Vertical::Center)
+                        .into(),
+                    Some(VerticalAlign::Bottom) => container(col_el)
+                        .height(Fill)
+                        .align_y(iced::alignment::Vertical::Bottom)
+                        .into(),
                     None => col_el.into(),
                 }
             }
@@ -1015,10 +1048,7 @@ impl<'a> FormControlView<'a> {
                 let current = self.bool_values.get(id).copied().unwrap_or(false);
                 let id_clone = id.clone();
                 let pid = panel_id.clone();
-                let mut cb = checkbox(current)
-                    .label(label)
-                    .size(14)
-                    .text_size(12);
+                let mut cb = checkbox(current).label(label).size(14).text_size(12);
                 if !is_disabled {
                     cb = cb.on_toggle(move |checked| {
                         if let Some(p) = pid.clone() {
@@ -1072,15 +1102,19 @@ impl<'a> FormControlView<'a> {
             }
             DialogControl::Color { id, label, .. } => {
                 let rgb = self.color_values.get(id).copied().unwrap_or([255, 0, 0]);
-                let color_preview = container(Space::new().width(24).height(18))
-                    .style(move |theme: &Theme| container::Style {
-                        background: Some(iced::Background::Color(iced::Color::from_rgb8(rgb[0], rgb[1], rgb[2]))),
-                        border: iced::Border {
-                            color: theme.palette().background.neutral.color,
-                            width: 1.0,
-                            radius: 2.0.into(),
-                        },
-                        ..Default::default()
+                let color_preview =
+                    container(Space::new().width(24).height(18)).style(move |theme: &Theme| {
+                        container::Style {
+                            background: Some(iced::Background::Color(iced::Color::from_rgb8(
+                                rgb[0], rgb[1], rgb[2],
+                            ))),
+                            border: iced::Border {
+                                color: theme.palette().background.neutral.color,
+                                width: 1.0,
+                                radius: 2.0.into(),
+                            },
+                            ..Default::default()
+                        }
                     });
 
                 column![
@@ -1166,7 +1200,7 @@ impl<'a> FormControlView<'a> {
                             text(t).size(12),
                         ]
                         .spacing(6)
-                        .align_y(iced::Alignment::Center)
+                        .align_y(iced::Alignment::Center),
                     )
                     .on_press(toggle_msg)
                     .style(button::text)
@@ -1246,7 +1280,7 @@ impl<'a> FormControlView<'a> {
                                     radius: 0.0.into(),
                                 },
                                 ..Default::default()
-                            })
+                            }),
                     );
                 }
                 if *allow_delete {
@@ -1268,7 +1302,7 @@ impl<'a> FormControlView<'a> {
                                 ..Default::default()
                             }
                         })
-                        .width(Fill)
+                        .width(Fill),
                 );
 
                 // Table data rows
@@ -1383,9 +1417,10 @@ impl<'a> FormControlView<'a> {
                         if *allow_delete {
                             let id_del = id.clone();
                             let pid_del = panel_id.clone();
-                            let mut del_btn = button(
-                                crate::ui::icons::themed_secondary(crate::ui::icons::CLOSE, 10.0)
-                            )
+                            let mut del_btn = button(crate::ui::icons::themed_secondary(
+                                crate::ui::icons::CLOSE,
+                                10.0,
+                            ))
                             .style(button::text)
                             .padding([3, 8]);
                             if !is_disabled {
@@ -1422,11 +1457,19 @@ impl<'a> FormControlView<'a> {
                     }
                 }
 
+                // Bounded like the dock panel tables: a full-height table of
+                // thousands of rows exhausts memory on every repaint.
+                let long_table =
+                    self.table_values.get(id).map_or(0, |rows| rows.len()) > TABLE_SHRINK_ROWS;
                 let scrollable_rows = scrollable(rows_list)
                     .direction(scrollable::Direction::Vertical(
                         scrollable::Scrollbar::default(),
                     ))
-                    .height(Length::Shrink)
+                    .height(if long_table {
+                        Length::Fixed(TABLE_MAX_HEIGHT_PX)
+                    } else {
+                        Length::Shrink
+                    })
                     .width(Fill);
 
                 grid_col = grid_col.push(scrollable_rows);
@@ -1464,9 +1507,7 @@ impl<'a> FormControlView<'a> {
                         };
                         add_btn = add_btn.on_press(msg);
                     }
-                    table_col = table_col.push(
-                        row![Space::new().width(Fill), add_btn].width(Fill)
-                    );
+                    table_col = table_col.push(row![Space::new().width(Fill), add_btn].width(Fill));
                 }
 
                 container(table_col)
@@ -1531,10 +1572,8 @@ pub(crate) fn styled_text<'a>(
         }),
         TextStyle::Strong => text(msg).size(12).font(bold),
         TextStyle::Heading => text(msg).size(15).font(bold),
-        TextStyle::Success | TextStyle::Warning | TextStyle::Danger => text(msg)
-            .size(12)
-            .font(bold)
-            .style(move |theme: &Theme| {
+        TextStyle::Success | TextStyle::Warning | TextStyle::Danger => {
+            text(msg).size(12).font(bold).style(move |theme: &Theme| {
                 let palette = theme.palette();
                 let accent = match style {
                     TextStyle::Success => palette.success.base.color,
@@ -1544,7 +1583,8 @@ pub(crate) fn styled_text<'a>(
                 text::Style {
                     color: Some(crate::ui::style::readable::icon_accent(accent, theme)),
                 }
-            }),
+            })
+        }
     };
     match align_h {
         Some(h) => {
@@ -1582,7 +1622,7 @@ mod tests {
     use ocs_plugin_api::dialog::{DialogControl, DialogDef, DialogValue};
 
     #[test]
-    fn test_dialog_state_update_values_inplace() {
+    fn dialog_state_update_values_inplace() {
         let def = DialogDef::new("Test Dialog")
             .with_control(DialogControl::Text {
                 id: "status".to_string(),
@@ -1631,7 +1671,10 @@ mod tests {
         assert_eq!(state.choice_option_text("nested_choice", 1), "Static B");
 
         let mut updates = HashMap::new();
-        updates.insert("status".to_string(), DialogValue::Text("Updated Status".to_string()));
+        updates.insert(
+            "status".to_string(),
+            DialogValue::Text("Updated Status".to_string()),
+        );
         updates.insert(
             "scripts".to_string(),
             DialogValue::Table(vec![vec!["C:/path/script1.lsp".to_string()]]),
@@ -1639,7 +1682,11 @@ mod tests {
         updates.insert(
             "category".to_string(),
             DialogValue::ChoiceOptions {
-                options: vec!["Opt A".to_string(), "Opt B".to_string(), "Opt C".to_string()],
+                options: vec![
+                    "Opt A".to_string(),
+                    "Opt B".to_string(),
+                    "Opt C".to_string(),
+                ],
                 selected_index: 2,
             },
         );
@@ -1656,7 +1703,11 @@ mod tests {
         assert_eq!(*state.choice_values.get("category").unwrap(), 2);
         assert_eq!(
             state.dynamic_choice_options.get("category").unwrap(),
-            &vec!["Opt A".to_string(), "Opt B".to_string(), "Opt C".to_string()]
+            &vec![
+                "Opt A".to_string(),
+                "Opt B".to_string(),
+                "Opt C".to_string()
+            ]
         );
         assert_eq!(state.choice_option_text("category", 2), "Opt C");
         assert!(state.disabled_controls.contains("apply_btn"));
@@ -1678,31 +1729,30 @@ mod tests {
     }
 
     #[test]
-    fn test_panel_state_shares_update_values_and_choice_lookup() {
+    fn panel_state_shares_update_values_and_choice_lookup() {
         use crate::ui::window::plugin_panel::PluginPanelState;
         use ocs_plugin_api::dialog::PanelDef;
 
-        let def = PanelDef::new("my_panel", "My Panel")
-            .with_control(DialogControl::Fields {
-                id: "sec1".to_string(),
-                title: Some("Section".to_string()),
-                controls: vec![
-                    DialogControl::Choice {
-                        id: "p_choice".to_string(),
-                        label: "Choice".to_string(),
-                        options: vec!["One".to_string(), "Two".to_string()],
-                        default_index: 0,
-                    },
-                    DialogControl::Button {
-                        id: "p_btn".to_string(),
-                        label: "Click".to_string(),
-                        action: None,
-                        align_h: None,
-                        width: None,
-                    },
-                ],
-                collapsed: false,
-            });
+        let def = PanelDef::new("my_panel", "My Panel").with_control(DialogControl::Fields {
+            id: "sec1".to_string(),
+            title: Some("Section".to_string()),
+            controls: vec![
+                DialogControl::Choice {
+                    id: "p_choice".to_string(),
+                    label: "Choice".to_string(),
+                    options: vec!["One".to_string(), "Two".to_string()],
+                    default_index: 0,
+                },
+                DialogControl::Button {
+                    id: "p_btn".to_string(),
+                    label: "Click".to_string(),
+                    action: None,
+                    align_h: None,
+                    width: None,
+                },
+            ],
+            collapsed: false,
+        });
 
         let mut panel = PluginPanelState::from_def(def);
         assert_eq!(panel.choice_option_text("p_choice", 1), "Two");

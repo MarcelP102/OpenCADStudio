@@ -36,10 +36,22 @@ pub struct AppConfig {
     pub show_tool_palettes: bool,
     /// Whether the Command History pallet is open.
     pub show_command_history: bool,
+    /// The Geometry Cleanup settings, in the form of a `.gcs` file. `None`
+    /// until the user saves them: each drawing then uses its proposed
+    /// tolerance.
+    /// Settings that cannot be read are dropped, not the whole profile.
+    #[serde(deserialize_with = "lenient")]
+    pub geometry_cleanup:
+        Option<crate::modules::manage::geometry_cleanup_settings::CleanupSettings>,
+    /// The `.gcs` file that the Geometry Cleanup settings were last imported
+    /// from, shown in their Settings dialog.
+    pub geometry_cleanup_file: Option<String>,
     /// Whether the Layer Manager pallet is open.
     pub show_layers: bool,
     /// Whether the Blocks palette is open.
     pub show_block_palette: bool,
+    /// Whether the External References pallet is open.
+    pub show_external_references: bool,
     /// Whether the document file tabs are shown (FILETAB).
     pub show_file_tabs: bool,
     /// The drawing tabs run across the window above the palettes, instead
@@ -79,8 +91,11 @@ impl Default for AppConfig {
             show_graphic_attributes: false,
             show_tool_palettes: false,
             show_command_history: false,
+            geometry_cleanup: None,
+            geometry_cleanup_file: None,
             show_layers: false,
             show_block_palette: false,
+            show_external_references: false,
             show_file_tabs: true,
             file_tabs_above_docks: false,
             show_layout_tabs: true,
@@ -102,7 +117,10 @@ pub struct ShortcutConfig {
     pub bindings: std::collections::BTreeMap<String, String>,
     /// The shipped default keys this table has already been offered. A
     /// default added in a later release is backfilled once; one the user
-    /// removed stays removed.
+    /// removed stays removed. A table saved before this field existed has
+    /// been offered none, so the field reads as empty there, not as the
+    /// struct's default (every current key).
+    #[serde(default)]
     pub known_defaults: std::collections::BTreeSet<String>,
 }
 
@@ -631,6 +649,14 @@ pub struct RibbonConfig {
     pub layout: RibbonLayout,
 }
 
+// How many times this thread asked for the config to be written. A test
+// build writes nothing (see `save`), so a test reads this to see that a step
+// would write the settings file.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static SAVES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl AppConfig {
     /// Read the saved config, or all-defaults when the file is missing or
     /// unreadable. Unknown or missing fields fall back to their section defaults
@@ -656,6 +682,8 @@ impl AppConfig {
     /// preferences on them — without this, running `cargo test` rewrites the
     /// settings of whoever ran it.
     pub fn save(&self) {
+        #[cfg(test)]
+        SAVES.with(|count| count.set(count.get() + 1));
         if cfg!(test) {
             return;
         }
@@ -681,6 +709,17 @@ impl AppConfig {
     }
 }
 
+/// A field that is `None` when its value cannot be read, so that one bad
+/// value does not reset the whole profile.
+fn lenient<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let value = <serde_json::Value as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).ok())
+}
+
 #[cfg(target_arch = "wasm32")]
 const WEB_CONFIG_KEY: &str = "opencadstudio.settings";
 
@@ -692,6 +731,7 @@ fn config_path() -> Option<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
     #[test]
     fn system_scheme_resolves_to_a_concrete_theme_and_keeps_its_name() {
@@ -713,7 +753,7 @@ mod tests {
     }
 
     #[test]
-    fn test_model_space_defaults() {
+    fn model_space_defaults() {
         let cfg = ModelSpaceThemeConfig::default();
         assert_eq!(cfg.mode, ModelSpaceMode::MatchTheme);
         assert_eq!(cfg.custom_bg, None);
@@ -729,7 +769,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_model_bg_match_theme() {
+    fn resolve_model_bg_match_theme() {
         let cfg = ModelSpaceThemeConfig {
             mode: ModelSpaceMode::MatchTheme,
             ..Default::default()
@@ -747,7 +787,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_model_bg_classic_dark() {
+    fn resolve_model_bg_classic_dark() {
         let cfg = ModelSpaceThemeConfig {
             mode: ModelSpaceMode::ClassicDark,
             ..Default::default()
@@ -761,7 +801,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_model_bg_custom() {
+    fn resolve_model_bg_custom() {
         let cfg = ModelSpaceThemeConfig {
             mode: ModelSpaceMode::Custom,
             custom_bg: Some([10, 20, 30]),
@@ -774,7 +814,7 @@ mod tests {
     }
 
     #[test]
-    fn test_model_space_config_serde_roundtrip() {
+    fn model_space_config_serde_roundtrip() {
         let mut original = AppConfig::default();
         original.model_space.mode = ModelSpaceMode::Custom;
         original.model_space.custom_bg = Some([12, 34, 56]);
@@ -1010,18 +1050,19 @@ mod tests {
     /// the guard and then split a character:
     /// `byte index 2 is not a char boundary; it is inside 'é'`. Pasting it
     /// into any Options colour field killed the process on the keystroke.
-    #[test]
-    fn test_parse_hex_rejects_multibyte_input_without_panicking() {
-        for value in ["aébé", "#aébé", "éééééé", "#ébé#"] {
-            assert_eq!(parse_hex(value), None, "{value} should not parse");
-        }
-        // Non-hex garbage and wrong lengths stay None.
-        for value in ["gggggg", "a1b2c", "a1b2c34", "#GGHHII"] {
-            assert_eq!(parse_hex(value), None, "{value} should not parse");
-        }
-        // Valid input keeps working, with and without '#', with whitespace.
-        assert_eq!(parse_hex("a1b2c3"), Some([0xa1, 0xb2, 0xc3]));
-        assert_eq!(parse_hex("#A1B2C3"), Some([0xa1, 0xb2, 0xc3]));
-        assert_eq!(parse_hex("  000000  "), Some([0, 0, 0]));
+    #[rstest]
+    #[case("aébé", None)]
+    #[case("#aébé", None)]
+    #[case("éééééé", None)]
+    #[case("#ébé#", None)]
+    #[case("gggggg", None)]
+    #[case("a1b2c", None)]
+    #[case("a1b2c34", None)]
+    #[case("#GGHHII", None)]
+    #[case("a1b2c3", Some([0xa1, 0xb2, 0xc3]))]
+    #[case("#A1B2C3", Some([0xa1, 0xb2, 0xc3]))]
+    #[case("  000000  ", Some([0, 0, 0]))]
+    fn parse_hex_handles_text_and_whitespace(#[case] value: &str, #[case] expected: Option<[u8; 3]>) {
+        assert_eq!(parse_hex(value), expected, "{value}");
     }
 }

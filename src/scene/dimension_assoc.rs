@@ -630,6 +630,27 @@ fn source_marker(entity: &EntityType, point: Vector3) -> Option<i32> {
         .map(|(index, _)| index as i32)
 }
 
+/// The stored form of a reference to `marker`: a polyline vertex is written
+/// the way the file format names it, as an edge (subentity 2, one-based edge
+/// marker) and its start (0) or end (1). Everything else keeps subentity 1.
+fn stored_marker(entity: &EntityType, marker: i32, parameter: f64) -> (i32, i32, f64) {
+    let vertices = match entity {
+        EntityType::LwPolyline(polyline) => Some((polyline.vertices.len(), polyline.is_closed)),
+        EntityType::Polyline2D(polyline) => Some((polyline.vertices.len(), polyline.is_closed())),
+        _ => None,
+    };
+    match (vertices, usize::try_from(marker)) {
+        (Some((count, closed)), Ok(vertex)) if parameter == 0.0 && vertex < count && count > 1 => {
+            if vertex + 1 < count || closed {
+                (2, vertex as i32 + 1, 0.0)
+            } else {
+                (2, vertex as i32, 1.0)
+            }
+        }
+        _ => (1, marker, parameter),
+    }
+}
+
 // ── Chain-aware reference resolution ──────────────────────────────────────
 
 /// Transform an entity-local feature through its block path and optional viewport.
@@ -1135,10 +1156,14 @@ pub(crate) fn constraint_from_associative_dimension(
     }
     let point = |index: usize| {
         let reference = association.references.get(index)?.first()?;
-        Some(ParametricRef::point(
-            *reference.xrefs.first()?,
-            reference.main_gs_marker,
-        ))
+        // An edge reference (subentity 2) names a vertex as the start (0) or
+        // the end (1) of a one-based edge.
+        let vertex = if reference.main_subent_type == 2 {
+            reference.main_gs_marker - 1 + reference.osnap_distance.round() as i32
+        } else {
+            reference.main_gs_marker
+        };
+        Some(ParametricRef::point(*reference.xrefs.first()?, vertex))
     };
     let whole = |index: usize| {
         let reference = association.references.get(index)?.first()?;
@@ -1344,7 +1369,7 @@ impl Scene {
         if source_data.is_empty() {
             return;
         }
-        let resolved: Vec<Option<(Handle, i32, f64, u8)>> = source_data
+        let resolved: Vec<Option<(Handle, i32, i32, f64, u8)>> = source_data
             .iter()
             .take(4)
             .enumerate()
@@ -1360,7 +1385,12 @@ impl Scene {
                 } else {
                     1
                 };
-                Some((source.handle, marker, parameter, osnap_type))
+                let (subent, marker, parameter) = if osnap_type == 1 {
+                    stored_marker(entity, marker, parameter)
+                } else {
+                    (1, marker, parameter)
+                };
+                Some((source.handle, subent, marker, parameter, osnap_type))
             })
             .collect();
         if resolved.iter().all(Option::is_none) {
@@ -1368,12 +1398,12 @@ impl Scene {
         }
 
         let reference =
-            |source: Handle, marker: i32, parameter: f64, osnap_type: u8, point: Vector3| {
+            |source: Handle, subent: i32, marker: i32, parameter: f64, osnap_type: u8, point: Vector3| {
                 AssocDimensionReference {
                     class_name: "AcDbOsnapPointRef".to_string(),
                     osnap_type,
                     xrefs: vec![source],
-                    main_subent_type: 1,
+                    main_subent_type: subent,
                     main_gs_marker: marker,
                     osnap_distance: parameter,
                     osnap_point: point,
@@ -1386,10 +1416,11 @@ impl Scene {
             if index >= references.len() {
                 break;
             }
-            if let Some((source, marker, parameter, osnap_type)) = resolved {
+            if let Some((source, subent, marker, parameter, osnap_type)) = resolved {
                 associativity |= 1 << index;
                 references[index].push(reference(
                     source,
+                    subent,
                     marker,
                     parameter,
                     osnap_type,
@@ -1441,6 +1472,34 @@ impl Scene {
         let mut object = AssociativeObject::new("DIMASSOC", "AcDbDimAssoc");
         object.handle = association_handle;
         self.has_dimension_associations.set(Some(true));
+        // The association lives in the dimension's extension dictionary,
+        // under ACAD_DIMASSOC and owned by it, as the file format keeps it.
+        let existing = self.document.extension_dictionary_handle(dimension);
+        if self.is_recording_undo() {
+            let before = self.document.get_entity_arc(dimension);
+            self.record_undo_before(dimension, before);
+        }
+        if let Some(dictionary) = existing {
+            let before = self.document.objects.get(&dictionary).cloned();
+            self.record_undo_object_before(dictionary, before);
+        }
+        let dictionary = self.document.ensure_extension_dictionary(dimension);
+        if existing.is_none() {
+            self.record_undo_object_before(dictionary, None);
+        }
+        if let Some(ObjectType::Dictionary(entries)) = self.document.objects.get_mut(&dictionary) {
+            if let Some((_, handle)) = entries
+                .entries
+                .iter_mut()
+                .find(|(name, _)| name.eq_ignore_ascii_case("ACAD_DIMASSOC"))
+            {
+                *handle = association_handle;
+            } else {
+                entries.add_entry("ACAD_DIMASSOC", association_handle);
+            }
+        }
+        object.owner = dictionary;
+        object.reactors.push(dictionary);
         object.reactors.push(dimension);
         object.data = AssociativeData::DimensionAssociation(AssocDimensionAssociation {
             associativity,
@@ -1544,6 +1603,11 @@ impl Scene {
             let Some((marker, parameter)) = marker_parameter else {
                 continue;
             };
+            let (subent, marker, parameter) = if osnap_type == chain::osnap::END {
+                stored_marker(entity, marker, parameter)
+            } else {
+                (1, marker, parameter)
+            };
             let mut intersection_objects = Vec::new();
             if matches!(
                 source.snap_type,
@@ -1568,7 +1632,7 @@ impl Scene {
                 osnap_type,
                 xrefs,
                 intersection_objects,
-                main_subent_type: 1,
+                main_subent_type: subent,
                 main_gs_marker: marker,
                 osnap_distance: parameter,
                 // Store the source's owning-space point: model coordinates for
@@ -1837,35 +1901,72 @@ impl Scene {
     /// reactor it left on every entity and its entry in the owning dictionary.
     /// Returns whether the dimension was associative.
     pub(crate) fn detach_dimension_association(&mut self, dimension: Handle) -> bool {
-        let found = self.document.objects.iter().find_map(|(handle, object)| {
-            let ObjectType::Associative(object) = object else {
-                return None;
-            };
-            matches!(
-                &object.data,
-                AssociativeData::DimensionAssociation(data) if data.dimension == dimension
-            )
-            .then_some((*handle, object.owner))
-        });
-        let Some((association, owner)) = found else {
-            return false;
-        };
-        let before = self.document.objects.get(&association).cloned();
-        self.record_undo_object_before(association, before);
-        if let Some(ObjectType::Dictionary(dictionary)) = self.document.objects.get(&owner) {
-            let before = ObjectType::Dictionary(dictionary.clone());
-            self.record_undo_object_before(owner, Some(before));
+        let dimensions: rustc_hash::FxHashSet<Handle> = [dimension].into_iter().collect();
+        self.detach_dimension_associations(&dimensions) > 0
+    }
+
+    /// The DIMASSOCs of erased dimensions go with them: one left behind
+    /// points at a dimension no reader can resolve.
+    pub(crate) fn detach_erased_dimension_associations(
+        &mut self,
+        erased: &rustc_hash::FxHashSet<Handle>,
+    ) {
+        if !erased.is_empty() && self.dimension_associations_possible() {
+            self.detach_dimension_associations(erased);
         }
-        if let Some(ObjectType::Dictionary(dictionary)) = self.document.objects.get_mut(&owner) {
-            dictionary
-                .entries
-                .retain(|(_, handle)| *handle != association);
+    }
+
+    /// [`Self::detach_dimension_association`] for every dimension in
+    /// `dimensions` at once, in one walk over the objects and one over the
+    /// entities. Returns how many associations were removed.
+    fn detach_dimension_associations(
+        &mut self,
+        dimensions: &rustc_hash::FxHashSet<Handle>,
+    ) -> usize {
+        let found: Vec<(Handle, Handle)> = self
+            .document
+            .objects
+            .iter()
+            .filter_map(|(handle, object)| {
+                let ObjectType::Associative(object) = object else {
+                    return None;
+                };
+                matches!(
+                    &object.data,
+                    AssociativeData::DimensionAssociation(data) if dimensions.contains(&data.dimension)
+                )
+                .then_some((*handle, object.owner))
+            })
+            .collect();
+        if found.is_empty() {
+            return 0;
         }
-        self.document.objects.remove(&association);
+        for &(association, owner) in &found {
+            let before = self.document.objects.get(&association).cloned();
+            self.record_undo_object_before(association, before);
+            if let Some(ObjectType::Dictionary(dictionary)) = self.document.objects.get(&owner) {
+                let before = ObjectType::Dictionary(dictionary.clone());
+                self.record_undo_object_before(owner, Some(before));
+            }
+            if let Some(ObjectType::Dictionary(dictionary)) = self.document.objects.get_mut(&owner)
+            {
+                dictionary
+                    .entries
+                    .retain(|(_, handle)| *handle != association);
+            }
+            self.document.objects.remove(&association);
+        }
+        let removed: rustc_hash::FxHashSet<Handle> = found.iter().map(|(h, _)| *h).collect();
         let holders: Vec<Handle> = self
             .document
             .entities()
-            .filter(|entity| entity.common().reactors.contains(&association))
+            .filter(|entity| {
+                entity
+                    .common()
+                    .reactors
+                    .iter()
+                    .any(|reactor| removed.contains(reactor))
+            })
             .map(|entity| entity.common().handle)
             .collect();
         for handle in holders {
@@ -1877,11 +1978,11 @@ impl Scene {
                 entity
                     .common_mut()
                     .reactors
-                    .retain(|reactor| *reactor != association);
+                    .retain(|reactor| !removed.contains(reactor));
             }
         }
         self.invalidate_dependency_index();
-        true
+        found.len()
     }
 
     /// Preserve an association only when the dimension and every source-chain
@@ -2131,8 +2232,16 @@ impl Scene {
     }
 
     pub(crate) fn infer_dimension_sources(&self, dimension: Handle) -> Vec<Option<Handle>> {
-        let Some(EntityType::Dimension(entity)) = self.document.get_entity(dimension) else {
+        let Some(found @ EntityType::Dimension(entity)) = self.document.get_entity(dimension) else {
             return Vec::new();
+        };
+        // Only geometry of the dimension's own space: a block definition's
+        // member at the same point is not a source (#3502).
+        let owner = found.common().owner_handle;
+        let candidates = || {
+            self.document.entities().filter(move |candidate| {
+                candidate.common().handle != dimension && candidate.common().owner_handle == owner
+            })
         };
         let radial_data = match &**entity {
             Dimension::Radius(radius) => Some((
@@ -2154,10 +2263,7 @@ impl Scene {
         };
         if let Some((center, radius, chord)) = radial_data {
             let tolerance = radius.abs().max(1.0) * 1e-9;
-            let source = self
-                .document
-                .entities()
-                .filter(|candidate| candidate.common().handle != dimension)
+            let source = candidates()
                 .filter_map(|candidate| {
                     let radial = radial_source_matching(candidate, center, radius, chord)?;
                     let center_error = point_distance_squared(radial.center_world(), center);
@@ -2173,9 +2279,7 @@ impl Scene {
             .into_iter()
             .map(|point| {
                 point.and_then(|point| {
-                    self.document
-                        .entities()
-                        .filter(|entity| entity.common().handle != dimension)
+                    candidates()
                         .filter_map(|entity| {
                             source_distance_squared(entity, point)
                                 .map(|distance| (distance, entity.common().handle))
@@ -2858,6 +2962,41 @@ mod tests {
         // Detaching the association settles the answer back to false.
         assert!(scene.detach_dimension_association(dimension));
         assert!(!scene.dimension_associations_possible());
+    }
+
+    /// The DIMASSOC sits in its dimension's extension dictionary, owned by
+    /// it, and goes when the dimension is erased (#3124: one left behind,
+    /// unowned, crashed an older reader).
+    #[test]
+    fn a_dimension_association_lives_in_the_dimensions_dictionary_and_goes_with_it() {
+        let mut scene = Scene::new();
+        let circle = scene.add_entity(EntityType::Circle(Circle::from_center_radius(
+            Vector3::ZERO,
+            5.0,
+        )));
+        let dimension = scene.add_entity(EntityType::Dimension(Box::new(Dimension::Diameter(
+            DimensionDiameter::new(Vector3::new(5.0, 0.0, 0.0), Vector3::new(-5.0, 0.0, 0.0)),
+        ))));
+        scene.attach_dimension_association(dimension, vec![Some(circle)]);
+        let dictionary = scene
+            .document
+            .extension_dictionary_handle(dimension)
+            .expect("the dimension gets an extension dictionary");
+        let Some(ObjectType::Dictionary(entries)) = scene.document.objects.get(&dictionary) else {
+            panic!("expected the extension dictionary");
+        };
+        let association = entries.get("ACAD_DIMASSOC").expect("ACAD_DIMASSOC entry");
+        let Some(ObjectType::Associative(object)) = scene.document.objects.get(&association) else {
+            panic!("expected the DIMASSOC object");
+        };
+        assert_eq!(object.owner, dictionary);
+
+        scene.erase_entities(&[dimension]);
+        assert!(scene.document.objects.get(&association).is_none());
+        assert!(scene
+            .document
+            .get_entity(circle)
+            .is_some_and(|c| !c.common().reactors.contains(&association)));
     }
 }
 

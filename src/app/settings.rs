@@ -846,15 +846,23 @@ pub struct UserSettings {
     /// Scrolling pans and Ctrl+scroll (a touchpad pinch) zooms, for a
     /// touchpad that reports two-finger drags as wheel scrolls.
     pub touchpad_pan: bool,
+    /// The numeric keypad's decimal key always types a decimal point; off,
+    /// it types the layout's character (a comma then separates coordinates).
+    pub keypad_decimal_point: bool,
     /// Interface scale in percent, on top of the display's own scale.
     pub ui_scale_percent: u16,
     pub zoom_factor: i32,
     /// CURSORSIZE: normalized crosshair reach; 5 retains the original 60 px arms.
     pub cursor_size: i32,
-    /// PICKBOX: normalized visible-box and click-aperture size.
+    /// PICKBOX: the pick box half-size in screen pixels. Stored under a
+    /// new name: the old key held a scaled value (3 drew 8 pixels).
+    #[serde(rename = "pickbox")]
     pub pick_box: i32,
     /// APERTURE: object-snap capture radius in screen pixels.
     pub aperture: f32,
+    /// The Magnet of AUTOSNAP (bit 4): while an object snap marker shows,
+    /// the crosshairs are drawn on the snap point, not at the pointer.
+    pub autosnap_magnet: bool,
     /// HPASSOC: new hatches follow their boundary objects.
     pub hatch_associative: bool,
     /// HPGAPTOL: largest boundary gap HATCH/BOUNDARY picks treat as closed.
@@ -960,6 +968,9 @@ pub struct UserSettings {
     pub hyperlink_options: bool,
     /// XDWGFADECTL: how much referenced drawings fade (-90..=90; negative is off).
     pub xref_fade: i32,
+    /// LAYLOCKFADECTL: how much objects on locked layers fade (-90..=90;
+    /// negative is off).
+    pub layer_lock_fade: i32,
     /// FILEDIA: file dialogs of commands that have a command-line form.
     pub file_dia: bool,
     /// OLEHIDE: which OLE objects show (0 all, 1 paper space, 2 model space, 3 none).
@@ -1018,6 +1029,8 @@ pub struct UserSettings {
     /// LAYOUTCREATEVIEWPORT: a layout opened for the first time gets a
     /// viewport.
     pub layout_create_viewport: bool,
+    /// PICKLOCKED: objects on a locked layer can be selected.
+    pub pick_locked: bool,
     /// PDFSHXTEXT's recognition settings (fonts, threshold, PDFSHXLAYER,
     /// PDFSHXBESTFONT, PDFSHXTEXTSETTINGS).
     pub pdf_shx_text: crate::modules::insert::pdf_shx_text::ShxTextSettings,
@@ -1110,10 +1123,6 @@ pub struct UserSettings {
     /// Linked plugin source repositories (`owner/repo`) the marketplace installs
     /// from.
     pub plugin_repos: Vec<String>,
-    /// Command-line literal-space mode: when on, Space stays in the input
-    /// instead of submitting (as if every line started with `>`), until the
-    /// user toggles it back off.
-    pub literal_spaces: bool,
     /// Height of the expanded command-history editor in logical pixels.
     pub command_history_height: f32,
     /// Running object-snap set + master toggle as an `$OSMODE`-style bitmask.
@@ -1268,6 +1277,14 @@ pub struct UserSettings {
     /// 4 details, 5 list.
     #[serde(default = "default_block_view")]
     pub block_palette_view: u8,
+    /// Blocks palette: the tab it was left on (0 Current Drawing, 1 Recent,
+    /// 2 Favorites, 3 Libraries).
+    #[serde(default)]
+    pub block_palette_tab: u8,
+    /// Blocks palette: the library folder the Libraries tab showed last; it
+    /// opens there again unless BLOCKNAVIGATE names a folder.
+    #[serde(default)]
+    pub block_library_folder: String,
     /// Blocks palette insertion options.
     #[serde(default)]
     pub block_insert: BlockInsertOptions,
@@ -1514,11 +1531,14 @@ impl Default for UserSettings {
             dynamic_ucs: true,
             // A Mac's built-in trackpad is the common case there.
             touchpad_pan: cfg!(target_os = "macos"),
+            keypad_decimal_point: true,
             ui_scale_percent: 100,
             zoom_factor: 60,
             cursor_size: 5,
-            pick_box: 3,
+            pick_box: 5,
             aperture: crate::snap::DEFAULT_OSNAP_RADIUS_PX,
+            // On, as in the initial AUTOSNAP value 63.
+            autosnap_magnet: true,
             hatch_associative: true,
             hatch_gap_tolerance: 0.0,
             hatch_start_method: 0,
@@ -1571,6 +1591,7 @@ impl Default for UserSettings {
             annotation_scale_prompt: true,
             hyperlink_options: true,
             xref_fade: 50,
+            layer_lock_fade: 50,
             file_dia: true,
             ole_hide: 0,
             ole_quality: 3,
@@ -1597,6 +1618,7 @@ impl Default for UserSettings {
             ucs_ortho: true,
             ucs_view: true,
             layout_create_viewport: true,
+            pick_locked: true,
             pdf_shx_text: Default::default(),
             dgn_import: Default::default(),
             ncopy_bind: false,
@@ -1618,7 +1640,6 @@ impl Default for UserSettings {
             gpu_warning_silenced: String::new(),
             disabled_plugins: Vec::new(),
             plugin_repos: Vec::new(),
-            literal_spaces: false,
             command_history_height: crate::ui::command_line::HISTORY_HEIGHT_DEFAULT,
             // Snapper::default(): END|MID|CEN|NODE|QUAD|INT (63), master on.
             // Object snap is a drafting aid users expect to be live from the
@@ -1674,6 +1695,8 @@ impl Default for UserSettings {
             block_favorites: Vec::new(),
             block_libraries: Vec::new(),
             block_palette_view: 1,
+            block_palette_tab: 0,
+            block_library_folder: String::new(),
             block_insert: BlockInsertOptions::default(),
             block_mru_list: 50,
             block_redefine_mode: 1,
@@ -1947,6 +1970,19 @@ mod tests {
             let back: UserSettings = serde_json::from_str(&json).unwrap();
             assert_eq!(back.node_graph_links, links);
         }
+    }
+
+    #[test]
+    fn the_autosnap_magnet_defaults_to_on_and_round_trips() {
+        let old: UserSettings = serde_json::from_str(r#"{"pick_add": true}"#).unwrap();
+        assert!(old.autosnap_magnet);
+        let settings = UserSettings {
+            autosnap_magnet: false,
+            ..UserSettings::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: UserSettings = serde_json::from_str(&json).unwrap();
+        assert!(!back.autosnap_magnet);
     }
 
     #[test]

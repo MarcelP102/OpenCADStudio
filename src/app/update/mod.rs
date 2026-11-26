@@ -11,7 +11,9 @@ use iced::Task;
 /// keyboard can't reach the main window (command line, F-key toggles, edit
 /// shortcuts) while a dialog is up. `CommandEscape` is handled separately (it
 /// closes the modal); a modal's own text fields emit their own messages, which
-/// are not in this set. See [`OpenCADStudio::update`] and #126.
+/// are not in this set. See [`OpenCADStudio::update`] and #126. The grid and
+/// grid-snap toggles are not in it: F7 and F9 reach them only through
+/// `ShortcutPressed`, so what is left is a click on their controls.
 pub(crate) fn is_modal_blocked_key_msg(msg: &Message) -> bool {
     matches!(
         msg,
@@ -34,9 +36,7 @@ pub(crate) fn is_modal_blocked_key_msg(msg: &Message) -> bool {
             | Message::DeleteSelected
             | Message::ToggleSnapEnabled
             | Message::ToggleSnap3dEnabled
-            | Message::ToggleGrid
             | Message::ToggleOrtho
-            | Message::ToggleGridSnap
             | Message::TogglePolar
             | Message::ToggleOTrack
             | Message::ToggleDynInput
@@ -154,17 +154,20 @@ fn reorder_insertion_index(from: usize, to: usize, after: bool, len: usize) -> O
 
 #[cfg(test)]
 mod block_ops_tests;
+#[cfg(test)]
+mod block_palette_library_tests;
 pub(super) mod blocks_palette;
 pub(in crate::app) mod command;
 pub(crate) mod context_menu;
 mod dialog;
 mod dynamic;
-mod file;
+pub(in crate::app) mod file;
 pub(in crate::app) mod graphic_attributes;
 mod keytips;
 pub(in crate::app) mod linetype_manager;
 pub(in crate::app) mod mleader_style;
 mod dimstyle_dialog;
+mod title_bar;
 pub(super) mod tool_palettes;
 pub(in crate::app) use file::background_task;
 #[cfg(not(target_arch = "wasm32"))]
@@ -173,16 +176,26 @@ pub(in crate::app) use file::native_paths_match;
 pub(in crate::app) use file::panic_detail;
 mod page_setup_import;
 #[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) mod panic_guard;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod panic_guard_tests;
+#[cfg(not(target_arch = "wasm32"))]
 mod plugin_grips;
 mod prop_commit;
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::app) use plugin_grips::SETTLE_WATCHDOG;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod document_delta_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod plugin_grips_tests;
 mod qselect;
 mod style;
 pub(in crate::app) mod table_style_cells;
 pub(crate) mod style_import;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(in crate::app) mod undo_record_guard;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod undo_record_guard_tests;
 pub(in crate::app) mod util;
 mod viewport;
 pub(in crate::app) mod viewport_snap;
@@ -236,6 +249,9 @@ impl OpenCADStudio {
             self.pending_close = None;
             self.save_dialog_for_unsaved = false;
         }
+        if self.active_modal == Some(IfcPlan) {
+            self.import_dialogs.ifc_plan = None;
+        }
         if self.active_modal == Some(BlockEditorSettings) {
             self.block_editor_settings = None;
         }
@@ -244,6 +260,9 @@ impl OpenCADStudio {
         }
         if self.active_modal == Some(BlockCycleOrder) {
             self.block_cycle_order = None;
+        }
+        if self.active_modal == Some(GeometryCleanupSettings) {
+            self.geometry_cleanup.dialog = None;
         }
         // Plot Style opened from PLOT behaves as a child modal.
         // Closing it restores the parent Plot dialog instead of returning
@@ -427,6 +446,23 @@ impl OpenCADStudio {
             // Cancel or ✕ leaves the cells as they were.
             Some(TableCellWarning) => self.table_cell_warning = None,
             Some(AnnotationScalePrompt) => self.anno_scale_prompt = None,
+            // Cancel or ✕ ends the command that asked (measured).
+            // Cancel or ✕ drops the window; what Apply wrote stays.
+            Some(PointGroup) => self.point_tools.point_group = None,
+            Some(CorridorPoints) => self.point_tools.corridor = None,
+            Some(PointBlocks) => self.point_tools.blocks = None,
+            // Cancel stops the conversion; the blocks made stay.
+            Some(BlockDuplicate) => self.finish_block_job(),
+            // Cancel stops the replacement; the points made stay.
+            Some(DuplicatePoint) => {
+                self.point_tools.duplicate = None;
+                self.point_tools.legacy_job = None;
+            }
+            Some(SurfaceList) => {
+                if self.surface_list.take().is_some() {
+                    let _ = self.apply_cmd_result(crate::command::CmdResult::Cancel);
+                }
+            }
             // Esc or ✕ on the text style question changes the style, as Yes.
             Some(MTextDialog) => {
                 if let Some(dialog) = self.mtext_dialog.take() {
@@ -530,6 +566,13 @@ impl OpenCADStudio {
         self.last_plugin_selection = Some(key);
         let revision = self.bump_selection_revision(tab_id);
         let handles = self.tabs[i].scene.selected_handles_in_order();
+        let document = &self.tabs[i].scene.document;
+        let (contextual, on) = crate::plugin::registry::plugin_context_tabs(
+            &self.disabled_plugins,
+            handles.iter().filter_map(|handle| document.get_entity(*handle)),
+        );
+        self.ribbon.set_plugin_contextual(contextual);
+        self.ribbon.set_plugin_context(on);
         // Per-endpoint API routing (v22): digest to v22+ runners, the exact
         // legacy streams (v4..v21 handle list; plain below v4) to older ones.
         crate::plugin::v4_support::publish_selection_changed_versioned(
@@ -565,30 +608,33 @@ impl OpenCADStudio {
         }
         self.last_plugin_document = Some(key);
         crate::plugin::v4_support::publish_drawing_changed(tab.id, tab.scene.geometry_epoch);
-        if let Err(e) =
-            crate::plugin::v4_support::publish_document_view_v4(tab.id, &tab.scene.document)
-        {
-            // P1-18: a failed publication is logged, not ignored — the epoch
-            // still reaches native plugins, but the snapshot side named its
-            // failure on stderr instead of silently going stale.
-            eprintln!("[host] V4 document view failed to publish: {e}");
-        }
+        // Publish/correlate the shared snapshot FIRST: the delta below cites
+        // exactly the (version, generation) this call published, so a plugin
+        // can never be told a snapshot state that was not (or is no longer)
+        // the live one. A failed publication is logged, not ignored (P1-18) —
+        // the delta then claims NO snapshot and sets `full_refresh_required`.
+        let snapshot_result =
+            crate::plugin::v4_support::publish_document_view_v4(tab.id, &tab.scene.document);
+        let (snapshot, snapshot_failed) = match &snapshot_result {
+            Ok(snapshot) => (snapshot.clone(), false),
+            Err(e) => {
+                eprintln!("[host] V4 document view failed to publish: {e}");
+                (None, true)
+            }
+        };
         // Same guarded boundary, second surface (API v9): the plain
         // `DocumentChanged` carries the settled geometry epoch to every
         // loaded native plugin through `BuiltinPlugin::on_notification`.
         crate::plugin::v4_support::publish_document_changed(tab.scene.geometry_epoch);
-        // API v13 dirty regions: plugin writes publish their sets at their own
-        // boundary, so an epoch change reaching this one came from elsewhere
-        // and the sets say "walk everything" (empty).
+        // API v27 exact delta + legacy v13 dirty regions, one publication
+        // per endpoint: pre-27 plugins keep the byte-identical Regions
+        // stream (the sets deliberately degrade to empty at this built-in
+        // boundary — "walk everything"), v27+ plugins receive the exact
+        // categorized delta instead.
         let tab = &mut self.tabs[self.active_tab];
         tab.plugin_dirty_overflow = true;
-        let (entities, records) = tab.take_plugin_dirty();
-        crate::plugin::v4_support::publish_document_changed_regions(
-            tab.id,
-            tab.scene.geometry_epoch,
-            entities,
-            records,
-        );
+        let fresh = tab.take_document_boundary(snapshot, snapshot_failed);
+        crate::plugin::v4_support::publish_document_delta(tab.id, tab.scene.geometry_epoch, fresh);
     }
 
     /// Announce that a whole document became resident in the active tab —
@@ -930,6 +976,24 @@ impl OpenCADStudio {
             }
         }
         if self.active_modal.is_some() {
+            if self.active_modal == Some(super::ModalKind::Unsaved) {
+                let letter = match &msg {
+                    Message::CommandAppendChar(s) if s.chars().count() == 1 => {
+                        s.chars().next().map(|c| c.to_ascii_uppercase())
+                    }
+                    Message::ShortcutPressed(key) if key.len() == 1 => key.chars().next(),
+                    _ => None,
+                };
+                let answer = match letter {
+                    Some('S') => Some(Message::UnsavedDialogSave),
+                    Some('N') => Some(Message::UnsavedDialogDiscard),
+                    Some('C') => Some(Message::UnsavedDialogCancel),
+                    _ => None,
+                };
+                if let Some(answer) = answer {
+                    return self.update(answer);
+                }
+            }
             if matches!(msg, Message::CommandEscape)
                 || matches!(&msg, Message::ShortcutPressed(key) if key.rsplit('+').next() == Some("ESCAPE"))
             {
@@ -1118,6 +1182,8 @@ impl OpenCADStudio {
         // answered move writes it. Answer the withheld position first, so the
         // order stays the order the pointer reported — the hazard
         // `on_snap_dwell_tick` documents is a replay that lands *after*.
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        let undo_guard = undo_record_guard::begin_message(self, &msg);
         let owed = self.flush_owed_pointer_move(&msg);
         let task = Task::batch([owed, self.update_inner(msg)]);
         let perf_dispatch_ms = crate::perf::elapsed_ms(perf_started);
@@ -1151,6 +1217,8 @@ impl OpenCADStudio {
         // Close the document-level first-touch transaction started by
         // push_undo_snapshot at this message boundary.
         self.finish_all_pending_history();
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        undo_record_guard::end(self, undo_guard);
         if self.tabs[self.active_tab].active_cmd.is_none() {
             self.tool_palettes.placing = None;
         }
@@ -1241,6 +1309,8 @@ impl OpenCADStudio {
         self.refresh_xref_manager_if_stale();
         // Count mode recolours its references after the drawing changes.
         self.refresh_count_if_stale();
+        // The Geometry Cleanup palette scans its objects again.
+        self.refresh_geometry_cleanup_if_stale();
         // Let V4 plugins observe selection changes that happened while handling
         // this message (picking, window select, QSELECT, SELECTALL, grip edits,
         // and plugin request draining).
@@ -1329,6 +1399,7 @@ impl OpenCADStudio {
         self.angle_override = None;
         self.axis_lock_dir = None;
         self.snapper.clear_tracking();
+        self.snapper.end_cycle();
         self.otrack_active = None;
         self.otrack_cross = None;
         self.otrack_kind = None;
@@ -1658,6 +1729,8 @@ mod prop_pointer_tests;
 
 #[cfg(test)]
 mod anno_scale_toggle_tests;
+#[cfg(test)]
+mod autosnap_magnet_tests;
 
 #[cfg(test)]
 mod dock_visibility_tests;

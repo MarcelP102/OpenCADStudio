@@ -119,7 +119,7 @@ impl Default for ViewportLightingSettings {
 /// mode, and the screen rectangle it occupies. The unified renderer carries
 /// a `Vec<ViewportData>` (one per tiled / floating viewport); each gets its
 /// own inner `Pipeline` instance drawn into its own rectangle.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ViewportData {
     /// Stable identity of the source viewport (its entity handle / tile index /
     /// sheet role). The renderer addresses pipeline slots by list index but
@@ -170,6 +170,9 @@ pub struct ViewportData {
     /// only reusable while this is unchanged.
     pub(in crate::scene) draw_depth_generation: u64,
     pub(in crate::scene) draw_depths: std::sync::Weak<rustc_hash::FxHashMap<u64, [f32; 2]>>,
+    /// Keeps `draw_depths` alive for off-screen async captures even if the
+    /// live scene mutates or closes before the worker thread prepares.
+    pub(in crate::scene) _draw_depths_copy: Option<Arc<rustc_hash::FxHashMap<u64, [f32; 2]>>>,
     pub(in crate::scene) hatches: Arc<Vec<HatchModel>>,
     /// Wipeout fills — rendered in a separate pass AFTER wires.
     pub(in crate::scene) wipeout_hatches: Arc<Vec<HatchModel>>,
@@ -296,6 +299,8 @@ pub struct Primitive {
     pub(in crate::scene) selection_widen: f32,
     /// One input-to-render sample, carried only when PERF tracing is enabled.
     pub(in crate::scene) nav_perf: Option<NavPerfSample>,
+    /// The scene's `geometry_epoch` when the frame was built.
+    pub(in crate::scene) geometry_epoch: u64,
 }
 
 /// Flags the render pipeline consumes, derived from
@@ -396,30 +401,134 @@ impl shader::Primitive for Primitive {
         bounds: &Rectangle,
         viewport: &Viewport,
     ) {
+        let key = self.content_key();
+        if pipeline.draw_faults.has(key) {
+            return;
+        }
+        let panicked = super::draw_guard::panicked(|| {
+            self.prepare_inner(
+                pipeline,
+                device,
+                queue,
+                bounds,
+                viewport.physical_size(),
+                viewport.scale_factor(),
+                false,
+            );
+        });
+        if panicked {
+            pipeline.draw_faults.add(key);
+            pipeline.forget_after_draw_panic();
+        }
+    }
+
+    fn render(
+        &self,
+        pipeline: &MultiPipeline,
+        encoder: &mut iced::wgpu::CommandEncoder,
+        target: &iced::wgpu::TextureView,
+        clip: &Rectangle<u32>,
+    ) {
+        let key = self.content_key();
+        if pipeline.draw_faults.has(key) {
+            return;
+        }
+        if super::draw_guard::panicked(|| self.render_inner(pipeline, encoder, target, clip, false))
+        {
+            pipeline.draw_faults.add(key);
+        }
+    }
+}
+
+impl Primitive {
+    /// A key that changes when the scene's geometry or the set of viewports
+    /// changes, and not for a camera move or a preview. The draw guard does
+    /// not draw again the data of a frame whose draw panicked.
+    pub(in crate::scene) fn content_key(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        self.scene_owner.as_ptr().hash(&mut h);
+        self.geometry_epoch.hash(&mut h);
+        for vp in &self.viewports {
+            vp.instance_id.hash(&mut h);
+            vp.draw_depth_generation.hash(&mut h);
+        }
+        h.finish().max(1)
+    }
+
+    /// Headless off-screen equivalent of [`shader::Primitive::prepare`] that
+    /// leaves global GUI HiDPI scale and GPU status counters untouched.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn prepare_offscreen(
+        &self,
+        pipeline: &mut MultiPipeline,
+        device: &iced::wgpu::Device,
+        queue: &iced::wgpu::Queue,
+        bounds: &Rectangle,
+    ) {
+        let physical_size = iced::Size::new(
+            bounds.width.round().max(1.0) as u32,
+            bounds.height.round().max(1.0) as u32,
+        );
+        self.prepare_inner(pipeline, device, queue, bounds, physical_size, 1.0, true);
+    }
+
+    /// Headless off-screen equivalent of [`shader::Primitive::render`] that
+    /// skips GUI frame telemetry.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn render_offscreen(
+        &self,
+        pipeline: &MultiPipeline,
+        encoder: &mut iced::wgpu::CommandEncoder,
+        target: &iced::wgpu::TextureView,
+        clip: &Rectangle<u32>,
+    ) {
+        self.render_inner(pipeline, encoder, target, clip, true);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_inner(
+        &self,
+        pipeline: &mut MultiPipeline,
+        device: &iced::wgpu::Device,
+        queue: &iced::wgpu::Queue,
+        bounds: &Rectangle,
+        physical_size: iced::Size<u32>,
+        scale: f32,
+        headless: bool,
+    ) {
         let closed = pipeline.release_closed_slots(device);
         if self.viewports.is_empty() {
-            if closed > 0 {
+            if !headless && closed > 0 {
                 report_gpu_live(pipeline);
             }
             return;
         }
         let nav_prepare_started = iced::time::Instant::now();
-        if let Some(gap_ms) = crate::perf::take_view_to_prepare_ms() {
-            if gap_ms >= 1.0 && crate::perf::has_pending_pointer_moves() {
-                crate::perf_record!("[perf] view-to-prepare {:>7.1}ms", gap_ms);
+        if !headless {
+            if let Some(gap_ms) = crate::perf::take_view_to_prepare_ms() {
+                if gap_ms >= 1.0 && crate::perf::has_pending_pointer_moves() {
+                    crate::perf_record!("[perf] view-to-prepare {:>7.1}ms", gap_ms);
+                }
             }
         }
-        let errors_at_entry = crate::scene::pipeline::gpu_errors_seen();
-        let mut recovering = pipeline.gpu_error_epoch != errors_at_entry;
-        if recovering {
-            pipeline.gpu_error_streak = pipeline.gpu_error_streak.saturating_add(1);
-            pipeline.gpu_clean_frames = 0;
+        let errors_at_entry = if headless {
+            0
         } else {
-            // Not every prepare is followed by a draw that can fail, so one
-            // clean prepare does not end a run of failing frames.
-            pipeline.gpu_clean_frames = pipeline.gpu_clean_frames.saturating_add(1);
-            if pipeline.gpu_clean_frames >= 8 {
-                pipeline.gpu_error_streak = 0;
+            crate::scene::pipeline::gpu_errors_seen()
+        };
+        let mut recovering = !headless && pipeline.gpu_error_epoch != errors_at_entry;
+        if !headless {
+            if recovering {
+                pipeline.gpu_error_streak = pipeline.gpu_error_streak.saturating_add(1);
+                pipeline.gpu_clean_frames = 0;
+            } else {
+                // Not every prepare is followed by a draw that can fail, so one
+                // clean prepare does not end a run of failing frames.
+                pipeline.gpu_clean_frames = pipeline.gpu_clean_frames.saturating_add(1);
+                if pipeline.gpu_clean_frames >= 8 {
+                    pipeline.gpu_error_streak = 0;
+                }
             }
         }
         // Rebuilding the caches answers a rejected allocation. When the
@@ -430,7 +539,7 @@ impl shader::Primitive for Primitive {
         const REBUILD_TRIES: u32 = 4;
         const RETRY_EVERY: u32 = 256;
         let streak = pipeline.gpu_error_streak;
-        if streak > REBUILD_TRIES && streak % RETRY_EVERY != 0 {
+        if !headless && streak > REBUILD_TRIES && streak % RETRY_EVERY != 0 {
             static REPORTED: std::sync::Once = std::sync::Once::new();
             REPORTED.call_once(|| {
                 eprintln!(
@@ -449,15 +558,22 @@ impl shader::Primitive for Primitive {
             pipeline.block_geometry.clear();
             pipeline.gpu_error_epoch = errors_at_entry;
         }
-        let scale = viewport.scale_factor();
-        DEVICE_SCALE.store(scale.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        if !headless {
+            DEVICE_SCALE.store(scale.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        }
         let instance_ids: Vec<u64> = self.viewports.iter().map(|vp| vp.instance_id).collect();
         let slots = pipeline.resolve_slots(device, queue, &instance_ids);
         for (i, vp) in self.viewports.iter().enumerate() {
             let inner = &mut pipeline.inners[slots[i]];
-            inner.sync_gpu_error_epoch();
+            if !headless {
+                inner.sync_gpu_error_epoch();
+            }
             // Do not latch rejected uploads as current content.
-            let slot_errors_before = crate::scene::pipeline::gpu_errors_seen();
+            let slot_errors_before = if headless {
+                0
+            } else {
+                crate::scene::pipeline::gpu_errors_seen()
+            };
             // Pipeline slots are addressed by list index, but off-canvas
             // viewports are dropped from the list — so a slot can be reused by a
             // DIFFERENT viewport across frames (e.g. the first viewport scrolls
@@ -480,7 +596,7 @@ impl shader::Primitive for Primitive {
                     width: vp.screen_rect.width * bounds.width * scale,
                     height: vp.screen_rect.height * bounds.height * scale,
                 },
-                viewport.physical_size(),
+                physical_size,
             );
             let clip_size = placement.size;
             inner.viewport = Some(placement);
@@ -898,6 +1014,25 @@ impl shader::Primitive for Primitive {
                     // Snapshot before any arena allocation, so a rejected
                     // upload cannot claim this content id below.
                     let arena_errors_before = crate::scene::pipeline::gpu_errors_seen();
+                    // The retained ranges belong to this exact patch base and camera.
+                    // Limit validation to small edits so bulk changes take one scan.
+                    let mut reuse_cull = vp.wire_patch.as_ref().and_then(|(base, patch)| {
+                        if !base_ok
+                            || patch.changes.len() > 64
+                            || inner.wire_cull_key
+                                != (*base, vp.camera_generation, clip_size.width, clip_size.height)
+                        {
+                            return None;
+                        }
+                        // Refitting projection depth can leave the camera generation unchanged.
+                        let view = wire_arena::WireCullView::new(
+                            vp.uniforms.view_rot,
+                            eye,
+                            clip_size.width,
+                            clip_size.height,
+                        );
+                        (inner.wire_cull_view == Some(view)).then_some(view)
+                    });
                     let reg_ok = base_ok
                         && if let Some(arena) = inner.wire_arena.as_mut() {
                             let patch = patch.unwrap();
@@ -907,6 +1042,7 @@ impl shader::Primitive for Primitive {
                                 &regular_changed,
                                 patch.new_handles_are_suffix,
                                 &draw_depths,
+                                &mut reuse_cull,
                             )
                         } else {
                             inner.wire_arena_fallback_kind == Some(false)
@@ -921,6 +1057,7 @@ impl shader::Primitive for Primitive {
                                 &mesh_changed,
                                 patch.new_handles_are_suffix,
                                 &draw_depths,
+                                &mut reuse_cull,
                             )
                         } else {
                             inner.wire_arena_fallback_kind == Some(true) && !fallback_touched(true)
@@ -1006,21 +1143,31 @@ impl shader::Primitive for Primitive {
                         && mesh_ready
                         && (inner.wire_arena.is_some() || inner.wire_arena_mesh.is_some())
                     {
-                        let mut gpus = if inner.wire_arena_fallback_kind == Some(false) {
-                            inner.wire_arena_fallback.as_ref().clone()
+                        if _patched
+                            && reuse_cull.is_some()
+                            && crate::scene::pipeline::gpu_errors_seen() == arena_errors_before
+                        {
+                            inner.wire_cull_key.0 = vp.wire_content_id;
+                            if _perf {
+                                crate::perf_record!("[perf] wire-cull reused after patch");
+                            }
                         } else {
-                            inner
-                                .wire_arena
-                                .as_ref()
-                                .map(WireArena::wire_gpus)
-                                .unwrap_or_default()
-                        };
-                        if inner.wire_arena_fallback_kind == Some(true) {
-                            gpus.extend(inner.wire_arena_fallback.iter().cloned());
-                        } else if let Some(arena) = inner.wire_arena_mesh.as_ref() {
-                            gpus.extend(arena.wire_gpus());
+                            let mut gpus = if inner.wire_arena_fallback_kind == Some(false) {
+                                inner.wire_arena_fallback.as_ref().clone()
+                            } else {
+                                inner
+                                    .wire_arena
+                                    .as_ref()
+                                    .map(WireArena::wire_gpus)
+                                    .unwrap_or_default()
+                            };
+                            if inner.wire_arena_fallback_kind == Some(true) {
+                                gpus.extend(inner.wire_arena_fallback.iter().cloned());
+                            } else if let Some(arena) = inner.wire_arena_mesh.as_ref() {
+                                gpus.extend(arena.wire_gpus());
+                            }
+                            inner.gpu_wires = std::sync::Arc::new(gpus);
                         }
-                        inner.gpu_wires = std::sync::Arc::new(gpus);
                         // Retain analytical uploads when a patch changes neither
                         // their contributors nor their baked draw depths.
                         let analytical_untouched = _patched
@@ -1454,6 +1601,12 @@ retained_contributors={}",
                 }
                 inner.gpu_wires = std::sync::Arc::new(visible);
                 inner.wire_cull_key = cull_key;
+                inner.wire_cull_view = Some(crate::scene::pipeline::wire_arena::WireCullView::new(
+                    view_rot,
+                    eye,
+                    clip_size.width,
+                    clip_size.height,
+                ));
             }
             if vp.show_viewcube {
                 inner.viewcube.upload(
@@ -1471,58 +1624,63 @@ retained_contributors={}",
             // them all, so the next frame rebuilds this slot instead of
             // drawing nothing for the rest of the session — which is what
             // sent a user to REGENALL to get the model back.
-            if crate::scene::pipeline::gpu_errors_seen() != slot_errors_before {
+            if !headless && crate::scene::pipeline::gpu_errors_seen() != slot_errors_before {
                 inner.forget_cached_keys();
             }
         }
-        let prepare_ms = nav_prepare_started.elapsed().as_secs_f64() * 1000.0;
-        if let Some(sample) = self.nav_perf {
-            crate::perf::record(format_args!(
-                "[perf] nav-prepare op={} cause={} space={} mode={} input={:.2}ms build={:.2}ms prepare={:.2}ms elapsed={:.2}ms viewports={}",
-                sample.op.label(),
-                sample.cause,
-                sample.space,
-                sample.mode,
-                sample.input_ms,
-                sample.build_ms,
-                prepare_ms,
-                sample.started.elapsed().as_secs_f64() * 1000.0,
-                self.viewports.len(),
-            ));
-        } else if crate::perf::enabled() {
-            crate::perf_record!(
-                "[perf] frame-prepare {:>7.2}ms viewports={}",
-                prepare_ms,
-                self.viewports.len(),
-            );
+        if !headless {
+            let prepare_ms = nav_prepare_started.elapsed().as_secs_f64() * 1000.0;
+            if let Some(sample) = self.nav_perf {
+                crate::perf::record(format_args!(
+                    "[perf] nav-prepare op={} cause={} space={} mode={} input={:.2}ms build={:.2}ms prepare={:.2}ms elapsed={:.2}ms viewports={}",
+                    sample.op.label(),
+                    sample.cause,
+                    sample.space,
+                    sample.mode,
+                    sample.input_ms,
+                    sample.build_ms,
+                    prepare_ms,
+                    sample.started.elapsed().as_secs_f64() * 1000.0,
+                    self.viewports.len(),
+                ));
+            } else if crate::perf::enabled() {
+                crate::perf_record!(
+                    "[perf] frame-prepare {:>7.2}ms viewports={}",
+                    prepare_ms,
+                    self.viewports.len(),
+                );
+            }
+            // Memory pressure shortens cold-slot retention without evicting siblings.
+            let errors_now = crate::scene::pipeline::gpu_errors_seen();
+            let urgent = recovering || errors_now != errors_at_entry;
+            let released = pipeline.release_idle_slots(device, &slots, urgent);
+            if released > 0 && crate::perf::enabled() {
+                crate::perf_record!(
+                    "[perf] slots-released n={released} urgent={urgent} slots={}",
+                    pipeline.inners.len(),
+                );
+            }
+            report_gpu_live(pipeline);
         }
-        // Memory pressure shortens cold-slot retention without evicting siblings.
-        let errors_now = crate::scene::pipeline::gpu_errors_seen();
-        let urgent = recovering || errors_now != errors_at_entry;
-        let released = pipeline.release_idle_slots(device, &slots, urgent);
-        if released > 0 && crate::perf::enabled() {
-            crate::perf_record!(
-                "[perf] slots-released n={released} urgent={urgent} slots={}",
-                pipeline.inners.len(),
-            );
-        }
-        report_gpu_live(pipeline);
     }
 
-    fn render(
+    fn render_inner(
         &self,
         pipeline: &MultiPipeline,
         encoder: &mut iced::wgpu::CommandEncoder,
         target: &iced::wgpu::TextureView,
         clip: &Rectangle<u32>,
+        headless: bool,
     ) {
         if self.viewports.is_empty() {
             return;
         }
         let nav_render_started = iced::time::Instant::now();
-        pipeline
-            .frame_rendered
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        if !headless {
+            pipeline
+                .frame_rendered
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         let clip_right = clip.x + clip.width;
         let clip_bottom = clip.y + clip.height;
         for vp in &self.viewports {
@@ -1577,24 +1735,26 @@ retained_contributors={}",
                 inner.viewcube.render(encoder, target, surface_clip);
             }
         }
-        let render_ms = nav_render_started.elapsed().as_secs_f64() * 1000.0;
-        crate::perf::note_frame_render(render_ms);
-        if let Some(sample) = self.nav_perf {
-            crate::perf::record(format_args!(
-                "[perf] nav-render op={} space={} mode={} encode={:.2}ms elapsed={:.2}ms viewports={}",
-                sample.op.label(),
-                sample.space,
-                sample.mode,
-                render_ms,
-                sample.started.elapsed().as_secs_f64() * 1000.0,
-                self.viewports.len(),
-            ));
-        } else if crate::perf::enabled() && render_ms >= 5.0 {
-            crate::perf_record!(
-                "[perf] frame-encode  {:>7.1}ms viewports={}",
-                render_ms,
-                self.viewports.len(),
-            );
+        if !headless {
+            let render_ms = nav_render_started.elapsed().as_secs_f64() * 1000.0;
+            crate::perf::note_frame_render(render_ms);
+            if let Some(sample) = self.nav_perf {
+                crate::perf::record(format_args!(
+                    "[perf] nav-render op={} space={} mode={} encode={:.2}ms elapsed={:.2}ms viewports={}",
+                    sample.op.label(),
+                    sample.space,
+                    sample.mode,
+                    render_ms,
+                    sample.started.elapsed().as_secs_f64() * 1000.0,
+                    self.viewports.len(),
+                ));
+            } else if crate::perf::enabled() && render_ms >= 5.0 {
+                crate::perf_record!(
+                    "[perf] frame-encode  {:>7.1}ms viewports={}",
+                    render_ms,
+                    self.viewports.len(),
+                );
+            }
         }
     }
 }
@@ -1744,6 +1904,13 @@ fn render_signature(
         std::sync::Arc::as_ptr(&vp.point_clouds)
     }
     .hash(&mut h);
+    // The rasters drawn in the view. A zoom step has one drawn again with
+    // no change of geometry (`Scene::apply_reseed`), so the epoch below
+    // does not tell it: each raster is told by its pixel buffer.
+    vp.images.len().hash(&mut h);
+    for image in vp.images.iter() {
+        (std::sync::Arc::as_ptr(&image.pixels) as usize).hash(&mut h);
+    }
     vp.point_cloud_light.map(f32::to_bits).hash(&mut h);
     for plane in &vp.point_cloud_clip {
         plane.map(f64::to_bits).hash(&mut h);
@@ -2046,6 +2213,31 @@ fn physical_viewport(rect: Rectangle, window: Size<u32>) -> PhysicalViewport {
         },
         uv_offset: [(left - x) / width, (top - y) / height],
         uv_scale: [visible_w / width, visible_h / height],
+    }
+}
+
+#[cfg(test)]
+impl Primitive {
+    /// The signature `prepare` takes of each viewport's frame when the
+    /// canvas is `bounds` in a window of its own size at scale 1, with no
+    /// preview drawn over the scene and nothing hovered.
+    pub(in crate::scene) fn frame_signatures(&self, bounds: Rectangle) -> Vec<u64> {
+        let window = Size::new(bounds.width.ceil() as u32, bounds.height.ceil() as u32);
+        self.viewports
+            .iter()
+            .map(|vp| {
+                let placement = physical_viewport(
+                    Rectangle {
+                        x: bounds.x + vp.screen_rect.x * bounds.width,
+                        y: bounds.y + vp.screen_rect.y * bounds.height,
+                        width: vp.screen_rect.width * bounds.width,
+                        height: vp.screen_rect.height * bounds.height,
+                    },
+                    window,
+                );
+                render_signature(vp, &placement, false, !vp.separate_wire_highlights)
+            })
+            .collect()
     }
 }
 
@@ -3700,7 +3892,7 @@ impl Scene {
         // read as "not editable" (they stay visible and snappable).
         let adapted = adapt_to_bg(color, bg);
         let final_color = if layer_locked(&self.document, e) {
-            crate::scene::cache::block_cache::fade_toward_bg(adapted, bg)
+            crate::scene::cache::block_cache::layer_lock_fade(adapted, bg)
         } else {
             adapted
         };
@@ -3808,7 +4000,7 @@ impl Scene {
                     wire.fill_tris_low.clear();
                 }
                 if let Some(mm) = style.resolve_lineweight(wire.aci) {
-                    wire.line_weight_px = (mm * MM_TO_PX).max(1.0);
+                    wire.line_weight_px = mm * MM_TO_PX;
                 }
                 let aci = wire.aci;
                 for vertex in &mut wire.text_verts {
@@ -3866,7 +4058,7 @@ impl Scene {
                     }
                 }
                 if let Some(mm) = style.resolve_lineweight(hatch.aci) {
-                    hatch.line_weight_px = (mm * MM_TO_PX).max(1.0);
+                    hatch.line_weight_px = mm * MM_TO_PX;
                 }
                 if let crate::scene::model::hatch_model::HatchPattern::Gradient { color2, .. } =
                     &mut hatch.pattern
@@ -3930,7 +4122,7 @@ impl Scene {
             self.apply_display_plot_style(&mut color, wire.aci, &style);
             let line_weight_px = style
                 .resolve_lineweight(wire.aci)
-                .map(|mm| (mm * MM_TO_PX).max(1.0))
+                .map(|mm| mm * MM_TO_PX)
                 .unwrap_or(wire.line_weight_px);
             for (triangle_index, triangle) in wire.fill_tris.chunks_exact(3).enumerate() {
                 let mut boundary = Vec::with_capacity(4);
@@ -5015,7 +5207,8 @@ impl Scene {
             self.set_render_pixel_scale(bounds.width, bounds.height);
         }
         let canvas = (bounds.width.max(1.0), bounds.height.max(1.0));
-        let instances = self.active_viewports(canvas.0, canvas.1, model_render_mode);
+        let mut instances = self.active_viewports(canvas.0, canvas.1, model_render_mode);
+        self.push_sheet_over(&mut instances, show_interaction, true);
         // Transparent clear — outside drawn geometry the resolve texture
         // stays at alpha=0, so the alpha-blended blit reveals the container
         // background (model bg, or the desk colour in a paper layout).
@@ -5042,6 +5235,7 @@ impl Scene {
         });
         Primitive {
             scene_owner: std::sync::Arc::downgrade(&self.render_lifetime),
+            geometry_epoch: self.geometry_epoch,
             viewports,
             bg_color,
             viewcube_text_color,
@@ -5049,6 +5243,224 @@ impl Scene {
             selection_effect: self.selection_effect,
             selection_widen: self.selection_widen,
             nav_perf: perf_nav,
+        }
+    }
+
+    /// Build a headless off-screen [`Primitive`] for the active layout without
+    /// mutating `vp_size`, render aspect, nav-perf, or live selection state.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn build_offscreen_primitive(
+        &self,
+        bounds: Rectangle,
+        model_render_mode: document::entities::ViewportRenderMode,
+        highlight_handles: Option<&rustc_hash::FxHashSet<document::Handle>>,
+        paper_space_last: bool,
+    ) -> Primitive {
+        let canvas = (bounds.width.max(1.0), bounds.height.max(1.0));
+        let instances = if self.current_layout == "Model" {
+            let tiles = self.model_tiles.borrow();
+            let active = self
+                .active_model_tile
+                .get()
+                .min(tiles.len().saturating_sub(1));
+            vec![ViewportInstance {
+                handle: Handle::NULL,
+                tile_idx: (!tiles.is_empty()).then_some(active),
+                screen_rect: Rectangle {
+                    x: 0.0,
+                    y: 0.0,
+                    width: canvas.0,
+                    height: canvas.1,
+                },
+                camera: self.camera.borrow().clone(),
+                render_mode: model_render_mode,
+                active: true,
+                grid_on: false,
+                paper_sheet: false,
+                sheet_over: false,
+            }]
+        } else {
+            let mut instances = self.active_viewports(canvas.0, canvas.1, model_render_mode);
+            // Plotting paper space last draws the whole sheet over the
+            // viewports below; no draw-order split then.
+            self.push_sheet_over(&mut instances, false, !paper_space_last);
+            instances
+        };
+
+        let mut viewports: Vec<ViewportData> = instances
+            .iter()
+            .filter_map(|inst| self.viewport_data_for(inst, canvas, None, false, false, true))
+            .collect();
+
+        // Retain strong Arcs so async background GPU preparation never loses Weak targets.
+        for vp in &mut viewports {
+            vp.skip_hatch = false;
+            vp.force_rasterize = true;
+            if vp._wires_copy.is_none() {
+                if let Some(wires) = vp.wires.upgrade() {
+                    vp._wires_copy = Some(wires);
+                }
+            }
+            if vp._draw_depths_copy.is_none() {
+                if let Some(depths) = vp.draw_depths.upgrade() {
+                    vp._draw_depths_copy = Some(depths);
+                }
+            }
+        }
+
+        // Paper space sheet adjustments: strip `paper_printable_area` guide and
+        // optionally split the sheet into background fill (first) + content
+        // viewports + paper overlay entities (last, matching `draw_viewports_first`).
+        if self.current_layout != "Model" && !viewports.is_empty() {
+            if let Some(wires) = viewports[0]._wires_copy.as_mut() {
+                if wires.iter().any(|w| w.name == "paper_printable_area") {
+                    Arc::make_mut(wires).retain(|w| w.name != "paper_printable_area");
+                    viewports[0].wires = Arc::downgrade(wires);
+                    viewports[0].wire_content_id = viewports[0]
+                        .wire_content_id
+                        .wrapping_mul(31)
+                        .wrapping_add(1);
+                }
+            }
+
+            if paper_space_last && viewports.len() > 1 {
+                let sheet = viewports.remove(0);
+                let mut bg_sheet = sheet.clone();
+                let empty_wires = Arc::new(Vec::new());
+                bg_sheet.wires = Arc::downgrade(&empty_wires);
+                bg_sheet._wires_copy = Some(empty_wires);
+                bg_sheet.face3d_wires = Arc::new(Vec::new());
+                bg_sheet.text_verts = Arc::new(Vec::new());
+                bg_sheet.annotation_context_wires = Arc::new(Vec::new());
+                bg_sheet.selected_annotation_context_wires = Arc::new(Vec::new());
+                bg_sheet.preview_wires = Arc::new(Vec::new());
+                bg_sheet.preview_hatches = Arc::new(Vec::new());
+                bg_sheet.preview_text_verts = Arc::new(Vec::new());
+                bg_sheet.wipeout_hatches = Arc::new(Vec::new());
+                bg_sheet.images = Arc::new(Vec::new());
+                bg_sheet.meshes = Arc::new(Vec::new());
+                let bg_hatches: Vec<_> = sheet
+                    .hatches
+                    .iter()
+                    .filter(|h| h.draw_depth <= -1.5)
+                    .cloned()
+                    .collect();
+                bg_sheet.hatches = Arc::new(bg_hatches);
+                bg_sheet.skip_background = false;
+                bg_sheet.wire_content_id = 0;
+
+                let mut overlay_sheet = sheet;
+                overlay_sheet.instance_id ^= 0x5053_4f56_4552_4c41;
+                overlay_sheet.skip_background = true;
+                if overlay_sheet.hatches.iter().any(|h| h.draw_depth <= -1.5) {
+                    Arc::make_mut(&mut overlay_sheet.hatches).retain(|h| h.draw_depth > -1.5);
+                }
+
+                let mut reordered = Vec::with_capacity(viewports.len() + 2);
+                reordered.push(bg_sheet);
+                reordered.extend(viewports);
+                reordered.push(overlay_sheet);
+                viewports = reordered;
+            }
+        }
+
+        let hl_color = [0.0, 0.72, 1.0, 1.0];
+        let mut selection_effect = false;
+        let mut selection_color = self.selection_color;
+        let mut selection_widen = self.selection_widen;
+        if let Some(hl) = highlight_handles.filter(|s| !s.is_empty()) {
+            let mut sig: u64 = 0xcbf29ce484222325;
+            let mut sorted: Vec<u64> = hl.iter().map(|h| h.value()).collect();
+            sorted.sort_unstable();
+            for val in sorted {
+                sig ^= val;
+                sig = sig.wrapping_mul(0x100000001b3);
+            }
+            let hl_arc = Arc::new(hl.clone());
+            selection_effect = true;
+            selection_color = hl_color;
+            selection_widen = self.selection_widen.max(1.5);
+            for vp in &mut viewports {
+                vp.selected_handles = Arc::clone(&hl_arc);
+                vp.selection_generation = sig.max(1);
+                vp.selected_sig = sig.max(1);
+
+                if vp
+                    .hatches
+                    .iter()
+                    .any(|h| h.entity.is_some_and(|e| hl.contains(&e)))
+                {
+                    for hatch in Arc::make_mut(&mut vp.hatches).iter_mut() {
+                        if hatch.entity.is_some_and(|e| hl.contains(&e)) {
+                            hatch.color = hl_color;
+                            hatch.aci = 0;
+                            hatch.line_weight_px = hatch.line_weight_px.max(2.5);
+                            if let crate::scene::model::hatch_model::HatchPattern::Gradient {
+                                color2,
+                                ..
+                            } = &mut hatch.pattern
+                            {
+                                *color2 = hl_color;
+                            }
+                        }
+                    }
+                }
+
+                // Highlighted wipeouts may lack a wire border when WIPEOUTFRAME=0;
+                // add a cyan perimeter wire so they light up cleanly on GPU too.
+                if vp
+                    .wipeout_hatches
+                    .iter()
+                    .any(|w| w.entity.is_some_and(|e| hl.contains(&e)))
+                {
+                    let mut extra = Vec::new();
+                    for wipeout in vp.wipeout_hatches.iter() {
+                        if wipeout.entity.is_some_and(|e| hl.contains(&e))
+                            && wipeout.boundary.len() >= 2
+                        {
+                            let ox = wipeout.world_origin[0];
+                            let oy = wipeout.world_origin[1];
+                            let mut points: Vec<[f64; 3]> = wipeout
+                                .boundary
+                                .iter()
+                                .map(|&[bx, by]| [ox + f64::from(bx), oy + f64::from(by), 0.0])
+                                .collect();
+                            if points.first() != points.last() {
+                                if let Some(&first) = points.first() {
+                                    points.push(first);
+                                }
+                            }
+                            let mut wire = WireModel::solid_f64(
+                                format!("{}", wipeout.entity.unwrap_or(Handle::NULL).value()),
+                                points,
+                                hl_color,
+                                false,
+                            );
+                            wire.line_weight_px = 2.5;
+                            extra.push(wire);
+                        }
+                    }
+                    if !extra.is_empty() {
+                        if let Some(wires) = vp._wires_copy.as_mut() {
+                            Arc::make_mut(wires).extend(extra);
+                            vp.wires = Arc::downgrade(wires);
+                            vp.wire_content_id = vp.wire_content_id.wrapping_add(1);
+                        }
+                    }
+                }
+            }
+        }
+
+        Primitive {
+            scene_owner: std::sync::Arc::downgrade(&self.render_lifetime),
+            geometry_epoch: self.geometry_epoch,
+            viewports,
+            bg_color: [0.0, 0.0, 0.0, 0.0],
+            viewcube_text_color: [1.0, 1.0, 1.0, 1.0],
+            selection_color,
+            selection_effect,
+            selection_widen,
+            nav_perf: None,
         }
     }
 
@@ -5076,6 +5488,7 @@ impl Scene {
         let Some(tile) = tiles.get(tile_idx) else {
             return Primitive {
                 scene_owner: std::sync::Arc::downgrade(&self.render_lifetime),
+                geometry_epoch: self.geometry_epoch,
                 viewports: vec![],
                 bg_color,
                 viewcube_text_color,
@@ -5121,6 +5534,7 @@ impl Scene {
             active: is_active,
             grid_on: tile.grid_on,
             paper_sheet: false,
+            sheet_over: false,
         };
         let force = self.refresh_consume(self.instance_id_for(&inst));
         let viewports = self
@@ -5140,6 +5554,7 @@ impl Scene {
         });
         Primitive {
             scene_owner: std::sync::Arc::downgrade(&self.render_lifetime),
+            geometry_epoch: self.geometry_epoch,
             viewports,
             bg_color,
             viewcube_text_color,
@@ -5259,12 +5674,36 @@ impl Scene {
         let (base_arc, styled_gen) = self.display_styled_wires(base_arc, source_gen);
         self.last_model_wire_gen.set(styled_gen);
         vp_mark("styled");
+        // A sheet with entities after the first content viewport in draw order
+        // draws in two passes, under and over the viewports.
+        let sheet_split = self.sheet_split_for(inst, show_interaction);
+        if inst.sheet_over && sheet_split.is_none() {
+            return None;
+        }
+        let base_arc = match &sheet_split {
+            Some(split) => self.paper_sheet_split_cache.borrow_mut().wires.part(
+                &base_arc,
+                split.key,
+                inst.sheet_over,
+                |w| split.is_over_name(&w.name),
+            ),
+            None => base_arc,
+        };
         // Wire-buffer content id for the upload gate. Preview / interim wires
         // are NOT part of this buffer anymore (they go in a separate per-frame
         // overlay buffer below), so the base id is the source's stable content
         // gen — a drag or camera move never re-uploads the base wire set.
-        let base_wire_content_id = styled_gen;
-        let base_wire_patch = self.model_wire_patch_for(base_wire_content_id);
+        let base_wire_content_id = match &sheet_split {
+            Some(split) => (styled_gen ^ split.key.wrapping_mul(0x9E37_79B9_7F4A_7C15))
+                .wrapping_mul(2)
+                .wrapping_add(u64::from(inst.sheet_over)),
+            None => styled_gen,
+        };
+        let base_wire_patch = if sheet_split.is_some() {
+            None
+        } else {
+            self.model_wire_patch_for(base_wire_content_id)
+        };
         // Split Face3D wires from the rest. The split is content-only (keyed
         // by the wire-set content id), so while the geometry is unchanged it's
         // memoized rather than re-walking every wire (handle lookup + clone)
@@ -5370,7 +5809,8 @@ impl Scene {
             } else if self.active_viewport.is_some() {
                 !inst.paper_sheet
             } else {
-                inst.paper_sheet
+                // The sheet's overlay draws on its topmost pass.
+                inst.paper_sheet && (inst.sheet_over || sheet_split.is_none())
             };
         let (selected_annotation_context_wires, annotation_context_wires) = if show_live_overlay {
             (
@@ -5575,8 +6015,15 @@ impl Scene {
         // paper area. Content viewport model builders are block-filtered too;
         // the scissor only clips their already-correct Model Space set.
         let (hatches, wipeout_hatches, paper_images) = if inst.paper_sheet {
-            let (hatches, wipeouts, images) =
+            let (hatches, wipeouts, mut images) =
                 self.paper_sheet_render_models_for_view(show_interaction);
+            let mut wipeouts = wipeouts;
+            if let Some(split) = &sheet_split {
+                let over = |e: &Option<Handle>| e.is_some_and(|h| split.is_over(h.value()));
+                let mut cache = self.paper_sheet_split_cache.borrow_mut();
+                wipeouts = cache.wipeouts.part(&wipeouts, split.key, inst.sheet_over, |h| over(&h.entity));
+                images = cache.images.part(&images, split.key, inst.sheet_over, |i| over(&i.entity));
+            }
             (hatches, wipeouts, Some(images))
         } else {
             let hatches = self.hatch_models_for_viewport(inst.handle, &vp_frozen, show_interaction);
@@ -5604,11 +6051,19 @@ impl Scene {
         let pattern_scale = (self.paper_space_unit_factor() / viewport_scale.max(1.0e-9)) as f32;
         let styled_wire_fills =
             self.display_styled_wire_fills(&styled_fill_source, source_gen, pattern_scale);
-        let hatches = self.display_styled_hatches(
+        let mut hatches = self.display_styled_hatches(
             hatches,
             styled_wire_fills.as_ref().filter(|fills| !fills.is_empty()),
             pattern_scale,
         );
+        if let Some(split) = &sheet_split {
+            hatches = self.paper_sheet_split_cache.borrow_mut().hatches.part(
+                &hatches,
+                split.key,
+                inst.sheet_over,
+                |h| h.entity.is_some_and(|e| split.is_over(e.value())),
+            );
+        }
         vp_mark("styled-hatches");
         let images = if let Some(images) = paper_images {
             images
@@ -5628,11 +6083,11 @@ impl Scene {
         } else {
             self.meshes_for_viewport(inst.handle, &vp_frozen)
         };
-        let point_clouds = self.point_clouds_for_viewport(
-            inst.handle,
-            &vp_frozen,
-            inst.paper_sheet || wireframe_2d,
-        );
+        let point_clouds = if inst.sheet_over {
+            Arc::default()
+        } else {
+            self.point_clouds_for_viewport(inst.handle, &vp_frozen, inst.paper_sheet || wireframe_2d)
+        };
         vp_mark("meshes-clouds");
 
         // SDF text quads (behind OCS_TEXT_SDF). The glyph quads ride on each
@@ -5648,13 +6103,16 @@ impl Scene {
         // sheets must also include their layout block: switching layouts does
         // not change the geometry epoch, and a role-only key reused the prior
         // sheet's glyph coordinates while its wires moved correctly. Tiles
-        // share the resident Model set, so they share one key; the implicit
-        // view mixes in the current layout block (BEDIT swaps sets without a
-        // geometry delta).
+        // share the resident Model set, so they share one key; tiles and the
+        // implicit view mix in the current layout block (BEDIT swaps sets
+        // without a geometry delta, and a fixed tile key kept drawing the
+        // drawing's text inside the block editor, #3685).
         let text_source_key: u64 = if inst.tile_idx.is_some() {
-            0x1000_0000_0000_0000
+            0x1000_0000_0000_0000 | self.current_layout_block_handle().value()
         } else if inst.paper_sheet {
-            0x2000_0000_0000_0000 | self.current_layout_block_handle().value()
+            0x2000_0000_0000_0000
+                | u64::from(inst.sheet_over) << 59
+                | self.current_layout_block_handle().value()
         } else if inst.handle == document::Handle::NULL {
             0x4000_0000_0000_0000 | self.current_layout_block_handle().value()
         } else {
@@ -5763,6 +6221,7 @@ impl Scene {
             preview_text_verts,
             draw_depth_generation: self.draw_depth_generation(),
             draw_depths: Arc::downgrade(&draw_depths),
+            _draw_depths_copy: None,
             hatches,
             wipeout_hatches,
             images,
@@ -5815,9 +6274,10 @@ impl Scene {
             skip_hatch: self.hatch_lod_enabled() && navigating,
             // A floating viewport shows the page behind it unless it has a
             // background of its own.
-            skip_background: !inst.paper_sheet
-                && self.current_layout != "Model"
-                && display.background.params[0] < 0.5,
+            skip_background: inst.sheet_over
+                || (!inst.paper_sheet
+                    && self.current_layout != "Model"
+                    && display.background.params[0] < 0.5),
             geometry_epoch: self.geometry_epoch,
             camera_generation: self.camera_generation,
             wire_content_id,
@@ -6183,6 +6643,57 @@ mod layer0_inherit_tests {
         let styled = expand_stubs(&styled);
         assert_eq!(styled.len(), 1);
         assert_eq!(styled[0].color[..3], [0.0; 3]);
+    }
+
+    /// A displayed plot style's lineweights under a screen pixel stay apart:
+    /// the layout scales them by its pixels per millimetre, so 0.05 mm must
+    /// not leave here as wide as 0.25 mm. (#3470)
+    #[test]
+    fn display_plot_style_keeps_lineweights_under_a_pixel() {
+        use crate::io::plot_style::{register_session_table, PlotStyleTable, LW_TABLE};
+        let index = |mm: f32| {
+            LW_TABLE
+                .iter()
+                .position(|weight| (weight - mm).abs() < 1e-6)
+                .expect("standard lineweight") as u8
+                + 1 // the style number of entry N is N + 1
+        };
+        let mut table = PlotStyleTable::builtin(crate::io::plot_style::MONOCHROME_PLOT_STYLE)
+            .expect("built-in table");
+        table.name = "issue-3470-lineweights.ctb".into();
+        table.lineweights = LW_TABLE.to_vec();
+        for (aci, mm) in [(1usize, 0.05), (2, 0.15), (3, 0.25)] {
+            table.aci_entries[aci].lineweight = index(mm);
+        }
+        register_session_table(
+            "issue-3470-lineweights.ctb",
+            Arc::new(table.to_bytes().expect("encode the table")),
+        );
+
+        let mut scene = Scene::new();
+        scene.set_current_layout("Layout1".into());
+        let mut settings = scene.effective_plot_settings().expect("layout settings");
+        settings.current_style_sheet = "issue-3470-lineweights.ctb".into();
+        settings.flags.show_plot_styles = true;
+        assert!(scene.set_layout_plot_settings("Layout1", &settings));
+        let wires: Vec<WireModel> = (1..=3)
+            .map(|aci| {
+                let points = vec![[0.0, aci as f32, 0.0], [10.0, aci as f32, 0.0]];
+                let mut wire = WireModel::solid(aci.to_string(), points, [1.0; 4], false);
+                wire.aci = aci;
+                wire
+            })
+            .collect();
+        let (styled, _) = scene.display_styled_wires(Arc::new(wires), 1);
+        let widths: Vec<f32> = styled.iter().map(|wire| wire.line_weight_px).collect();
+        let expected: Vec<f32> = [0.05f32, 0.15, 0.25].iter().map(|mm| mm * MM_TO_PX).collect();
+        for (width, want) in widths.iter().zip(&expected) {
+            assert!(
+                (width - want).abs() < 1e-4,
+                "plot style lineweights 0.05 / 0.15 / 0.25 mm display as {widths:?} px, \
+                 expected {expected:?} px"
+            );
+        }
     }
 
     #[test]

@@ -37,6 +37,8 @@ pub mod hatch_gpu;
 mod hatch_tone_tests;
 pub mod image_gpu;
 pub mod mesh_gpu;
+#[cfg(test)]
+mod paper_lineweight_tests;
 pub mod point_cloud_gpu;
 pub mod text_gpu;
 pub mod uniforms;
@@ -384,6 +386,7 @@ pub struct Pipeline {
     /// Last content/camera/viewport tuple used to derive visible instance
     /// ranges from the resident arena.
     pub(crate) wire_cull_key: (u64, u64, u32, u32),
+    pub(crate) wire_cull_view: Option<wire_arena::WireCullView>,
     /// View/source keys for CPU visibility passes.
     pub(crate) hatch_lod_key: (usize, u64, u32, u32, bool),
     pub(crate) wipeout_lod_key: (usize, u64, u32, u32, bool),
@@ -672,7 +675,7 @@ impl Pipeline {
                 analytic_slots::Outcome::Rebuild(reason) => return Err(reason),
             }
         }
-        slots.apply(queue, &edits);
+        slots.apply(queue, &edits)?;
         Ok(edits.len())
     }
 
@@ -1775,7 +1778,11 @@ analytic={:.1} regular={:.1} blocks={:.1}",
                     ],
                 }
             };
-            let mut verts: Vec<SilhouetteVertex> = Vec::with_capacity(max_vertices);
+            // Sized to this group's points, not to a whole GPU chunk: a full
+            // chunk (32 MB) per group per frame made a drawing with hundreds
+            // of 3-D bodies allocate gigabytes per second.
+            let mut verts: Vec<SilhouetteVertex> =
+                Vec::with_capacity(points.len().min(max_vertices));
             let push_chunk = |verts: &[SilhouetteVertex], chunks: &mut Vec<SilhouetteChunk>| {
                 let vertex_count = verts.len() / 2 * 2;
                 if vertex_count == 0 {
@@ -4135,6 +4142,7 @@ analytic={:.1} regular={:.1} blocks={:.1}",
         self.cached_face3d_source = None;
         self.cached_face3d_depth_source = None;
         self.wire_cull_key = (u64::MAX, u64::MAX, 0, 0);
+        self.wire_cull_view = None;
         self.hatch_lod_key = (usize::MAX, u64::MAX, 0, 0, false);
         self.wipeout_lod_key = (usize::MAX, u64::MAX, 0, 0, false);
         self.silhouette_key = (usize::MAX, u64::MAX, [u32::MAX; 3], false);
@@ -4737,6 +4745,17 @@ impl Pipeline {
 }
 
 impl MultiPipeline {
+    /// After a panic in `prepare` the caches can be half written: forget
+    /// them, so that the next draw builds them again.
+    pub(in crate::scene) fn forget_after_draw_panic(&mut self) {
+        self.wire_buffer_cache.clear();
+        self.mesh_batch_cache.clear();
+        self.block_geometry.clear();
+        for inner in &mut self.inners {
+            inner.forget_cached_keys();
+        }
+    }
+
     /// A closed scene no longer owns any GPU slot, even on the Start tab.
     pub(in crate::scene) fn release_closed_slots(&mut self, device: &wgpu::Device) -> usize {
         let mut released = 0;
@@ -4963,6 +4982,8 @@ pub struct MultiPipeline {
     slot_last_used: Vec<u64>,
     slot_clock: u64,
     pub(crate) frame_rendered: std::sync::atomic::AtomicBool,
+    /// The frames whose draw panicked, so that their data is not drawn again.
+    pub(crate) draw_faults: crate::scene::view::draw_guard::DrawFaults,
     pub(crate) gpu_error_epoch: usize,
     /// Consecutive frames that each reported new device errors.
     pub(crate) gpu_error_streak: u32,
@@ -5289,6 +5310,33 @@ pub(crate) fn gpu_status_if_changed(seen: &mut u64) -> Option<GpuStatus> {
 #[cfg(test)]
 mod gpu_status_tests;
 
+impl MultiPipeline {
+    /// Construct a headless off-screen pipeline without mutating global GUI
+    /// adapter status or installing a process-wide GPU error counter handler.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn new_headless(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+    ) -> Self {
+        Self {
+            block_geometry: Default::default(),
+            inners: vec![Pipeline::new(device, queue, format)],
+            format,
+            slot_by_instance: rustc_hash::FxHashMap::default(),
+            slot_last_used: vec![0],
+            slot_clock: 0,
+            frame_rendered: std::sync::atomic::AtomicBool::new(false),
+            draw_faults: Default::default(),
+            gpu_error_epoch: 0,
+            gpu_error_streak: 0,
+            gpu_clean_frames: 0,
+            mesh_batch_cache: Default::default(),
+            wire_buffer_cache: rustc_hash::FxHashMap::default(),
+        }
+    }
+}
+
 impl iced::widget::shader::Pipeline for MultiPipeline {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         install_gpu_error_handler(device);
@@ -5301,6 +5349,7 @@ impl iced::widget::shader::Pipeline for MultiPipeline {
             slot_last_used: vec![0],
             slot_clock: 0,
             frame_rendered: std::sync::atomic::AtomicBool::new(false),
+            draw_faults: Default::default(),
             gpu_error_epoch: gpu_errors_seen(),
             gpu_error_streak: 0,
             gpu_clean_frames: 0,

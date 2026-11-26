@@ -5,7 +5,7 @@
 //! mesh with several materials becomes).
 
 use iced::widget::{
-    button, column, container, image, pick_list, row, scrollable, text, text_input, Space,
+    Space, button, column, container, image, pick_list, row, scrollable, text, text_input,
 };
 use iced::{Background, Border, Element, Fill, Length, Theme};
 
@@ -13,7 +13,7 @@ use crate::app::Message;
 use crate::t;
 use crate::ui::style::common::muted_style;
 use crate::ui::style::form::{button_style, dialog_button, dialog_button_styled_opt, field_style};
-use crate::ui::window::pdf_dialogs::{card, well_style, PageThumb};
+use crate::ui::window::pdf_dialogs::{PageThumb, card, well_style};
 
 /// Which read of an import window (3D Studio Import, DGN Import, Import
 /// PDF) a result belongs to: its number, and whether its window was open
@@ -29,6 +29,7 @@ pub struct ReadTicket {
 /// One edit in the Import File or DGN Import window.
 #[derive(Debug, Clone)]
 pub enum ImportDialogMsg {
+    IfcPlan(super::ifc_plan::IfcPlanMsg),
     // Import File
     Path(String),
     Browse,
@@ -218,7 +219,7 @@ const fn format(
 }
 
 /// The reference's Import File types, in its order of groups.
-pub const FORMATS: [ImportFormat; 22] = [
+pub const FORMATS: [ImportFormat; 23] = [
     format("PDF Files", "*.pdf", &["pdf"], 0, Support::Yes),
     format("MicroStation DGN", "*.dgn", &["dgn"], 0, Support::Yes),
     format("All DGN Files", "*.*", &["*"], 0, Support::Yes),
@@ -270,6 +271,7 @@ pub const FORMATS: [ImportFormat; 22] = [
         1,
         Support::Yes,
     ),
+    format("IFC (*.ifc)", "*.ifc", &["ifc"], 1, Support::Yes),
     format("All Files", "*.*", &["*"], 2, Support::ByExtension),
 ];
 
@@ -348,6 +350,8 @@ pub struct TdsMaterialState {
 /// The windows' working copies and the files imported this session.
 #[derive(Default)]
 pub struct ImportDialogs {
+    pub(crate) ifc_plan: Option<super::ifc_plan::IfcPlanDialog>,
+    pub(crate) previous_ifc_plan: Option<super::ifc_plan::PreviousIfcPlan>,
     pub file: Option<ImportFileState>,
     pub dgn: Option<DgnImportState>,
     pub tds: Option<TdsImportState>,
@@ -492,21 +496,23 @@ pub fn view_import_file<'a>(
             msg(ImportDialogMsg::Recent(n)),
         ));
     }
-    let mut file = column![row![
-        text_input("", &state.path)
-            .on_input(|s| msg(ImportDialogMsg::Path(s)))
-            .on_submit(msg(ImportDialogMsg::ImportOk))
-            .size(12)
-            .padding([6, 8])
-            .width(Fill)
-            .style(field_style),
-        button(text(t!("Browse...")).size(11))
-            .on_press(msg(ImportDialogMsg::Browse))
-            .style(button_style(false))
-            .padding([6, 14]),
+    let mut file = column![
+        row![
+            text_input("", &state.path)
+                .on_input(|s| msg(ImportDialogMsg::Path(s)))
+                .on_submit(msg(ImportDialogMsg::ImportOk))
+                .size(12)
+                .padding([6, 8])
+                .width(Fill)
+                .style(field_style),
+            button(text(t!("Browse...")).size(11))
+                .on_press(msg(ImportDialogMsg::Browse))
+                .style(button_style(false))
+                .padding([6, 14]),
+        ]
+        .spacing(8)
+        .align_y(iced::Center)
     ]
-    .spacing(8)
-    .align_y(iced::Center)]
     .spacing(8);
     if !recent.is_empty() {
         file = file.push(chips);
@@ -919,13 +925,15 @@ pub fn view_tds_material<'a>(
         },
         ..Default::default()
     });
-    let mut chips = row![text(crate::tr!(
-        "import-3ds",
-        "materials",
-        n = (materials.len() as i64)
-    ))
-    .size(11)
-    .style(muted_style)]
+    let mut chips = row![
+        text(crate::tr!(
+            "import-3ds",
+            "materials",
+            n = (materials.len() as i64)
+        ))
+        .size(11)
+        .style(muted_style)
+    ]
     .spacing(6)
     .align_y(iced::Center);
     for (material, color) in materials {
@@ -1293,17 +1301,19 @@ pub fn view_dgn_import<'a>(
     let code_page_card: Element<'_, Message> = if state.version == "V7" {
         card(
             t!("V7 text code page").into_owned(),
-            row![pick_list(
-                Some(crate::modules::insert::dgn_import::code_page_label(
-                    state.code_page
-                )),
-                crate::modules::insert::dgn_import::code_page_choices(),
-                |label: &String| label.clone(),
-            )
-            .on_select(|label| msg(ImportDialogMsg::DgnCodePage(label)))
-            .text_size(11)
-            .padding([4, 8])
-            .width(Fill),]
+            row![
+                pick_list(
+                    Some(crate::modules::insert::dgn_import::code_page_label(
+                        state.code_page
+                    )),
+                    crate::modules::insert::dgn_import::code_page_choices(),
+                    |label: &String| label.clone(),
+                )
+                .on_select(|label| msg(ImportDialogMsg::DgnCodePage(label)))
+                .text_size(11)
+                .padding([4, 8])
+                .width(Fill),
+            ]
             .spacing(8),
         )
         .into()

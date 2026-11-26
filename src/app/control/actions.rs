@@ -175,6 +175,8 @@ pub(super) const NAMES: &[&str] = &[
     "mleader_style_dialog",
     "dimstyle_dialog",
     "anno_scale_prompt",
+    "points_tool_dialog",
+    "surface_list_dialog",
     "mtext_dialog",
     "text_style_dialog",
     "scale_list_dialog",
@@ -3616,6 +3618,177 @@ impl OpenCADStudio {
             // "load_cancel", "reload=this|all|skip|skip_rest|cancel",
             // "text_styles", "ok", "cancel". Compare:
             // "first=<style>", "second=<style|none>", "copy", "compare_close".
+            // The surface list of a Create Points > Surface command:
+            // "pick=<surface>", "pick_in_drawing", "ok", "cancel".
+            "surface_list_dialog" => {
+                use crate::ui::window::surface_list::SurfaceListMsg as S;
+                if !self.focus_dialog(crate::app::ModalKind::SurfaceList) {
+                    return Err(failure("no_dialog", "The surface list is not open"));
+                }
+                let spec = string(req, "value")?;
+                let (key, value) = spec.split_once('=').unwrap_or((spec, ""));
+                match key {
+                    "pick" => {
+                        let names = self.surface_list.as_ref().map(|s| s.names.clone()).unwrap_or_default();
+                        match names.iter().position(|n| n.eq_ignore_ascii_case(value)) {
+                            Some(k) => Message::SurfaceList(S::Pick(k)),
+                            None => return Err(failure("invalid_value", spec)),
+                        }
+                    }
+                    "ok" => Message::SurfaceList(S::Ok),
+                    "pick_in_drawing" => Message::SurfaceList(S::FromDrawing),
+                    "cancel" => Message::CloseModal,
+                    _ => return Err(failure("invalid_value", spec)),
+                }
+            }
+            // The windows of the Create Points tools, one "key=value" per
+            // call. Point Group Properties: "tab=<information|point_groups|
+            // raw_desc_matching|include|exclude|query_builder|overrides|
+            // point_list|summary>", "name=", "description=", "point_style=",
+            // "label_style=", "group=<k>:0|1", "include=<k>:<text>" /
+            // "exclude=<k>:<text>" (rule k on with the text; k 0 numbers,
+            // 1 elevations, 2 names, 3 raw, 4 full descriptions),
+            // "include_off=<k>", "exclude_off=<k>", "include_all=0|1",
+            // "pick=include|exclude", "case=0|1", "modify=0|1",
+            // "insert_row", "delete_row", "select_row=<k>",
+            // "row=<k>:<set operator>:<0|1 open>:<property 0-4>:<operator>:
+            // <value>:<0|1 close>", "reset", "override=<k>:0|1",
+            // "override_text=<k>:<text>", "list_filter=<text>",
+            // "list_sort=<column title>", "list_switch=grid|full|name|raw|
+            // columns", "list_pick=<number>", "list_show[=<number>]",
+            // "apply", "ok", "cancel".
+            // Create COGO Points (corridor): "range=entire|user",
+            // "baseline=<name>", "start=", "end=", "group_name=",
+            // "code=<k>:0|1", "pick_baseline", "pick_station=start|end",
+            // "ok". Create Blocks from COGO Points:
+            // "spatial=none|display|window", "pick_window", "group=<k>:0|1",
+            // "existing=<block>", "new=<name>", "layer=<name>", "ok". The
+            // duplicate block question: "skip", "overwrite", "cancel".
+            // Duplicate Point Number: "resolution=<label>", "offset=",
+            // "sequence=", "apply_all=0|1", "ok", "cancel".
+            "points_tool_dialog" => {
+                let spec = string(req, "value")?;
+                let (key, value) = spec.split_once('=').unwrap_or((spec, ""));
+                let bad = || failure("invalid_value", spec);
+                if self.active_modal == Some(crate::app::ModalKind::PointGroup) || self.focus_dialog(crate::app::ModalKind::PointGroup) {
+                    use crate::modules::civil::point_group_query::{Attr, Joint, Op};
+                    use crate::ui::window::point_group::{PgTab, PointGroupMsg as G};
+                    let pair = || value.split_once(':').and_then(|(k, v)| Some((k.parse::<usize>().ok()?, v.to_string())));
+                    let on = |v: &str| v == "1" || v == "on";
+                    if key == "cancel" {
+                        Message::CloseModal
+                    } else {
+                    Message::PointGroup(match key {
+                        "tab" => G::Tab(PgTab::of(value).ok_or_else(bad)?),
+                        "name" => G::Name(value.into()),
+                        "description" => G::Description(value.into()),
+                        "point_style" => G::PointStyle(value.into()),
+                        "label_style" => G::LabelStyle(value.into()),
+                        "group" => pair().map(|(k, v)| G::Group(k, on(&v))).ok_or_else(bad)?,
+                        "include" | "exclude" => pair().map(|(k, v)| G::SetRule(key == "exclude", k, v)).ok_or_else(bad)?,
+                        "include_off" | "exclude_off" => G::Rule(key == "exclude_off", value.parse().map_err(|_| bad())?, false),
+                        "include_all" => G::IncludeAll(on(value)),
+                        "pick" => G::Pick(value == "exclude"),
+                        "case" => G::CaseSensitive(on(value)),
+                        "modify" => G::ModifyQuery(on(value)),
+                        "insert_row" => G::InsertRow,
+                        "delete_row" => G::DeleteRow,
+                        "select_row" => G::SelectRow(value.parse().map_err(|_| bad())?),
+                        "row" => {
+                            let p: Vec<&str> = value.splitn(7, ':').collect();
+                            if p.len() != 7 {
+                                return Err(bad());
+                            }
+                            let k: usize = p[0].parse().map_err(|_| bad())?;
+                            let joint = Joint::ALL.into_iter().find(|j| j.label().eq_ignore_ascii_case(p[1])).ok_or_else(bad)?;
+                            let attr = *Attr::ALL.get(p[3].parse::<usize>().map_err(|_| bad())?).ok_or_else(bad)?;
+                            let op = Op::ALL.into_iter().find(|o| o.label() == p[4]).ok_or_else(bad)?;
+                            for m in [G::RowJoint(k, joint), G::RowOpen(k, on(p[2])), G::RowAttr(k, attr), G::RowOp(k, op), G::RowValue(k, p[5].into())] {
+                                let _ = self.on_point_group(m);
+                            }
+                            G::RowClose(k, on(p[6]))
+                        }
+                        "reset" => G::Reset,
+                        "override" => pair().map(|(k, v)| G::Override(k, on(&v))).ok_or_else(bad)?,
+                        "override_text" => pair().map(|(k, v)| G::OverrideText(k, v)).ok_or_else(bad)?,
+                        "list_filter" => G::ListFilter(value.into()),
+                        "list_sort" => G::ListSort(crate::ui::window::point_group::ListCol::of(value).ok_or_else(bad)?),
+                        "list_switch" => {
+                            use crate::ui::window::point_group::ListSwitch as S;
+                            G::ListSwitch(match value {
+                                "grid" => S::Grid,
+                                "full" => S::Full,
+                                "name" => S::Name,
+                                "raw" => S::Raw,
+                                "columns" => S::Columns,
+                                _ => return Err(bad()),
+                            })
+                        }
+                        "list_pick" => G::ListPick(value.parse().map_err(|_| bad())?),
+                        "list_show" => G::ListShow(value.parse().ok()),
+                        "apply" => G::Apply,
+                        "ok" => G::Ok,
+                        _ => return Err(bad()),
+                    })
+                    }
+                } else if let Some(kind) = [
+                    crate::app::ModalKind::CorridorPoints,
+                    crate::app::ModalKind::PointBlocks,
+                    crate::app::ModalKind::BlockDuplicate,
+                    crate::app::ModalKind::DuplicatePoint,
+                ]
+                .into_iter()
+                .find(|k| self.active_modal == Some(*k) || self.focus_dialog(*k))
+                {
+                    use crate::app::ModalKind as K;
+                    use crate::ui::window::point_tools::{PointToolMsg as P, Resolution, Spatial};
+                    let pair = || value.split_once(':').and_then(|(k, v)| Some((k.parse::<usize>().ok()?, v == "1" || v == "on")));
+                    if key == "cancel" {
+                        Message::CloseModal
+                    } else {
+                        Message::PointTool(match (kind, key) {
+                            (K::CorridorPoints, "range") => P::UserRange(value == "user"),
+                            (K::CorridorPoints, "baseline") => P::Baseline(value.into()),
+                            (K::CorridorPoints, "start") => P::Start(value.into()),
+                            (K::CorridorPoints, "end") => P::End(value.into()),
+                            (K::CorridorPoints, "group_name") => P::GroupName(value.into()),
+                            (K::CorridorPoints, "code") => pair().map(|(k, v)| P::Code(k, v)).ok_or_else(bad)?,
+                            (K::CorridorPoints, "pick_baseline") => P::PickBaseline,
+                            (K::CorridorPoints, "pick_station") => P::PickStation(value == "end"),
+                            (K::CorridorPoints, "ok") => P::CorridorOk,
+                            (K::PointBlocks, "spatial") => P::Spatial(match value {
+                                "display" => Spatial::CurrentDisplay,
+                                "window" => Spatial::Window,
+                                _ => Spatial::None,
+                            }),
+                            (K::PointBlocks, "pick_window") => P::PickWindow,
+                            (K::PointBlocks, "group") => pair().map(|(k, v)| P::BlockGroup(k, v)).ok_or_else(bad)?,
+                            (K::PointBlocks, "existing") => {
+                                let _ = self.on_point_tool(P::UseExisting(true));
+                                P::Existing(value.into())
+                            }
+                            (K::PointBlocks, "new") => {
+                                let _ = self.on_point_tool(P::UseExisting(false));
+                                P::NewName(value.into())
+                            }
+                            (K::PointBlocks, "layer") => P::Layer(value.into()),
+                            (K::PointBlocks, "ok") => P::BlocksOk,
+                            (K::BlockDuplicate, "skip") => P::BlockSkip,
+                            (K::BlockDuplicate, "overwrite") => P::BlockOverwrite,
+                            (K::DuplicatePoint, "resolution") => P::Resolution(
+                                Resolution::ALL.into_iter().find(|r| r.label().eq_ignore_ascii_case(value)).map(|r| crate::t!(r.label()).into_owned()).ok_or_else(bad)?,
+                            ),
+                            (K::DuplicatePoint, "offset") => P::Offset(value.into()),
+                            (K::DuplicatePoint, "sequence") => P::Sequence(value.into()),
+                            (K::DuplicatePoint, "apply_all") => P::ApplyAll(value == "1" || value == "on"),
+                            (K::DuplicatePoint, "ok") => P::DuplicateOk,
+                            _ => return Err(bad()),
+                        })
+                    }
+                } else {
+                    return Err(failure("no_dialog", "No Create Points tool window is open"));
+                }
+            }
             // The annotation scale question: "pick=<scale>", "dont_ask=0|1",
             // "ok".
             "anno_scale_prompt" => {

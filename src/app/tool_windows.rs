@@ -54,6 +54,7 @@ impl ModalKind {
             | K::AecDropWarning
             | K::ImportFile
             | K::DgnImport
+            | K::IfcPlan
             | K::TdsImport
             | K::TdsMaterial
             | K::TdsMissingMap
@@ -71,8 +72,8 @@ impl ModalKind {
         }
     }
 
-    /// A question or a notice: its window is the size of its content and
-    /// cannot be resized (#3241). Stretching it only adds empty space, and
+    /// A question or a notice: its window opens at the size of its content,
+    /// whatever size was remembered, and cannot be made smaller (#3241):
     /// shrinking it clips the buttons.
     pub(crate) fn fixed_size(self) -> bool {
         use ModalKind as K;
@@ -287,7 +288,20 @@ impl OpenCADStudio {
     /// The update iced runs: one message, then open tools parked again.
     pub fn update_root(&mut self, msg: Message) -> Task<Message> {
         let msg = self.route_tool_keyboard(msg);
+        // A wasm build aborts on a panic, so there is nothing to catch.
+        #[cfg(not(target_arch = "wasm32"))]
+        let task = self.update_guarded(msg);
+        #[cfg(target_arch = "wasm32")]
         let task = self.update(msg);
+        if let Some(text) = crate::scene::view::draw_guard::take_notice() {
+            self.command_line.push_error(
+                crate::tf!(
+                    "Internal error while drawing: {}. Save your work under a new name.",
+                    text
+                )
+                .as_ref(),
+            );
+        }
         let settled = self.settle_tool_windows();
         Task::batch([task, settled])
     }
@@ -918,6 +932,13 @@ impl OpenCADStudio {
     }
 
     pub(crate) fn os_window_moved(&mut self, id: iced::window::Id, at: Point) {
+        if self.main_window == Some(id) {
+            // Minimizing parks the window off screen: keep where it was.
+            if at.x > -10000.0 && at.y > -10000.0 {
+                *MAIN_WINDOW_AT.lock().unwrap_or_else(|e| e.into_inner()) = Some(at);
+            }
+            return;
+        }
         if let Some(window) = self.os_windows.iter_mut().find(|window| window.id == id) {
             if window.placing {
                 // The window's own move to its place is still to come.
@@ -1049,11 +1070,14 @@ impl OpenCADStudio {
                 // A remembered size never makes the dialog smaller than its
                 // content needs: one saved before the dialog grew would hide
                 // what the dialog has added since (its buttons, a full page).
-                // The text editor's windows share one key, so its remembered
-                // size belongs to whichever of them was last open: they keep
-                // only its place.
+                // The text editor's windows share one key, and so do all plugin
+                // dialogs, so a remembered size belongs to whichever of them was
+                // last open (a small dialog opened at a large one's size): they
+                // keep only its place.
                 .map(|placement| {
-                    let shared = kind == ModalKind::MTextDialog || kind.fixed_size();
+                    let shared = kind == ModalKind::MTextDialog
+                        || kind == ModalKind::PluginDialog
+                        || kind.fixed_size();
                     WindowPlacement {
                         w: if shared { natural_w } else { placement.w.max(natural_w) },
                         h: if shared { natural_h } else { placement.h.max(natural_h) },
@@ -1078,20 +1102,33 @@ impl OpenCADStudio {
                         h,
                     }
                 });
+            // A dialog without a place of its own, and every prompt (save on
+            // exit and the like), comes up over the main window.
+            let placement =
+                if kind.fixed_size() || !placement.x.is_finite() || !placement.y.is_finite() {
+                    centred_over_main(
+                        placement,
+                        *MAIN_WINDOW_AT.lock().unwrap_or_else(|e| e.into_inner()),
+                        self.win_size,
+                        crate::ui::icons::scale_factor(),
+                    )
+                } else {
+                    placement
+                };
             // A dialog opened from another dialog's window comes up in front
             // of it, not behind the window that was clicked (#2750).
             let (id, open) = open_window(
                 placement,
                 self.modal_title_for(kind),
                 true,
-                !kind.fixed_size(),
+                kind.fixed_size(),
             );
             if let Some(tool) = self.tool_windows.iter_mut().find(|tool| tool.kind == kind) {
                 tool.window = Some(id);
             }
             self.os_windows
                 .push(OsWindow::new(id, Detached::Tool(kind), placement, opener));
-            tasks.push(open);
+            tasks.push(open.chain(own_window(id, self.main_window)));
         }
         let panels: Vec<(crate::ui::dock::PanelId, WindowPlacement)> = self
             .dock
@@ -1117,10 +1154,10 @@ impl OpenCADStudio {
                     h: h.max(PALLET_WINDOW_MIN_H) + HEADER_H,
                 };
             }
-            let (id, open) = open_window(placement, panel.title().to_string(), false, true);
+            let (id, open) = open_window(placement, panel.title().to_string(), false, false);
             self.os_windows
                 .push(OsWindow::new(id, Detached::Panel(panel), placement, None));
-            tasks.push(open);
+            tasks.push(open.chain(own_window(id, self.main_window)));
         }
         Task::batch(tasks)
     }
@@ -1197,7 +1234,7 @@ impl OpenCADStudio {
                 let body = iced::widget::responsive(move |size| {
                     self.panel_body(panel, size.width, true, tab)
                 });
-                column![header, body].into()
+                self.os_window_drag_capture(id, column![header, body].into())
             }
         };
         Some(
@@ -1212,6 +1249,39 @@ impl OpenCADStudio {
                 })
                 .into(),
         )
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl OpenCADStudio {
+    /// A pallet's window takes the pointer while one of its column dividers
+    /// (the Layer Manager's, Layer Walk's, the External References') is
+    /// dragged, as the main window's workspace does for a docked pallet.
+    /// Without it the drag only followed the pointer once it was over the
+    /// drawing, in the main window's coordinates. Always a mouse area, even
+    /// with no drag: iced keeps the pallet's widget state only while the
+    /// tree keeps its shape.
+    fn os_window_drag_capture<'a>(
+        &self,
+        window: iced::window::Id,
+        body: Element<'a, Message>,
+    ) -> Element<'a, Message> {
+        use crate::ui::dock::{DockDrag, DockMsg};
+        let columns = matches!(
+            self.dock_drag,
+            Some(DockDrag::LayerColumn(_) | DockDrag::WalkColumn(_))
+        );
+        let xref = self.xref_col_drag.is_some() || self.xref_split_drag;
+        let mut capture = mouse_area(body);
+        if columns {
+            capture = capture
+                .on_move(move |p| Message::Dock(DockMsg::DragMoveIn(window, p)))
+                .interaction(iced::mouse::Interaction::ResizingHorizontally);
+        }
+        if columns || xref {
+            capture = capture.on_release(Message::Dock(DockMsg::DragRelease));
+        }
+        capture.into()
     }
 }
 
@@ -1253,6 +1323,12 @@ pub(crate) fn float_os_windows(
     app_focused: bool,
     focused: Option<iced::window::Id>,
 ) -> Task<Message> {
+    // Owned by the main window there (`own_window`): Windows keeps them
+    // above it, and a level change would raise them over other apps and
+    // over a file dialog they opened (#3443).
+    if cfg!(target_os = "windows") {
+        return Task::none();
+    }
     let level = if app_focused {
         iced::window::Level::AlwaysOnTop
     } else {
@@ -1274,13 +1350,76 @@ pub(crate) fn float_os_windows(
         })
 }
 
+/// Where the main window was last moved to (logical, its top-left corner).
+#[cfg(not(target_arch = "wasm32"))]
+static MAIN_WINDOW_AT: std::sync::Mutex<Option<Point>> = std::sync::Mutex::new(None);
+
+/// `placement` centred over the main window (`at` = its logical top-left
+/// corner, `main` = its logical size, `scale` = its scale factor), so a
+/// dialog comes up on the monitor the app is on, not on the primary one
+/// (`Position::Centered`). Unchanged while the main window's place is unknown.
+#[cfg(not(target_arch = "wasm32"))]
+fn centred_over_main(
+    placement: WindowPlacement,
+    at: Option<Point>,
+    main: (f32, f32),
+    scale: f32,
+) -> WindowPlacement {
+    match at {
+        Some(at) if main.0 > 0.0 && main.1 > 0.0 => WindowPlacement {
+            x: (at.x + ((main.0 - placement.w) / 2.0).max(0.0)) * scale,
+            y: (at.y + ((main.1 - placement.h) / 2.0).max(0.0)) * scale,
+            ..placement
+        },
+        _ => placement,
+    }
+}
+
+/// Make window `id` an owned window of `owner` (Windows): it stays above
+/// its owner, goes behind other apps with it and leaves the taskbar to it.
+#[cfg(target_os = "windows")]
+fn own_window(id: iced::window::Id, owner: Option<iced::window::Id>) -> Task<Message> {
+    use iced::window::raw_window_handle::RawWindowHandle;
+
+    fn hwnd(window: &dyn iced::window::Window) -> Option<isize> {
+        match window.window_handle().ok()?.as_raw() {
+            RawWindowHandle::Win32(handle) => Some(handle.hwnd.get()),
+            _ => None,
+        }
+    }
+    let Some(owner) = owner else {
+        return Task::none();
+    };
+    iced::window::run(owner, hwnd)
+        .then(move |owner| {
+            iced::window::run(id, move |window| {
+                if let (Some(owner), Some(own)) = (owner, hwnd(window)) {
+                    // SAFETY: both handles are live windows of this process.
+                    unsafe {
+                        windows_sys::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW(
+                            own as _,
+                            windows_sys::Win32::UI::WindowsAndMessaging::GWLP_HWNDPARENT,
+                            owner,
+                        );
+                    }
+                }
+            })
+        })
+        .discard()
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "windows")))]
+fn own_window(_id: iced::window::Id, _owner: Option<iced::window::Id>) -> Task<Message> {
+    Task::none()
+}
+
 /// Open a window of its own at `placement` (centred when it has no place).
 #[cfg(not(target_arch = "wasm32"))]
 fn open_window(
     placement: WindowPlacement,
     _title: String,
     focus: bool,
-    resizable: bool,
+    fixed: bool,
 ) -> (iced::window::Id, Task<Message>) {
     // The main window's scale is the best guess before the window exists;
     // `os_window_scale` puts it right once it knows its own.
@@ -1293,11 +1432,24 @@ fn open_window(
     let (id, open) = iced::window::open(iced::window::Settings {
         size: Size::new(placement.w.max(240.0), placement.h.max(160.0)),
         position,
-        min_size: Some(Size::new(240.0, 160.0)),
-        resizable,
+        // A question opens at its content's size and cannot be made smaller,
+        // so its buttons are never clipped (#3241). It can still be made
+        // larger: where the content measured short of what it draws, its
+        // buttons stay reachable (#3557).
+        min_size: Some(if fixed {
+            Size::new(placement.w.max(240.0), placement.h.max(160.0))
+        } else {
+            Size::new(240.0, 160.0)
+        }),
+        resizable: true,
         exit_on_close_request: false,
         // Opened from the app, which has the focus: above the main window.
-        level: iced::window::Level::AlwaysOnTop,
+        // Windows: an owned window instead (`own_window`).
+        level: if cfg!(target_os = "windows") {
+            iced::window::Level::Normal
+        } else {
+            iced::window::Level::AlwaysOnTop
+        },
         icon: super::helpers::build_window_icon()
             .and_then(|rgba| iced::window::icon::from_rgba(rgba, 32, 32).ok()),
         // The same app id as the main window: the dock groups them and shows
@@ -1320,6 +1472,21 @@ fn open_window(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A prompt opens over the main window on whichever monitor it is, not
+    /// centred on the primary one; with the main window's place unknown the
+    /// placement is left alone (centred by the system).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn prompt_is_centred_over_the_main_window() {
+        let prompt = WindowPlacement { x: f32::NAN, y: f32::NAN, w: 400.0, h: 200.0 };
+        // Main window on a second monitor to the right, 1600 x 900 logical, scale 1.5.
+        let placed = centred_over_main(prompt, Some(Point::new(1920.0, 0.0)), (1600.0, 900.0), 1.5);
+        assert_eq!((placed.x, placed.y), ((1920.0 + 600.0) * 1.5, 350.0 * 1.5));
+        assert_eq!((placed.w, placed.h), (400.0, 200.0));
+        let unknown = centred_over_main(prompt, None, (1600.0, 900.0), 1.5);
+        assert!(unknown.x.is_nan() && unknown.y.is_nan());
+    }
 
     /// An unplaced window must not make the whole settings file unreadable.
     #[test]
@@ -1431,6 +1598,118 @@ mod tests {
         assert!(app.tool_open(ModalKind::BlockDefinition));
         key(&mut app, Key::Named(Named::Escape), "");
         assert!(!app.tool_open(ModalKind::BlockDefinition));
+    }
+
+    /// Real events traverse the listener and both kinds of tool window.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn unsaved_shortcuts_follow_keyboard_focus_and_preserve_close_actions() {
+        use iced::event::Status;
+        use iced::keyboard::{key::NativeCode, key::Physical, Event, Key, Location, Modifiers};
+
+        fn send(
+            app: &mut OpenCADStudio,
+            id: iced::window::Id,
+            main: iced::window::Id,
+            ch: &str,
+            modifiers: Modifiers,
+            status: Status,
+        ) {
+            let key = Key::Character(ch.into());
+            let event = iced::Event::Keyboard(Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key: Physical::Unidentified(NativeCode::Unidentified),
+                location: Location::Standard,
+                modifiers,
+                text: Some(ch.into()),
+                repeat: false,
+            });
+            if let Some(message) =
+                crate::app::view::window_event_with_context(event, status, id, id == main)
+            {
+                let _ = app.update_root(message);
+            }
+        }
+        for native in [false, true] {
+            for letter in ["c", "N", "s"] {
+                let mut app = OpenCADStudio::new_for_test();
+                let id = app.push_test_document();
+                let index = app.tabs.len() - 1;
+                app.active_tab = index;
+                app.tabs[index].dirty = true;
+                let main = iced::window::Id::unique();
+                if native {
+                    app.main_window = Some(main);
+                }
+                let _ = app.update_root(Message::TabClose(id));
+                assert!(app.tool_open(ModalKind::Unsaved));
+                let target = if native {
+                    dialog_window(&mut app, ModalKind::Unsaved).id
+                } else {
+                    main
+                };
+                send(
+                    &mut app,
+                    target,
+                    main,
+                    "n",
+                    Modifiers::empty(),
+                    Status::Captured,
+                );
+                send(
+                    &mut app,
+                    target,
+                    main,
+                    "n",
+                    Modifiers::CTRL,
+                    Status::Ignored,
+                );
+                assert!(app.tool_open(ModalKind::Unsaved));
+                assert!(app.tabs.iter().any(|tab| tab.id == id));
+                // The drawing, not the question, owns these keys until the
+                // frame is raised again. A separate window is isolated by id.
+                if !native {
+                    let _ = app.update_root(Message::ViewportLeftPress);
+                }
+                send(
+                    &mut app,
+                    main,
+                    main,
+                    "n",
+                    Modifiers::empty(),
+                    Status::Ignored,
+                );
+                assert!(app.tabs.iter().any(|tab| tab.id == id));
+                assert!(app.tool_open(ModalKind::Unsaved));
+                if !native {
+                    let _ = app.update_root(Message::ToolWindowRaise(ModalKind::Unsaved));
+                }
+                send(
+                    &mut app,
+                    target,
+                    main,
+                    letter,
+                    Modifiers::empty(),
+                    Status::Ignored,
+                );
+                match letter {
+                    "c" => {
+                        assert!(app.pending_close.is_none());
+                        assert!(app.tabs.iter().any(|tab| tab.id == id && tab.dirty));
+                    }
+                    "N" => assert!(!app.tabs.iter().any(|tab| tab.id == id)),
+                    "s" => {
+                        assert!(app.tabs.iter().any(|tab| tab.id == id));
+                        assert!(
+                            app.save_dialog_for_unsaved,
+                            "save starts the existing save flow"
+                        );
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1728,6 +2007,58 @@ mod tests {
         assert_eq!(editor.opener, Some(manager));
     }
 
+    /// A column divider of the Layer Manager in its own window follows the
+    /// pointer over that window. Its window had no capture, so the column only
+    /// changed while the pointer was over the drawing in the main window.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_column_divider_drags_in_the_managers_own_window() {
+        use crate::ui::dock::DockMsg;
+        let (mut app, manager) = app_with_layer_manager_window();
+        let start = app.layer_name_col_w;
+        let _ = app.update_root(Message::LayerNameColGrab);
+        let messages = {
+            let mut ui = iced_test::simulator(
+                app.os_window_view(manager)
+                    .expect("the manager's window shows it"),
+            );
+            for x in [200.0, 240.0] {
+                let at = Point::new(x, 120.0);
+                ui.point_at(at);
+                ui.simulate([iced::Event::Mouse(iced::mouse::Event::CursorMoved {
+                    position: at,
+                })]);
+            }
+            ui.into_messages().collect::<Vec<_>>()
+        };
+        assert!(
+            messages
+                .iter()
+                .any(|m| matches!(m, Message::Dock(DockMsg::DragMoveIn(id, _)) if *id == manager)),
+            "the window reports the pointer while the divider is held: {messages:?}"
+        );
+        for message in messages {
+            let _ = app.update_root(message);
+        }
+        assert_eq!(
+            app.layer_name_col_w,
+            start + 40.0,
+            "the Name column follows"
+        );
+        // Into the main window: its points have another origin, so the drag
+        // goes on from there instead of jumping by the difference.
+        let _ = app.on_dock(DockMsg::DragMove(Point::new(900.0, 500.0)));
+        assert_eq!(
+            app.layer_name_col_w,
+            start + 40.0,
+            "no jump between windows"
+        );
+        let _ = app.on_dock(DockMsg::DragMove(Point::new(910.0, 500.0)));
+        assert_eq!(app.layer_name_col_w, start + 50.0);
+        let _ = app.on_dock(DockMsg::DragRelease);
+        assert!(app.dock_drag.is_none(), "a release ends the drag");
+    }
+
     /// LAYERS, and the ribbon's toggle, bring up a manager that is behind
     /// the main window: the same window, still open.
     #[cfg(not(target_arch = "wasm32"))]
@@ -1880,6 +2211,42 @@ mod tests {
         assert!(app.os_windows.is_empty());
         assert!(!app.dock.is_separate(PanelId::QuickCalc));
         assert!(app.dock.float_rect(PanelId::QuickCalc).is_some());
+    }
+
+    #[test]
+    fn plot_commit_from_its_window_closes_the_plot_tool() {
+        let mut app = OpenCADStudio::new_for_test();
+        app.automation_op(r#"{"op":"new"}"#);
+        let _ = app.update_root(Message::PlotDialogOpen);
+        assert!(app.tool_open(ModalKind::Plot));
+        app.plot_dialog.to_file = true;
+        app.plot_dialog.file_svg = false;
+        app.plot_dialog.area = "Layout".into();
+        app.plot_dialog.style_missing = false;
+        press_in_tools(&mut app, "Export PDF");
+        assert!(!app.tool_open(ModalKind::Plot), "Export PDF reached the dialog");
+    }
+
+    #[test]
+    fn plot_blocked_by_a_missing_style_table_says_so_in_the_dialog() {
+        let mut app = OpenCADStudio::new_for_test();
+        app.automation_op(r#"{"op":"new"}"#);
+        let _ = app.update_root(Message::PlotDialogOpen);
+        app.plot_dialog.to_file = true;
+        app.plot_dialog.file_svg = false;
+        app.plot_dialog.style_name = "missing.ctb".into();
+        app.plot_dialog.style_missing = true;
+        app.plot_dialog.apply_plot_styles = true;
+        app.plot_dialog.style_error = None;
+        press_in_tools(&mut app, "Export PDF");
+        assert!(app.tool_open(ModalKind::Plot));
+        assert!(
+            app.plot_dialog
+                .style_error
+                .as_deref()
+                .is_some_and(|e| e.contains("missing.ctb")),
+            "the dialog shows why nothing was exported"
+        );
     }
 
     #[test]

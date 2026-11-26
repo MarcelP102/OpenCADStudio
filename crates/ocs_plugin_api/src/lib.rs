@@ -37,9 +37,12 @@ pub mod entity_coverage;
 pub mod entity_coverage_types;
 pub mod manifest;
 pub mod ribbon;
+pub mod scene;
+pub mod tables;
 pub mod type_registry;
 pub mod type_registry_types;
 pub mod version_info;
+pub mod widget;
 
 /// Runtime host surface — only built with the `host` feature (pulls `document`).
 #[cfg(feature = "host")]
@@ -69,19 +72,48 @@ pub mod runner;
 
 pub use dialog::*;
 pub use entity_coverage::{
-    get_embedded_entity_coverage_json, EntityCoverageCatalog, EntityKindCoverage, EntityScope,
-    ModelAccess, PropertyCoverage,
+    EntityCoverageCatalog, EntityKindCoverage, EntityScope, ModelAccess, PropertyCoverage,
+    get_embedded_entity_coverage_json,
 };
 pub use manifest::{
-    effective_max_api_version, host_accepts_plugin_version, ApiVersion, PluginManifest,
-    API_VERSION, API_VERSION_MIN_SUPPORTED, MAX_API_VERSION_ENV,
+    API_VERSION, API_VERSION_MIN_SUPPORTED, ApiVersion, MAX_API_VERSION_ENV, PluginManifest,
+    effective_max_api_version, host_accepts_plugin_version,
 };
-pub use ribbon::{CadModule, IconKind, ModuleEvent, RibbonGroup, RibbonItem, StyleKey, ToolDef};
+/// Environment variable through which the host hands its plugin runners the
+/// UI language (a BCP 47 tag such as `de-DE`), see [`host_language`].
+pub const HOST_LANGUAGE_ENV: &str = "OCS_LANGUAGE";
+
+/// The host's UI language when this plugin was started, for a plugin that
+/// ships its own translations (`.ftl` files) to pick one; `None` when the
+/// host did not say.
+pub fn host_language() -> Option<String> {
+    std::env::var(HOST_LANGUAGE_ENV).ok().filter(|tag| !tag.is_empty())
+}
+
+pub use ribbon::{
+    CadModule, ContextualTab, IconKind, ModuleEvent, RibbonGroup, RibbonItem, RibbonTab, StyleKey,
+    ToolDef,
+};
+pub use scene::{
+    PanelScene, PanelSurface, Rect2D, Rgba8, SceneBuilder, SceneColor, SceneElement, SceneError,
+    SceneRevision, StableId, Stroke, SurfaceReject, SurfaceRejectCode, ThemeColor, Vec2,
+};
+pub use tables::{
+    CellValue, MAX_TABLE_OPS, MAX_TABLE_ROWS, TableColumn, TableError, TableOp, TablePatch,
+    TableRevision, TableSurface,
+};
 pub use type_registry::{
-    get_embedded_type_registry_json, EnumVariantInfo, FieldInfo, MethodInfo, ParameterInfo, TypeId,
-    TypeInfo, TypeKind, TypeRegistry,
+    EnumVariantInfo, FieldInfo, MethodInfo, ParameterInfo, TypeId, TypeInfo, TypeKind,
+    TypeRegistry, get_embedded_type_registry_json,
 };
 pub use version_info::get_embedded_version_info_json;
+pub use widget::{
+    MAX_PAGE_ROWS, MAX_WIDGET_NODES, WidgetChildren, WidgetError, WidgetPage, WidgetRevision,
+    WidgetRow, WidgetSurface,
+};
+
+#[cfg(feature = "host")]
+pub use process::{DispatchResult, PluginError, PluginManager, PluginProcess};
 
 #[cfg(test)]
 pub(crate) mod test_lock {
@@ -92,6 +124,3 @@ pub(crate) mod test_lock {
     //! so tests in other modules do not observe half-written state.
     pub static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 }
-
-#[cfg(feature = "host")]
-pub use process::{DispatchResult, PluginError, PluginManager, PluginProcess};

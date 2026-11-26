@@ -138,6 +138,9 @@ impl OpenCADStudio {
         }
         self.tabs[i].history.push_undo(snapshot);
         self.tabs[i].edit_revision = self.tabs[i].edit_revision.wrapping_add(1);
+        if let Some(session) = &self.tabs[i].ifccad_session {
+            session.invalidate_source_generation();
+        }
         self.clear_redo_history(i);
         self.trim_history(i);
     }
@@ -388,8 +391,17 @@ impl OpenCADStudio {
             .graph_before
             .take()
             .map(|before| Box::new((before, self.tabs[i].graph.undo_state())));
+        let named_parameters_after = self.tabs[i].scene.named_parameters();
+        let named_parameters =
+            (&pending.named_parameters_before != named_parameters_after).then(|| {
+                (
+                    pending.named_parameters_before,
+                    named_parameters_after.clone(),
+                )
+            });
         if !pending.keep_empty
             && graph.is_none()
+            && named_parameters.is_none()
             && visibility_states.is_none()
             && entities.is_empty()
             && reference_designations.is_empty()
@@ -421,7 +433,7 @@ impl OpenCADStudio {
             reference_designations,
             reference_session,
             graph,
-            named_parameters: None,
+            named_parameters,
             label: pending.label,
         };
         self.push_undo_entry(i, HistorySnapshot::Delta(Box::new(delta)));
@@ -436,7 +448,30 @@ impl OpenCADStudio {
         self.finish_pending_history(i);
     }
 
+    /// Takes back what a failed command recorded: its open undo record is
+    /// completed, each record above `depth` on the active tab is undone
+    /// with no notice, and the redo entries that this makes are dropped, so
+    /// REDO cannot bring the failed command back. Returns the number of
+    /// records taken back.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn roll_back_to_undo_depth(&mut self, depth: usize) -> usize {
+        let i = self.active_tab;
+        self.finish_all_pending_history();
+        let steps = self.tabs[i].history.undo_stack.len().saturating_sub(depth);
+        if steps == 0 {
+            return 0;
+        }
+        self.undo_steps_reported(steps, false);
+        let redo = self.tabs[i].history.take_redo();
+        defer_history_drop(redo);
+        steps
+    }
+
     pub(super) fn finish_all_pending_history(&mut self) {
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        super::update::panic_guard::test_panic_point(
+            super::update::panic_guard::TestPanicAt::BeforeMessageEnd,
+        );
         // A graph evaluation drives nested updates (an object node writes
         // through the Properties path); its step closes after it, as one.
         if self.graph_undo_open {
@@ -501,6 +536,7 @@ impl OpenCADStudio {
             reference_designations_before: Vec::new(),
             reference_session_before: self.reference_session_state(i),
             parametric_constraints_before: self.tabs[i].scene.parametric_constraints.clone(),
+            named_parameters_before: self.tabs[i].scene.named_parameters().clone(),
             plugin_owned: false,
             keep_empty: false,
             held: false,
@@ -1058,6 +1094,30 @@ impl OpenCADStudio {
         layer_exists && app_ids_exist
     }
 
+    /// Closes a delta recording that its command did not close, because the
+    /// handler panicked between `begin_undo` and `commit_undo_delta`. The
+    /// changes that it recorded become one undo record, which the panic
+    /// guard then takes back.
+    ///
+    /// A recording that is empty is dropped. So is one that touched state
+    /// which an entity delta cannot restore (a new layer, a block): its
+    /// structure snapshot went with the stack of the failed handler.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn close_abandoned_undo_recording(&mut self, i: usize) {
+        if !self.tabs[i].scene.open_undo_recording_is_a_plain_delta() {
+            let _ = self.tabs[i].scene.take_undo_recording();
+            return;
+        }
+        let pending = PendingDelta {
+            label: "failed command".into(),
+            current_layout: self.tabs[i].scene.current_layout.clone(),
+            selected_before: self.tabs[i].scene.selected.iter().copied().collect(),
+            dirty_before: self.tabs[i].dirty,
+            structure_before: None,
+        };
+        self.commit_undo_delta(i, pending);
+    }
+
     /// Close the delta transaction opened by [`OpenCADStudio::begin_undo`]:
     /// harvests the recorded before-images, pairs each with the entity's current
     /// (after) state, and pushes a symmetric [`DeltaSnapshot`] onto the undo
@@ -1571,6 +1631,9 @@ impl OpenCADStudio {
         touched_visibility_blocks: &[Handle],
     ) {
         self.tabs[i].edit_revision = self.tabs[i].edit_revision.wrapping_add(1);
+        if let Some(session) = &self.tabs[i].ifccad_session {
+            session.invalidate_source_generation();
+        }
         // The step's entity delta is the only account of what it changed when
         // it restores a whole document snapshot; a whole-state bump leaves the
         // geometry journal unable to diff it (see `control_settle_inner`).
@@ -1582,6 +1645,13 @@ impl OpenCADStudio {
                 // for the final state. Unlike the old path, decoded images stay
                 // cached instead of being immediately cleared.
                 scene.rebuild_derived_caches();
+                // A whole-document state restore cannot be described
+                // incrementally, and this branch journals no per-handle
+                // changes: mark the journal explicitly so every journal
+                // consumer — the plugin delta publisher (API v27) included —
+                // falls back to a full rebuild instead of presenting a
+                // partial set as complete.
+                scene.bump_history_epoch();
             } else if !net_changes.is_empty() || !touched_visibility_blocks.is_empty() {
                 for &(handle, _) in &net_changes {
                     scene.reseed_derived_caches(handle);

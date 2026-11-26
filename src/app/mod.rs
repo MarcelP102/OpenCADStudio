@@ -36,6 +36,10 @@ mod block_test;
 #[cfg(test)]
 mod block_test_tests;
 mod block_visibility;
+#[cfg(test)]
+mod bricscad_visibility_tests;
+#[cfg(test)]
+mod visibilitystates_tests;
 pub(crate) mod calc;
 mod command_driver;
 mod extraction_catalog;
@@ -43,6 +47,10 @@ mod attr_editor;
 mod insert_attributes;
 #[cfg(test)]
 mod insert_attributes_tests;
+#[cfg(test)]
+mod insert_units_tests;
+#[cfg(test)]
+mod work_count_tests;
 pub(crate) use command_driver::{
     copy_to_clipboard_kernel, define_block_raw_doc, paste_entities_kernel, PasteSpace,
 };
@@ -58,14 +66,22 @@ pub(crate) mod dim_viewport;
 #[cfg(test)]
 mod dimension_convert_tests;
 #[cfg(test)]
+mod dimension_polyline_reference_tests;
+#[cfg(test)]
 mod dimension_preview_tests;
 mod dock;
 mod drafting_settings;
+#[cfg(test)]
+mod drafting_settings_toggle_tests;
+#[cfg(test)]
+mod drafting_settings_units_tests;
 mod drawing_properties;
 pub(crate) mod filter_dialog;
 mod find_replace;
 pub(crate) mod text_match;
 mod geographic_location;
+#[cfg(not(target_arch = "wasm32"))]
+mod sheet_publish;
 pub(crate) mod helpers;
 mod history;
 pub(crate) mod layer_fill;
@@ -86,7 +102,14 @@ mod measurement;
 mod model_ops;
 mod civil;
 mod civil_packages;
+mod civil_query;
+mod meshing;
 mod surfacing;
+
+/// SURFACEMODELINGMODE: 0 makes procedural surfaces, 1 NURBS surfaces.
+pub(crate) fn surface_modeling_mode() -> i16 {
+    surfacing::modeling_mode()
+}
 mod solid_edit_ops;
 mod mtext_editor;
 pub(crate) use mtext_editor::prefs as mtext_prefs;
@@ -103,10 +126,19 @@ pub(crate) mod node_graph;
 #[cfg(test)]
 mod object_isolation_tests;
 mod options_session;
+/// Pure panel-surface event routing (api v29): pointer semantics, drag
+/// state machine, per-surface event identity. Host-owned input; no
+/// renderer or wire coupling.
+pub mod panel_events;
 #[cfg(test)]
 mod paste_special_tests;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod plugin_host;
+/// Pure panel surface store (api v29): publish/ownership/revision
+/// semantics for plugin-declared scene surfaces. Compiles for wasm too —
+/// the web runtime has no plugin host, so the store stays empty there and
+/// panels render exactly their legacy bodies.
+pub mod panel_surfaces;
 mod presspull_ops;
 pub(crate) mod properties;
 mod purge_dialog;
@@ -469,13 +501,10 @@ pub(super) const DRAG_START_FAST_PX2: f32 = 144.0;
 pub(super) const VARIES_LABEL: &str = "*VARIES*";
 
 // ── File-open progress ─────────────────────────────────────────────────────
-// Phase encoding for OpenProgress.phase atomic. Updated from the background
-// loader thread, read by the UI overlay on every frame.
-pub const OPEN_PHASE_READING: u8 = 0;
-pub const OPEN_PHASE_PARSING: u8 = 1;
-pub const OPEN_PHASE_XREF: u8 = 2;
-pub const OPEN_PHASE_CACHING: u8 = 3;
-pub const OPEN_PHASE_FINALIZING: u8 = 4;
+pub use crate::io::{
+    OPEN_PHASE_CACHING, OPEN_PHASE_FINALIZING, OPEN_PHASE_PARSING, OPEN_PHASE_READING,
+    OPEN_PHASE_XREF,
+};
 
 #[derive(Debug, Clone)]
 pub struct OpenProgress {
@@ -800,6 +829,10 @@ pub(super) struct OpenCADStudio {
     table_cell_format: Option<crate::ui::window::table_cell_dialog::CellFormatState>,
     /// The annotation scale asked for before a session's first annotative text.
     anno_scale_prompt: Option<crate::ui::window::anno_scale_prompt::AnnoScalePrompt>,
+    /// The surface list a Create Points > Surface command opened.
+    surface_list: Option<crate::ui::window::surface_list::SurfaceList>,
+    /// The windows of the Create Points tools.
+    point_tools: commands::point_tools::PointTools,
     /// The Paragraph, Column Settings, Background Mask or Find and Replace
     /// window the Text Editor tab opened.
     mtext_dialog: Option<crate::ui::window::mtext_dialogs::MTextDialog>,
@@ -926,6 +959,8 @@ pub(super) struct OpenCADStudio {
     cursor_size: i32,
     /// Selection-box size setting (PICKBOX, 0..=50).
     pick_box: i32,
+    /// The AutoSnap Magnet: the crosshairs lock onto an object snap point.
+    autosnap_magnet: bool,
     /// HPASSOC: new hatches follow their boundary objects.
     hatch_associative: bool,
     /// The Hatch panel's numbers as typed.
@@ -955,6 +990,10 @@ pub(super) struct OpenCADStudio {
     hatch_boundary_warning: Option<crate::ui::window::hatch_dialogs::BoundaryWarningState>,
     /// MENUBAR: the classic pull-down menus show above the ribbon.
     show_menu_bar: bool,
+    /// The main window is maximized, for the title bar's maximize button.
+    main_maximized: bool,
+    /// The title bar's empty space is pressed: a move drags the window.
+    title_bar_pressed: bool,
     /// RIBBONCLOSE hid the ribbon; RIBBON brings it back.
     ribbon_closed: bool,
     /// COMMANDLINEHIDE (Ctrl+9) hid the command line; COMMANDLINE shows it.
@@ -1237,6 +1276,8 @@ pub(super) struct OpenCADStudio {
     /// coordinates and typing `@` selects relative coordinates again.
     /// Cleared after a point is committed or a new command starts.
     dyn_coord_absolute: bool,
+    /// With `dyn_coord_absolute`: typed `*`, the coordinates are world ones.
+    dyn_coord_wcs: bool,
     /// Grip the cursor is currently dwelling on. Set when the cursor
     /// stops within `GRIP_THRESHOLD_PX` of a grip; cleared when it
     /// drifts away. The instant lets `ViewportMove` detect when the
@@ -1418,6 +1459,8 @@ pub(super) struct OpenCADStudio {
     show_graphic_attributes: bool,
     /// The Command History pallet is open.
     pub(crate) show_command_history: bool,
+    /// The civil Create Points menu (open, and its folded-open group).
+    pub(crate) points_menu: crate::ui::points_menu::PointsMenu,
     graphic_attributes: crate::ui::window::graphic_attributes::GraphicAttributesState,
     /// Docked Insert Block panel visibility.
     pub(crate) show_block_palette: bool,
@@ -1447,6 +1490,9 @@ pub(super) struct OpenCADStudio {
     /// Point Cloud Manager palette (POINTCLOUDMANAGER).
     pub(crate) pc_manager: crate::ui::window::pc_manager::PcManager,
     pub(crate) count_palette: crate::ui::window::count_palette::CountPalette,
+    /// The Geometry Cleanup palette (GEOMETRYCLEANUPOPEN).
+    pub(crate) geometry_cleanup: crate::ui::window::geometry_cleanup::GeometryCleanupPalette,
+    pub(crate) bricscad_visibility: crate::ui::window::bricscad_visibility::VisibilityPanel,
     /// The QuickCalc pallet (QUICKCALC / QC).
     pub(crate) quick_calc: crate::ui::window::quick_calc::QuickCalcPalette,
     /// The Assistant pallet (ASSISTANT): chat with an external AI agent about this drawing.
@@ -1475,6 +1521,8 @@ pub(super) struct OpenCADStudio {
     pub(crate) dock_icon_hover: Option<crate::ui::dock::PanelId>,
     /// Last pointer position during a dock drag.
     pub(crate) dock_drag_last: Option<iced::Point>,
+    /// The window `dock_drag_last` is in (`None`: the main window).
+    pub(crate) dock_drag_window: Option<iced::window::Id>,
     /// Docked panel whose title bar the pointer is over (shows pin / close).
     pub(crate) dock_title_hover: Option<crate::ui::dock::PanelId>,
     /// Edge whose icon-strip pallet menu (+) is open.
@@ -1622,6 +1670,28 @@ pub(super) struct OpenCADStudio {
     /// Persistent dockable side panels registered by plugins.
     pub(crate) plugin_panels:
         std::collections::BTreeMap<String, crate::ui::window::plugin_panel::PluginPanelState>,
+    /// Declarative scene surfaces published by plugins (api v29), keyed by
+    /// panel id and owned by the authenticated plugin; a pure store — the
+    /// UI projects from it, nothing here draws.
+    pub(crate) panel_surfaces:
+        crate::app::panel_surfaces::PanelSurfaceStore,
+    /// Pointer semantics for panel scene surfaces (api v29): click vs
+    /// drag, move coalescing, settle/cancel; per-surface event identity.
+    pub(crate) panel_event_router:
+        crate::app::panel_events::PanelEventRouter,
+    /// Host-local widget view state per panel id (api v29): expansion and
+    /// selection stay host-local (finding F2's host-local law) — nothing
+    /// here is authoritative about the data.
+    pub(crate) panel_widget_ui: std::collections::BTreeMap<
+        String,
+        crate::ui::window::plugin_widgets::WidgetUiState,
+    >,
+    /// Host-local EDITING session per panel id (api v29): draft cells
+    /// and selection. The plugin stays the data authority.
+    pub(crate) panel_table_ui: std::collections::BTreeMap<
+        String,
+        crate::ui::window::plugin_tables::TableUiState,
+    >,
     /// Numeric mapping for PanelId::Plugin(u32).
     pub(crate) plugin_panel_ids: std::collections::HashMap<String, u32>,
     pub(crate) plugin_panel_by_num: std::collections::HashMap<u32, String>,
@@ -2048,6 +2118,14 @@ pub(super) struct OpenCADStudio {
     desk_bg_input: String,
     pub(crate) saved_custom_palette: Option<config::UiThemePalette>,
 
+    /// Panics that `update_guarded` caught in this session
+    /// (`update/panic_guard.rs`).
+    #[cfg(not(target_arch = "wasm32"))]
+    caught_panics: u32,
+    /// Windows whose view panicked; each shows a fallback until the user
+    /// asks to try again (`view/mod.rs`).
+    failed_views: std::sync::Mutex<Vec<iced::window::Id>>,
+
     // ── Keyboard Shortcut Editor ──────────────────────────────────────────
     /// Complete editable key → command/action table.
     shortcut_bindings: rustc_hash::FxHashMap<String, String>,
@@ -2243,6 +2321,16 @@ pub(super) struct OpenCADStudio {
     /// cannot mark a newer document state clean or redirect its path.
     #[cfg(not(target_arch = "wasm32"))]
     active_save_jobs: std::collections::HashMap<u64, u64>,
+    /// The jobs of `active_save_jobs` that are autosaves.
+    #[cfg(not(target_arch = "wasm32"))]
+    autosave_jobs: std::collections::HashSet<u64>,
+    /// A save asked for during an autosave of the same drawing, by stable
+    /// tab id. It starts when the autosave ends.
+    #[cfg(not(target_arch = "wasm32"))]
+    saves_after_autosave: std::collections::HashMap<u64, PendingNativeThumbnailSave>,
+    /// The sheet list PUBLISH is working through, between its script steps.
+    #[cfg(not(target_arch = "wasm32"))]
+    sheet_publish: Option<Box<sheet_publish::SheetPublish>>,
     #[cfg(not(target_arch = "wasm32"))]
     save_job_serial: u64,
     /// Destination leases held while Save As workers are active.
@@ -2561,6 +2649,13 @@ pub enum ModalKind {
     TableCellWarning,
     /// The annotation scale asked for before a session's first annotative text.
     AnnotationScalePrompt,
+    /// The surface list of a Create Points > Surface command.
+    SurfaceList,
+    PointGroup,
+    CorridorPoints,
+    PointBlocks,
+    BlockDuplicate,
+    DuplicatePoint,
     /// A window of the Text Editor tab (paragraph, columns, mask, find).
     MTextDialog,
     /// A value typed into a cell that is not of the cell's data type.
@@ -2620,6 +2715,7 @@ pub enum ModalKind {
     FindReplace,
     /// OVERKILL settings for the selected objects.
     Overkill,
+    GeometryCleanupSettings,
     AecDropWarning,
     /// A converter would drop part of the drawing on save.
     ConversionLoss,
@@ -2661,6 +2757,7 @@ pub enum ModalKind {
     ImportFile,
     /// DGNIMPORT's DGN Import window.
     DgnImport,
+    IfcPlan,
     /// IMPORT's 3D Studio Import window.
     TdsImport,
     /// A 3D Studio import set to ask: one mesh with several materials.
@@ -2884,6 +2981,8 @@ impl OpenCADStudio {
             table_cell_block: None,
             table_cell_format: None,
             anno_scale_prompt: None,
+            surface_list: None,
+            point_tools: Default::default(),
             mtext_dialog: None,
             table_cell_warning: None,
             table_cell_entry: None,
@@ -2931,7 +3030,8 @@ impl OpenCADStudio {
             zoom_factor: 60,
             zoom_factor_input: 60.to_string(),
             cursor_size: 5,
-            pick_box: 3,
+            pick_box: 5,
+            autosnap_magnet: true,
             hatch_associative: true,
             hatch_drafts: Default::default(),
             context_menu_custom: Default::default(),
@@ -2944,6 +3044,8 @@ impl OpenCADStudio {
             outline_switch_hover: false,
             hatch_boundary_warning: None,
             show_menu_bar: false,
+            main_maximized: true,
+            title_bar_pressed: false,
             ribbon_closed: false,
             command_line_hidden: false,
             double_click_block_refedit: false,
@@ -3073,6 +3175,7 @@ impl OpenCADStudio {
             pane_move_from: None,
             dyn_user_reshaped: false,
             dyn_coord_absolute: false,
+            dyn_coord_wcs: false,
             grip_hover: None,
             #[cfg(not(target_arch = "wasm32"))]
             plugin_grip_hover: None,
@@ -3132,6 +3235,7 @@ impl OpenCADStudio {
             show_layers: false,
             show_graphic_attributes: false,
             show_command_history: false,
+            points_menu: Default::default(),
             graphic_attributes: Default::default(),
             show_block_palette: false,
             show_tool_palettes: false,
@@ -3147,6 +3251,8 @@ impl OpenCADStudio {
             show_browser: false,
             pc_manager: Default::default(),
             count_palette: Default::default(),
+            geometry_cleanup: Default::default(),
+            bricscad_visibility: Default::default(),
             quick_calc: Default::default(),
             assistant: Default::default(),
             sheet_set: Default::default(),
@@ -3173,6 +3279,7 @@ impl OpenCADStudio {
             dock_float_menu_at: iced::Point::ORIGIN,
             dock_drag: None,
             dock_drag_last: None,
+            dock_drag_window: None,
             dock_title_hover: None,
             dock_edge_menu: None,
             dock_edge_menu_y: None,
@@ -3221,6 +3328,12 @@ impl OpenCADStudio {
             active_modal: None,
             plugin_dialog_state: None,
             plugin_panels: std::collections::BTreeMap::new(),
+            panel_surfaces:
+                crate::app::panel_surfaces::PanelSurfaceStore::default(),
+            panel_event_router:
+                crate::app::panel_events::PanelEventRouter::new(),
+            panel_widget_ui: std::collections::BTreeMap::new(),
+            panel_table_ui: std::collections::BTreeMap::new(),
             plugin_panel_ids: std::collections::HashMap::new(),
             plugin_panel_by_num: std::collections::HashMap::new(),
             hyperlink_editor_handles: Vec::new(),
@@ -3374,6 +3487,12 @@ impl OpenCADStudio {
             #[cfg(not(target_arch = "wasm32"))]
             active_save_jobs: std::collections::HashMap::new(),
             #[cfg(not(target_arch = "wasm32"))]
+            autosave_jobs: std::collections::HashSet::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            saves_after_autosave: std::collections::HashMap::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            sheet_publish: None,
+            #[cfg(not(target_arch = "wasm32"))]
             save_job_serial: 0,
             #[cfg(not(target_arch = "wasm32"))]
             pending_save_leases: std::collections::HashMap::new(),
@@ -3408,6 +3527,9 @@ impl OpenCADStudio {
             paper_bg_input: String::new(),
             desk_bg_input: String::new(),
             saved_custom_palette: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            caught_panics: 0,
+            failed_views: Default::default(),
             // Keyboard shortcuts
             shortcut_bindings: rustc_hash::FxHashMap::default(),
             shortcut_editor_rows: Vec::new(),
@@ -3913,6 +4035,12 @@ impl OpenCADStudio {
         self.command_line.push_error(msg);
     }
 
+    /// Whether the app draws the main window's title bar (see
+    /// `ui::title_bar::drawn`).
+    pub(crate) fn draws_title_bar(&self) -> bool {
+        crate::ui::title_bar::drawn()
+    }
+
     /// Boot function for `iced::daemon`: returns initial state plus a task that
     /// opens the primary application window. Native only — the web build uses
     /// [`Self::boot_web`].
@@ -3923,10 +4051,26 @@ impl OpenCADStudio {
         // up once via the first-launch prompt below (when the user hasn't been
         // asked yet) and afterwards managed entirely by the FILEASSOC command.
         crate::sys::startup_times::mark("boot: begin");
+        // The desktop's window buttons (a `gsettings` call on GNOME) are read
+        // while the rest starts, not in the first view.
+        std::thread::spawn(|| {
+            crate::ui::title_bar::layout();
+            crate::ui::title_bar::double_click();
+        });
         let state = Self::new();
         crate::sys::startup_times::mark("boot: App constructed");
         let (id, open_task) = window::open(window::Settings {
             maximized: true,
+            // The app draws the title bar over the ribbon; macOS keeps its
+            // frame for the traffic lights, over a content view that runs
+            // under the hidden title.
+            decorations: !crate::ui::title_bar::frameless(),
+            #[cfg(target_os = "macos")]
+            platform_specific: window::settings::PlatformSpecific {
+                title_hidden: crate::ui::title_bar::drawn(),
+                titlebar_transparent: crate::ui::title_bar::drawn(),
+                fullsize_content_view: crate::ui::title_bar::drawn(),
+            },
             icon: build_window_icon().and_then(|rgba| window::icon::from_rgba(rgba, 32, 32).ok()),
             exit_on_close_request: false,
             // A Wayland compositor has no StartupWMClass to go on: it resolves a

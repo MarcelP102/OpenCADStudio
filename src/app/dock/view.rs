@@ -5,7 +5,7 @@ use crate::app::tab_document::DocumentTab;
 use crate::app::{Message, OpenCADStudio};
 use crate::t;
 use crate::ui::dock::{DOCK_DIVIDER_W, DOCK_FLOAT_BAR_W, RAIL_ICON};
-use iced::widget::{button, canvas, column, container, mouse_area, row, stack, text, Space};
+use iced::widget::{Space, button, canvas, column, container, mouse_area, row, stack, text};
 use iced::{Background, Border, Color, Element, Fill, Length, Theme};
 
 /// One row of the edge (+) pallet menu: a built-in panel, or a panel a
@@ -219,10 +219,8 @@ impl OpenCADStudio {
         let mut entries: Vec<(MenuPanel, bool)> = PanelId::ALL
             .iter()
             .filter(|p| {
-                !matches!(
-                    **p,
-                    PanelId::AuthoringPalettes | PanelId::ParametersManager
-                ) || edit_session
+                !matches!(**p, PanelId::AuthoringPalettes | PanelId::ParametersManager)
+                    || edit_session
             })
             .map(|p| {
                 let here = self.dock.location(*p).map(|(s, _)| s) == Some(side);
@@ -242,11 +240,7 @@ impl OpenCADStudio {
             .iter()
             .filter_map(|(id, state)| {
                 let num = *num_by_id.get(id.as_str())?;
-                let here = self
-                    .dock
-                    .location(PanelId::Plugin(num))
-                    .map(|(s, _)| s)
-                    == Some(side);
+                let here = self.dock.location(PanelId::Plugin(num)).map(|(s, _)| s) == Some(side);
                 Some((
                     num,
                     state.def.title.clone(),
@@ -368,7 +362,7 @@ impl OpenCADStudio {
     fn dock_icon_strip(&self, side: crate::app::config::DockSide) -> Element<'_, Message> {
         use crate::app::config::DockSide;
         use crate::ui::dock::{
-            DockMsg, DropTarget, DOCK_STRIP_W, STRIP_GRIP_W, STRIP_PAD, STRIP_PLUS_GAP,
+            DOCK_STRIP_W, DockMsg, DropTarget, STRIP_GRIP_W, STRIP_PAD, STRIP_PLUS_GAP,
             STRIP_PLUS_H,
         };
         use crate::ui::style::{chrome, kit_metrics as km};
@@ -722,12 +716,24 @@ impl OpenCADStudio {
             crate::ui::dock::PanelId::NodeGraph => {
                 tab.graph.panel(width, chrome, self.node_graph_links)
             }
+            crate::ui::dock::PanelId::BricscadVisibility => crate::ui::window::bricscad_visibility::view(
+                &self.bricscad_visibility,
+                self.bricscad_visibility_model(tab),
+                width,
+                chrome,
+            ),
             crate::ui::dock::PanelId::Count => crate::ui::window::count_palette::view(
                 &self.count_palette,
                 tab.count.as_ref(),
                 &tab.scene.document,
                 tab.id,
                 tab.scene.geometry_epoch,
+                width,
+                chrome,
+            ),
+            crate::ui::dock::PanelId::GeometryCleanup => crate::ui::window::geometry_cleanup::view(
+                &self.geometry_cleanup,
+                tab.id,
                 width,
                 chrome,
             ),
@@ -762,15 +768,60 @@ impl OpenCADStudio {
                     .history_panel(&self.history_content, width, chrome)
             }
             crate::ui::dock::PanelId::Plugin(num) => {
-                if let Some(panel_id) = self.plugin_panel_by_num.get(&num) {
+                // A plugin body sizes to its content; the pallet's width
+                // makes it fill and reflow with the group (#3649).
+                let body: Element<'a, Message> = if let Some(panel_id) =
+                    self.plugin_panel_by_num.get(&num)
+                {
                     if let Some(state) = self.plugin_panels.get(panel_id) {
-                        state.view(num, width, chrome)
+                        // A panel may own a scene AND a widget surface side
+                        // by side (finding F1): the widget view wins the
+                        // body when present, then the scene canvas, then
+                        // the exact legacy tree.
+                        let widget_ui = self.panel_widget_ui.get(panel_id);
+                        if let (Some(owner), Some(table)) = (
+                            state.owner_plugin_id.as_deref(),
+                            state
+                                .owner_plugin_id
+                                .as_deref()
+                                .and_then(|owner| self.panel_surfaces.table(owner, panel_id)),
+                        ) {
+                            let table_ui = self.panel_table_ui.get(panel_id);
+                            crate::ui::window::plugin_tables::table_view(
+                                owner, panel_id, table, table_ui,
+                            )
+                        } else if let (Some(owner), Some(surface)) = (
+                            state.owner_plugin_id.as_deref(),
+                            state
+                                .owner_plugin_id
+                                .as_deref()
+                                .and_then(|owner| self.panel_surfaces.widget(owner, panel_id)),
+                        ) {
+                            crate::ui::window::plugin_widgets::widget_view(
+                                owner, panel_id, surface, widget_ui,
+                            )
+                        } else if let Some(scene) =
+                            state.owner_plugin_id.as_deref().and_then(|owner| {
+                                self.panel_surfaces
+                                    .scene(owner, panel_id)
+                                    .map(|scene| (owner.to_owned(), scene))
+                            })
+                        {
+                            let (owner, scene) = scene;
+                            let preview = self.panel_event_router.drag_preview(panel_id);
+                            crate::ui::window::plugin_scene::scene_view(
+                                &owner, panel_id, scene, preview,
+                            )
+                        } else {
+                            state.view(num, width, chrome)
+                        }
                     } else {
                         Space::new().into()
                     }
                 } else {
                     Space::new().into()
-                }
+                };
+                container(body).width(Length::Fixed(width)).into()
             }
         }
     }
@@ -1062,7 +1113,7 @@ impl OpenCADStudio {
         target: crate::ui::dock::DropTarget,
     ) -> Vec<Element<'_, Message>> {
         use crate::app::config::DockSide;
-        use crate::ui::dock::{DropTarget, DOCK_STRIP_W};
+        use crate::ui::dock::{DOCK_STRIP_W, DropTarget};
         let (ww, _) = self.dock_workspace_size();
         let strip_x = match side {
             DockSide::Left => 0.0,

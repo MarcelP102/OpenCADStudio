@@ -740,6 +740,9 @@ impl Scene {
     /// True when `handle`'s entity type is allowed by the selection filter.
     /// The filter stores excluded type names; empty = everything allowed.
     pub fn passes_selection_filter(&self, handle: Handle) -> bool {
+        if !crate::scene::pick_locked() && self.is_layer_locked(handle) {
+            return false;
+        }
         if self.selection_filter.is_empty() {
             return true;
         }
@@ -1419,6 +1422,8 @@ impl Scene {
             handle_set.insert(h);
             erased.push((h, ChangeKind::Removed));
         }
+        // Erased dimensions take their DIMASSOC along.
+        self.detach_erased_dimension_associations(&handle_set);
         // Once for the whole batch: per handle this is quadratic in the selection.
         if selection_changed {
             self.selected_order

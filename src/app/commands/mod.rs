@@ -27,12 +27,20 @@ pub(crate) fn linetype_library_lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 mod revcloud_vars;
+pub(crate) use layer_variable::command_layer_variable;
 pub(crate) use purge::purge_pass;
 mod block_editor_vars;
+mod bricscad_visibility;
 mod bvisibility;
 mod count;
 mod dash;
 mod dgn_import;
+mod geometry_cleanup;
+#[cfg(test)]
+mod geometry_cleanup_tests;
+mod ifc_plan;
+#[cfg(test)]
+mod layer_variable_tests;
 pub(in crate::app) use dgn_import::read_reference_drawings;
 mod dim;
 mod dim_cmd;
@@ -54,6 +62,8 @@ pub(crate) use log_file::{
     log_file_folder_setting, log_file_mode, set_log_file_folder, set_log_file_mode,
 };
 mod anno_scale_prompt;
+mod surface_list;
+pub(super) mod point_tools;
 mod hyperlink;
 pub(crate) use group_display::{group_display_mode, set_group_display_mode};
 pub(crate) use anno_scale_prompt::{annotation_scale_prompt, set_annotation_scale_prompt};
@@ -148,6 +158,7 @@ impl OpenCADStudio {
         // accepted snaps must not leak into it.
         self.clear_accepted_snaps();
         self.snapper.clear_override();
+        self.snapper.end_cycle();
         // Starting a command restarts the right-click cycle, so its first
         // right-click acts as Enter rather than opening the context menu.
         self.tabs[i]
@@ -164,6 +175,7 @@ impl OpenCADStudio {
         // the displayed default upper-right).
         self.dyn_user_reshaped = false;
         self.dyn_coord_absolute = self.dyn_pointer_absolute;
+        self.dyn_coord_wcs = false;
         self.tabs[i].dyn_fields.clear();
         self.tabs[i].dyn_active = 0;
     }
@@ -815,6 +827,9 @@ impl OpenCADStudio {
         if let Some(t) = self.dispatch_model_import(cmd, i) {
             return Some(t);
         }
+        if let Some(t) = self.dispatch_bricscad_visibility(cmd, i) {
+            return Some(t);
+        }
         if let Some(t) = self.dispatch_bvisibility(cmd, i) {
             return Some(t);
         }
@@ -842,6 +857,9 @@ impl OpenCADStudio {
         if let Some(t) = self.dispatch_ole(cmd, i) {
             return Some(t);
         }
+        if let Some(t) = self.dispatch_mesh(cmd, i) {
+            return Some(t);
+        }
         if let Some(t) = self.dispatch_surface(cmd, i) {
             return Some(t);
         }
@@ -864,6 +882,9 @@ impl OpenCADStudio {
             return Some(t);
         }
         if let Some(t) = self.dispatch_count(cmd, i) {
+            return Some(t);
+        }
+        if let Some(t) = self.dispatch_geometry_cleanup(cmd, i) {
             return Some(t);
         }
         if let Some(t) = self.dispatch_attout(cmd, i) {
@@ -994,7 +1015,17 @@ pub fn start_allowed(cmd: &str) -> bool {
     // opens the drawings it works on by path, and EXIT answers its save
     // questions from any tab.
     let verb = cmd.split_whitespace().next().unwrap_or("");
+    // A sheet list PUBLISH opens the drawings it names; PUBLISHNEXT is its
+    // step between two of them.
+    let sheet_list = verb == "PUBLISHNEXT"
+        || matches!(verb, "PUBLISH" | "-PUBLISH")
+            && cmd
+                .trim_end()
+                .trim_end_matches('"')
+                .to_ascii_lowercase()
+                .ends_with(".dsd");
     is_spacemouse_command(cmd)
+        || sheet_list
         || matches!(verb, "OPEN" | "SCRIPT" | "SCR" | "FILEDIA" | "SDI" | "EXIT")
         || matches!(
             cmd,
@@ -1358,6 +1389,7 @@ inventory::submit!(crate::command::CommandRegistration {
         "SURFACEASSOCIATIVITY",
         "DGNIMPORTMODE",
         "LAYOUTCREATEVIEWPORT",
+        "PICKLOCKED",
         "TXT2MTXTCOMBINEMTEXT",
         "TXT2MTXTTEXTORDER",
         "TXT2MTXTWORDWRAP",
@@ -1372,6 +1404,7 @@ inventory::submit!(crate::command::CommandRegistration {
         "PDFSHXBESTFONT",
         "PDFSHXTEXTSETTINGS",
         "XDWGFADECTL",
+        "LAYLOCKFADECTL",
         "POINTCLOUDCLIPFRAME",
         "POINTCLOUDDENSITY",
         "POINTCLOUDPOINTSIZE",
@@ -1552,6 +1585,7 @@ inventory::submit!(crate::command::CommandRegistration {
         "NEW",
         "QNEW",
         "OBJIMPORT",
+        "IFC2PLAN",
         "IMPORT",
         "ACISIN",
         "WMFIN",

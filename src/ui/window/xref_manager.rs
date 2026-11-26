@@ -692,10 +692,10 @@ impl XrefManagerPanel {
         )
         .into_owned();
         let attach = if IS_WASM {
-            toolbar_tip(crate::t!("Attach DWG").into_owned(), web_tip.clone())
+            toolbar_tip(crate::t!("Attach").into_owned(), web_tip.clone())
         } else {
             split_button(
-                crate::t!("Attach DWG").into_owned(),
+                crate::t!("Attach").into_owned(),
                 Some(Message::XAttachPick),
                 self.attach_open,
                 Message::XrefManagerAttachMenu,
@@ -1205,6 +1205,7 @@ pub(crate) fn status_text(status: RefStatus) -> std::borrow::Cow<'static, str> {
         // Unreadable file: the industry palette term is Unresolved.
         RefStatus::Failed => crate::t!("Unresolved"),
         RefStatus::Stale => crate::t!("Stale"),
+        RefStatus::Circular => crate::t!("Circular reference"),
         RefStatus::Orphaned => crate::t!("Orphaned"),
         RefStatus::Unreferenced => crate::t!("Unreferenced"),
     }
@@ -1244,6 +1245,7 @@ fn status_icon_key(status: RefStatus) -> (&'static [u8], StatusTone) {
         RefStatus::Stale => (icons::DIRTY_DOT, T::Warning),
         RefStatus::NotFound => (icons::CLOSE, T::Danger),
         RefStatus::Failed => (icons::DOT, T::Danger),
+        RefStatus::Circular => (icons::DOT, T::Warning),
         RefStatus::Orphaned => (icons::DOT, T::Warning),
         RefStatus::Unreferenced => (icons::DOC, T::Secondary),
     }
@@ -1456,7 +1458,7 @@ fn xref_row<'a>(
 ) -> Element<'a, Message> {
     let mut name = entry.name.clone();
     if display.is_nested {
-        name.push_str(&crate::t!(" (nested — not rendered)"));
+        name.push_str(&crate::t!(" (nested)"));
     }
     let mut name_cell = row![].align_y(iced::Center);
     if display.depth > 0 {
@@ -1871,6 +1873,33 @@ fn detail_row<'a>(
 mod tests {
     use super::*;
     use crate::io::xref_model::RefKind;
+
+    #[test]
+    fn nested_row_label_does_not_claim_geometry_is_hidden() {
+        let _guard = crate::headless_ui_lock();
+        let entry = entry(1, "Detail", "detail.ifccad");
+        let element = xref_row(
+            DisplayRow {
+                index: 0,
+                depth: 0,
+                is_nested: true,
+            },
+            &entry,
+            false,
+            false,
+            false,
+            1200.,
+            &[400., 180., 100., 120., 100., 300.],
+            false,
+        );
+        let mut ui =
+            iced_test::Simulator::with_size(iced::Settings::default(), (1400., 900.), element);
+        let expected = format!("Detail{}", crate::t!(" (nested)"));
+        assert!(
+            ui.find(expected.as_str()).is_ok(),
+            "nested geometry must not be labelled not rendered"
+        );
+    }
 
     #[test]
     fn size_formats_without_deps() {

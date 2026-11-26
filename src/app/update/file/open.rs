@@ -1,5 +1,5 @@
-use super::*;
 use super::super::util::*;
+use super::*;
 
 impl OpenCADStudio {
     pub(in crate::app) fn on_open_file(&mut self) -> Task<Message> {
@@ -159,6 +159,13 @@ impl OpenCADStudio {
             );
         }
         self.tabs[i].disk_fingerprint = loaded_fingerprint.or(current_fingerprint);
+        // A drawing a sheet list opens only to plot it is closed unsaved
+        // right after: it leaves no lock file beside the drawing.
+        if self.opened_for_publish(path) {
+            self.tabs[i].edit_lease = None;
+            self.tabs[i].edit_lock_conflict = false;
+            return;
+        }
         match crate::io::edit_lock::EditLease::acquire(path) {
             Ok(lease) => {
                 if let Some(warning) = lease.platform_warning() {
@@ -266,7 +273,7 @@ impl OpenCADStudio {
                 .as_deref()
                 .and_then(|p| p.parent().map(|p| p.to_path_buf()))
                 .unwrap_or_else(|| std::path::PathBuf::from("."));
-            let keys: rustc_hash::FxHashSet<document::Handle> = tab
+            let mut keys: rustc_hash::FxHashSet<document::Handle> = tab
                 .scene
                 .document
                 .block_records
@@ -280,6 +287,48 @@ impl OpenCADStudio {
                         .map(|_| br.handle)
                 })
                 .collect();
+            if let Some(session) = &tab.ifccad_session {
+                for (root, row) in session.nested_source_rows() {
+                    if row
+                        .found_at
+                        .as_deref()
+                        .is_some_and(|found| native_paths_match(std::path::Path::new(found), path))
+                    {
+                        keys.insert(root);
+                    }
+                }
+            } else {
+                let entries = crate::io::xref::collect_entries_with_prev(
+                    &tab.scene.document,
+                    &base_dir,
+                    tab.xref_unloaded.as_set(),
+                    &tab.xref_stat_cache.0,
+                );
+                for entry in &entries {
+                    if entry.parent_key.is_none()
+                        || !entry.found_at.as_deref().is_some_and(|found| {
+                            native_paths_match(std::path::Path::new(found), path)
+                        })
+                    {
+                        continue;
+                    }
+                    let mut ancestor = entry;
+                    let mut seen = rustc_hash::FxHashSet::default();
+                    while let Some(parent) = ancestor.parent_key {
+                        if !seen.insert(parent) {
+                            break;
+                        }
+                        if let Some(next) = entries.iter().find(|e| e.key == parent) {
+                            ancestor = next;
+                        } else {
+                            break;
+                        }
+                    }
+                    if ancestor.parent_key.is_none() {
+                        keys.insert(document::Handle::new(ancestor.key));
+                    }
+                }
+            }
             if !keys.is_empty() {
                 matches.push((j, keys));
             }
@@ -290,10 +339,12 @@ impl OpenCADStudio {
                 .as_deref()
                 .and_then(|p| p.parent().map(|p| p.to_path_buf()))
                 .unwrap_or_else(|| std::path::PathBuf::from("."));
-            let infos = crate::io::xref::resolve_xrefs_for_keys(
+            let xref_session = self.tabs[j].ifccad_session.clone();
+            let infos = crate::io::xref::resolve_xrefs_for_keys_in_session(
                 &mut self.tabs[j].scene.document,
                 &base_dir,
                 &keys,
+                xref_session.as_ref(),
             );
             if infos.is_empty() {
                 continue;
@@ -419,7 +470,7 @@ impl OpenCADStudio {
         } else {
             std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone())
         };
-        crate::io::save_owned_as_version_atomic(
+        let saved = crate::io::save_owned_as_version_atomic(
             snapshot,
             &write_path,
             version,
@@ -430,7 +481,16 @@ impl OpenCADStudio {
             require_new_destination,
             (!path_changed).then_some(path.as_path()),
             self.tabs[i].ifccad_session.as_ref(),
-        )?;
+        );
+        if saved.is_err() && !path_changed {
+            // The save took the drawing handle for its replace; lock again.
+            if let Some(lease) = self.tabs[i].edit_lease.as_mut() {
+                if !lease.holds_drawing() {
+                    let _ = lease.refresh_drawing_lock(&path);
+                }
+            }
+        }
+        saved?;
 
         if set_current_path {
             self.tabs[i].current_path = Some(path.clone());
@@ -450,7 +510,11 @@ impl OpenCADStudio {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(in crate::app) fn retry_native_edit_guard(&mut self, i: usize, path: &std::path::Path) -> Result<(), String> {
+    pub(in crate::app) fn retry_native_edit_guard(
+        &mut self,
+        i: usize,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
         if let Some(lease) = self.tabs[i].edit_lease.as_mut() {
             match lease.refresh_drawing_lock(path) {
                 Ok(()) => {
@@ -998,5 +1062,4 @@ impl OpenCADStudio {
             enter_viewport_task,
         ])
     }
-
 }

@@ -1901,12 +1901,16 @@ fn tessellate_sub_local(
             sub,
             EntityType::MText(text) if text.background_fill_flags & 0x01 != 0
         );
-        let preserve_color = mtext_has_background && is_fill_only;
-        let canvas_color = is_fill_only
-            && matches!(
-                sub,
-                EntityType::MText(text) if text.background_fill_flags & 0x02 != 0
-            );
+        // A mask the tessellator flagged itself (a leader's or a
+        // dimension's background fill) covers with the canvas too.
+        let own_mask = wire.bg_adapt.as_deref().is_some_and(|adapt| adapt.canvas_color);
+        let preserve_color = (mtext_has_background && is_fill_only) || own_mask;
+        let canvas_color = own_mask
+            || is_fill_only
+                && matches!(
+                    sub,
+                    EntityType::MText(text) if text.background_fill_flags & 0x02 != 0
+                );
         let contrast_bg =
             if !preserve_color && (!geom.text_verts.is_empty() || !geom.points.is_empty()) {
                 tessellate::explicit_mtext_background(sub)
@@ -2056,7 +2060,18 @@ fn tessellate_sub_local(
             lt_l0,
             lw_l0,
             aabb_local,
-            local_rank: depth_map.get(&h.value()).map_or(0.0, |d| d[0]),
+            // A wipeout's frame sits half a rank above its own mask, as at
+            // the top level (convert/tess.rs). At the mask's rank the later
+            // mask pass ties the depth test and erases part of the
+            // anti-aliased frame, and the frame's fringe then hides a
+            // coincident outline drawn after it in a bead pattern.
+            local_rank: depth_map.get(&h.value()).map_or(0.0, |d| {
+                if matches!(sub, EntityType::Wipeout(_)) {
+                    d[0] + 0.5 * d[1]
+                } else {
+                    d[0]
+                }
+            }),
             follows_previous_stroke: false,
         });
     }
@@ -2776,6 +2791,30 @@ pub(crate) fn fade_toward_bg(color: [f32; 4], bg: [f32; 4]) -> [f32; 4] {
         color[0] * (1.0 - T) + bg[0] * T,
         color[1] * (1.0 - T) + bg[1] * T,
         color[2] * (1.0 - T) + bg[2] * T,
+        color[3],
+    ]
+}
+
+/// LAYLOCKFADECTL: how far objects on a locked layer fade toward the
+/// background, in percent (-90..=90, default 50); zero or negative shows them
+/// unfaded and keeps the amount for when it is turned on again.
+static LAYER_LOCK_FADE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(50);
+
+pub fn layer_lock_fade_ctl() -> i32 {
+    LAYER_LOCK_FADE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_layer_lock_fade_ctl(value: i32) {
+    LAYER_LOCK_FADE.store(value.clamp(-90, 90), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// A colour of an object on a locked layer, faded by LAYLOCKFADECTL.
+pub(crate) fn layer_lock_fade(color: [f32; 4], bg: [f32; 4]) -> [f32; 4] {
+    let t = layer_lock_fade_ctl().clamp(0, 90) as f32 / 100.0;
+    [
+        color[0] * (1.0 - t) + bg[0] * t,
+        color[1] * (1.0 - t) + bg[1] * t,
+        color[2] * (1.0 - t) + bg[2] * t,
         color[3],
     ]
 }
@@ -5423,7 +5462,7 @@ mod compact_nested_tests {
     }
 
     #[test]
-    fn test_transform_tangent_ellipse_arc_negative_scale_and_rotation() {
+    fn transform_tangent_ellipse_arc_negative_scale_and_rotation() {
         let ellipse_geom = TangentGeom::PlanarEllipse {
             center: [10.0, 20.0, 0.0],
             major_axis: [100.0, 0.0, 0.0],

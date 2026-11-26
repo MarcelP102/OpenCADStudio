@@ -144,6 +144,7 @@ impl OpenCADStudio {
         self.angle_override = None;
         self.dyn_user_reshaped = false;
         self.dyn_coord_absolute = self.dyn_pointer_absolute;
+        self.dyn_coord_wcs = false;
         self.grip_hover = None;
         self.grip_popup = None;
         self.grip_pending = None;
@@ -301,6 +302,8 @@ impl OpenCADStudio {
         if !had_grip {
             return false;
         }
+        // A typed `<angle` does not outlive the grip it was typed at.
+        self.angle_override = None;
 
         // An Add-Leader arrow being placed is still provisional.
         if let Some((handle, grip_id)) = self.grip_add_provisional.take() {
@@ -1018,6 +1021,7 @@ impl OpenCADStudio {
             self.last_point = Some(*point);
             self.dyn_user_reshaped = false;
             self.dyn_coord_absolute = self.dyn_pointer_absolute;
+            self.dyn_coord_wcs = false;
             self.sync_dyn_fields();
             self.reset_tracking_after_point();
             self.push_ucs_to_cmd(i);
@@ -1061,8 +1065,10 @@ impl OpenCADStudio {
                 .is_some_and(|command| command.inject_before_entity_pick())
             {
                 if let Some(entity) = self.tabs[i].scene.document.get_entity(*handle).cloned() {
-                    if let Some(command) = self.tabs[i].active_cmd.as_mut() {
+                    let tab = &mut self.tabs[i];
+                    if let Some(command) = tab.active_cmd.as_mut() {
                         command.inject_picked_entity(entity);
+                        command.inject_picked_from(&tab.scene.document);
                     }
                 }
             }
@@ -1276,7 +1282,15 @@ impl OpenCADStudio {
         if !self.suppress_plugin_dispatch && crate::plugin::try_dispatch(self, i, cmd) {
             self.tabs[i].last_cmd = Some(cmd.to_string());
             self.command_line.record_recent(cmd);
-            if cmd.trim().starts_with('(') {
+            // The plugin read the whole line, so its words were that command's
+            // arguments. A prompt the command opened is waiting for the user:
+            // feeding it those words and the line's Enter would answer or
+            // cancel it before it is shown.
+            let plugin_prompt_open = self.tabs[i]
+                .active_cmd
+                .as_ref()
+                .is_some_and(|command| command.name() == "PLUGIN");
+            if cmd.trim().starts_with('(') || plugin_prompt_open {
                 return self.finish_dispatch(cmd);
             }
             let toks: Vec<String> = tokens.iter().map(|s| s.to_string()).collect();
@@ -1945,12 +1959,9 @@ impl OpenCADStudio {
     /// starts with `@`, through the active UCS otherwise.
     fn typed_wcs(&self, i: usize, token: &str) -> Option<glam::DVec3> {
         let (coord, kind) = crate::app::helpers::parse_coord(token)?;
-        let ucs = &self.tabs[i].active_ucs;
+        let ucs = &self.tabs[i].active_ucs.clone().filter(|_| !kind.is_world());
         Some(
-            match (
-                matches!(kind, crate::app::helpers::CoordKind::Relative),
-                self.last_point,
-            ) {
+            match (kind.is_relative(), self.last_point) {
                 (true, Some(base)) => {
                     base + match ucs {
                         Some(value) => crate::app::helpers::ucs_rotate_vec(coord, value),
@@ -2032,11 +2043,12 @@ impl OpenCADStudio {
 
     pub(in crate::app) fn typed_object_pick(&mut self, token: &str) -> Option<Task<Message>> {
         let i = self.active_tab;
-        let (gathering, picks_entity, key) = self.tabs[i].active_cmd.as_ref().map(|command| {
+        let (gathering, picks_entity, key, keep) = self.tabs[i].active_cmd.as_ref().map(|command| {
             (
                 command.is_selection_gathering(),
                 command.needs_entity_pick() && command.typed_point_picks_entity(),
                 &**command as *const dyn crate::command::CadCommand as *const () as usize,
+                command.selection_entity_filter(),
             )
         })?;
         if let Some((pending, first)) = self.typed_window_corner.take() {
@@ -2096,9 +2108,17 @@ impl OpenCADStudio {
             .owner_handle(&self.tabs[i].scene.document);
         // A typed point off the screen finds nothing, as a click there could
         // not: the object prompt then reads it as empty space.
+        // It finds what a click there would: an object within the pick box
+        // (measured: a point 6 pixels off a line picks it, 7.5 does not, at
+        // PICKBOX 5).
+        let (_, pixels) = self.tabs[i].scene.selection.borrow().view.vp_size;
+        let tolerance = (pixels > 0.0).then(|| {
+            let per_px = self.tabs[i].scene.camera.borrow().ortho_size() as f64 * 2.0 / f64::from(pixels);
+            f64::from(crate::ui::overlay::pick_box_aperture_px(self.pick_box)) * per_px
+        });
         let found = self
             .typed_point_in_view(i, wcs)
-            .then(|| entity_at_typed_point(&self.tabs[i].scene.document, owner, wcs))
+            .then(|| entity_at_typed_point(&self.tabs[i].scene.document, owner, wcs, keep, tolerance))
             .flatten();
         if gathering {
             self.last_point = Some(wcs);
@@ -2249,6 +2269,16 @@ impl OpenCADStudio {
             self.start_mtp_modifier(i);
             return Task::none();
         }
+        if crate::command::is_tracking_token(token) && self.point_modifier_step(i) {
+            self.start_tracking_modifier(i);
+            return Task::none();
+        }
+        if let Some(filter) =
+            crate::command::PointFilter::parse(token).filter(|_| self.point_modifier_step(i))
+        {
+            self.start_point_filter_modifier(i, filter);
+            return Task::none();
+        }
         if let Some(kind) = self.typed_snap_override(i, token) {
             self.apply_snap_override(kind);
             return Task::none();
@@ -2260,11 +2290,8 @@ impl OpenCADStudio {
             // Match the GUI command line: typed coordinates are in the active
             // UCS (relative offsets are rotated by the UCS axes), so a multi-
             // token `LINE 0,0 10,10` under a rotated UCS lands correctly.
-            let ucs = self.tabs[i].active_ucs.clone();
-            let wcs = match (
-                matches!(kind, crate::app::helpers::CoordKind::Relative),
-                self.relative_input_base(i),
-            ) {
+            let ucs = self.tabs[i].active_ucs.clone().filter(|_| !kind.is_world());
+            let wcs = match (kind.is_relative(), self.relative_input_base(i)) {
                 (true, Some(base)) => {
                     base + match &ucs {
                         Some(u) => crate::app::helpers::ucs_rotate_vec(coord, u),
