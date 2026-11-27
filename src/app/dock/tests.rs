@@ -659,10 +659,9 @@ fn floating_title_bar_without_docking_flips_at_the_screen_edge() {
     use crate::app::config::DockSide;
     use crate::ui::dock::{FloatPanel, PanelId};
     let mut app = dock_app();
-    app.dock.float(FloatPanel {
-        docking: false,
-        ..FloatPanel::new(PanelId::Count, 600.0, 100.0, 280.0, 300.0)
-    });
+    app.dock.set_docking(PanelId::Count, false);
+    app.dock
+        .float(FloatPanel::new(PanelId::Count, 600.0, 100.0, 280.0, 300.0));
     app.count_palette.show = true;
     // Against the docked Properties column it does not flip...
     drag_panel(
@@ -1292,17 +1291,20 @@ fn floating_menu_docks_and_allow_docking_keeps_a_drag_floating() {
     let _ = app.on_dock(DockMsg::FloatMenu(Some(PanelId::BlockPalette)));
     let _ = app.on_dock(DockMsg::FloatDockingToggle(PanelId::BlockPalette));
     assert_eq!(app.dock_float_menu, None);
-    assert!(!app.dock.float_rect(PanelId::BlockPalette).unwrap().docking);
+    assert!(!app.dock.docking(PanelId::BlockPalette));
     let _ = app.on_dock(DockMsg::DockGrab(PanelId::BlockPalette));
     let _ = app.on_dock(DockMsg::DragMove(iced::Point::new(500.0, 300.0)));
     let _ = app.on_dock(DockMsg::DragMove(iced::Point::new(10.0, 60.0)));
     assert!(matches!(drag_target(&app), Some(DropTarget::Float { .. })));
     let _ = app.on_dock(DockMsg::DragRelease);
-    let f = app
-        .dock
-        .float_rect(PanelId::BlockPalette)
-        .expect("still floating");
-    assert!(!f.docking, "moving it keeps the choice");
+    assert!(
+        app.dock.float_rect(PanelId::BlockPalette).is_some(),
+        "still floating"
+    );
+    assert!(
+        !app.dock.docking(PanelId::BlockPalette),
+        "moving it keeps the choice"
+    );
     // The menu's Dock left still docks it.
     let _ = app.on_dock(DockMsg::FloatMenu(Some(PanelId::BlockPalette)));
     let _ = app.on_dock(DockMsg::DockTo(PanelId::BlockPalette, DockSide::Left));
@@ -3272,4 +3274,453 @@ fn a_click_on_the_shown_icon_folds_the_edge_in_the_real_view() {
         assert!(app.dock_drag.is_none());
         assert!(!app.dock.folded(DockSide::Left));
     });
+}
+
+// ── A pallet in a window of its own (desktop) ───────────────────────────────
+
+/// A pallet's window: where it stands on the screen and how big it is.
+#[cfg(not(target_arch = "wasm32"))]
+const PALLET_WINDOW_AT: iced::Point = iced::Point::new(2000.0, 100.0);
+#[cfg(not(target_arch = "wasm32"))]
+const PALLET_WINDOW_SCALE: f32 = 1.5;
+/// The dock workspace starts this far down the main window (the ribbon).
+#[cfg(not(target_arch = "wasm32"))]
+const WORKSPACE_TOP: f32 = 120.0;
+
+/// A dock app whose main window stands at the screen's origin, with Quick
+/// Calc in a window of its own on a second screen to the right (physical
+/// `PALLET_WINDOW_AT`, scale 1.5).
+#[cfg(not(target_arch = "wasm32"))]
+fn app_with_pallet_window() -> (OpenCADStudio, iced::window::Id) {
+    use crate::ui::dock::{DockMsg, PanelId};
+    let mut app = dock_app();
+    app.main_window = Some(iced::window::Id::unique());
+    app.main_window_at = Some(iced::Point::ORIGIN);
+    app.dock_workspace_origin = Some(iced::Point::new(0.0, WORKSPACE_TOP));
+    let _ = app.dock_set_open(PanelId::QuickCalc, true);
+    let _ = app.update_root(Message::Dock(DockMsg::Detach(PanelId::QuickCalc)));
+    let window = app
+        .os_windows
+        .iter_mut()
+        .find(|w| w.content == crate::app::tool_windows::Detached::Panel(PanelId::QuickCalc))
+        .expect("its own window");
+    window.placement.x = PALLET_WINDOW_AT.x;
+    window.placement.y = PALLET_WINDOW_AT.y;
+    window.scale = PALLET_WINDOW_SCALE;
+    window.placing = false;
+    let id = window.id;
+    (app, id)
+}
+
+/// The point in pallet window `window` (its own logical space) over the
+/// main window's workspace point `p`.
+#[cfg(not(target_arch = "wasm32"))]
+fn over_workspace(p: iced::Point) -> iced::Point {
+    let main = crate::ui::icons::scale_factor();
+    iced::Point::new(
+        (p.x * main - PALLET_WINDOW_AT.x) / PALLET_WINDOW_SCALE,
+        ((p.y + WORKSPACE_TOP) * main - PALLET_WINDOW_AT.y) / PALLET_WINDOW_SCALE,
+    )
+}
+
+/// Press pallet window `window`'s title bar and drag it to `to` (in its own
+/// space). Returns where it would land just before release.
+#[cfg(not(target_arch = "wasm32"))]
+fn drag_window_to(
+    app: &mut OpenCADStudio,
+    window: iced::window::Id,
+    to: iced::Point,
+) -> Option<crate::ui::dock::DropTarget> {
+    use crate::ui::dock::DockMsg;
+    let _ = app.update_root(Message::Dock(DockMsg::WindowBarPress(window)));
+    let _ = app.update_root(Message::Dock(DockMsg::WindowPointer(
+        window,
+        iced::Point::new(12.0, 60.0),
+    )));
+    let _ = app.update_root(Message::Dock(DockMsg::WindowPointer(window, to)));
+    drag_target(app)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn release_window(app: &mut OpenCADStudio, window: iced::window::Id) -> Task {
+    use crate::ui::dock::DockMsg;
+    app.update_root(Message::Dock(DockMsg::WindowRelease(window)))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+type Task = iced::Task<Message>;
+
+/// The windows `task` gives the focus to.
+#[cfg(not(target_arch = "wasm32"))]
+fn focus_targets(task: Task) -> Vec<iced::window::Id> {
+    use iced::futures::{FutureExt, StreamExt};
+    use iced_runtime::{window::Action as Window, Action};
+    let Some(mut stream) = iced_runtime::task::into_stream(task) else {
+        return Vec::new();
+    };
+    let mut targets = Vec::new();
+    while let Some(Some(action)) = stream.next().now_or_never() {
+        if let Action::Window(Window::GainFocus(id)) = action {
+            targets.push(id);
+        }
+    }
+    targets
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn has_window(app: &OpenCADStudio, window: iced::window::Id) -> bool {
+    app.os_windows.iter().any(|w| w.id == window)
+}
+
+/// The pointer is seen by the pallet's window, on another screen at another
+/// scale; over the main window's left icon strip it shows the dock
+/// preview, and a release docks the pallet there, closes its window and
+/// gives the main window the focus.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_pallet_window_dragged_onto_the_strip_docks_there() {
+    use crate::app::config::DockSide;
+    use crate::ui::dock::{DropTarget, PanelId};
+    if !crate::app::tool_windows::can_drag_dock() {
+        return;
+    }
+    let (mut app, window) = app_with_pallet_window();
+    let target = drag_window_to(
+        &mut app,
+        window,
+        over_workspace(iced::Point::new(10.0, 400.0)),
+    );
+    assert!(
+        matches!(
+            target,
+            Some(
+                DropTarget::Edge {
+                    side: DockSide::Left,
+                    ..
+                } | DropTarget::Join {
+                    side: DockSide::Left,
+                    ..
+                }
+            )
+        ),
+        "{target:?}"
+    );
+    let focus = release_window(&mut app, window);
+    assert_eq!(focus_targets(focus), vec![app.main_window.unwrap()]);
+    assert!(!app.dock.is_separate(PanelId::QuickCalc));
+    assert_eq!(
+        app.dock.location(PanelId::QuickCalc).map(|(s, _)| s),
+        Some(DockSide::Left)
+    );
+    assert!(!has_window(&app, window), "its window closed");
+    assert!(app.dock_drag.is_none());
+}
+
+/// Over a docked group's pallets the "join" preview shows, and the pallet
+/// stacks into that group.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_pallet_window_dropped_on_a_group_joins_it() {
+    use crate::app::config::DockSide;
+    use crate::ui::dock::{DropTarget, PanelId};
+    if !crate::app::tool_windows::can_drag_dock() {
+        return;
+    }
+    let (mut app, window) = app_with_pallet_window();
+    let x = 1600.0 - crate::ui::dock::DOCK_STRIP_W - 80.0;
+    let target = drag_window_to(&mut app, window, over_workspace(iced::Point::new(x, 200.0)));
+    assert!(
+        matches!(
+            target,
+            Some(DropTarget::Join {
+                side: DockSide::Right,
+                ..
+            })
+        ),
+        "{target:?}"
+    );
+    let _ = release_window(&mut app, window);
+    assert_eq!(
+        app.dock.location(PanelId::QuickCalc),
+        app.dock.location(PanelId::BlockPalette)
+    );
+    assert!(!has_window(&app, window));
+}
+
+/// Over the drawing, away from the docks, it floats in the main window
+/// where it was dropped, at its window's size less the title bar.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_pallet_window_dropped_on_the_drawing_floats_there() {
+    use crate::ui::dock::{DropTarget, PanelId};
+    if !crate::app::tool_windows::can_drag_dock() {
+        return;
+    }
+    let (mut app, window) = app_with_pallet_window();
+    let placement = app
+        .os_windows
+        .iter()
+        .find(|w| w.id == window)
+        .unwrap()
+        .placement;
+    let target = drag_window_to(
+        &mut app,
+        window,
+        over_workspace(iced::Point::new(800.0, 400.0)),
+    );
+    let Some(DropTarget::Float { x, y, .. }) = target else {
+        panic!("floats: {target:?}");
+    };
+    // Held where its bar was pressed.
+    assert!(
+        (x - (800.0 - 12.0)).abs() < 0.5 && (y - (400.0 - 60.0)).abs() < 0.5,
+        "{x}, {y}"
+    );
+    let _ = release_window(&mut app, window);
+    let f = app.dock.float_rect(PanelId::QuickCalc).expect("floats");
+    assert_eq!((f.x, f.y), (x, y));
+    assert_eq!(f.w, placement.w - crate::ui::dock::DOCK_FLOAT_BAR_W);
+    assert!(!app.dock.is_separate(PanelId::QuickCalc) && !has_window(&app, window));
+}
+
+/// Outside the main window, or over its ribbon, it stays a window of its
+/// own; a press without moving moves nothing.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_pallet_window_dropped_elsewhere_stays_a_window() {
+    use crate::ui::dock::{DockMsg, PanelId};
+    if !crate::app::tool_windows::can_drag_dock() {
+        return;
+    }
+    let (mut app, window) = app_with_pallet_window();
+    for to in [
+        iced::Point::new(200.0, 300.0),
+        over_workspace(iced::Point::new(800.0, -60.0)),
+    ] {
+        assert_eq!(drag_window_to(&mut app, window, to), None);
+        let focus = release_window(&mut app, window);
+        assert!(focus_targets(focus).is_empty());
+        assert!(app.dock.is_separate(PanelId::QuickCalc) && has_window(&app, window));
+    }
+    // A click on the bar.
+    let _ = app.update_root(Message::Dock(DockMsg::WindowBarPress(window)));
+    let _ = app.update_root(Message::Dock(DockMsg::WindowPointer(
+        window,
+        iced::Point::new(12.0, 60.0),
+    )));
+    let _ = release_window(&mut app, window);
+    assert!(app.dock.is_separate(PanelId::QuickCalc) && app.dock_drag.is_none());
+}
+
+/// With Allow docking off (its window's menu), the drag never docks: over
+/// the strip it would only float.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_pallet_window_without_docking_only_floats() {
+    use crate::ui::dock::{DockMsg, DropTarget, PanelId};
+    if !crate::app::tool_windows::can_drag_dock() {
+        return;
+    }
+    let (mut app, window) = app_with_pallet_window();
+    let _ = app.update_root(Message::Dock(DockMsg::WindowMenu(Some(window))));
+    assert_eq!(app.dock_window_menu, Some(window));
+    let _ = app.update_root(Message::Dock(DockMsg::FloatDockingToggle(
+        PanelId::QuickCalc,
+    )));
+    assert_eq!(app.dock_window_menu, None);
+    assert!(!app.dock.docking(PanelId::QuickCalc));
+    let target = drag_window_to(
+        &mut app,
+        window,
+        over_workspace(iced::Point::new(10.0, 400.0)),
+    );
+    assert!(
+        matches!(target, Some(DropTarget::Float { .. })),
+        "{target:?}"
+    );
+    let _ = release_window(&mut app, window);
+    assert!(app.dock.float_rect(PanelId::QuickCalc).is_some());
+}
+
+/// Esc during the drag puts the window back where the drag began.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn esc_puts_a_dragged_pallet_window_back() {
+    use crate::ui::dock::PanelId;
+    if !crate::app::tool_windows::can_drag_dock() {
+        return;
+    }
+    let (mut app, window) = app_with_pallet_window();
+    let _ = drag_window_to(
+        &mut app,
+        window,
+        over_workspace(iced::Point::new(10.0, 400.0)),
+    );
+    let _ = app.update_root(Message::OsWindowKey(window, "ESCAPE".into()));
+    assert!(app.dock_drag.is_none());
+    let _ = release_window(&mut app, window);
+    assert!(app.dock.is_separate(PanelId::QuickCalc) && has_window(&app, window));
+}
+
+/// Where the window manager moves the window (native Wayland, macOS), the
+/// first motion hands the press over to it and nothing docks.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_system_moved_pallet_window_hands_the_drag_over() {
+    use crate::ui::dock::{DockDrag, DockMsg, PanelId};
+    let (mut app, window) = app_with_pallet_window();
+    app.dock_drag = Some(DockDrag::moving_window(
+        PanelId::QuickCalc,
+        window,
+        PALLET_WINDOW_AT,
+        true,
+    ));
+    let task = app.update_root(Message::Dock(DockMsg::WindowPointer(
+        window,
+        iced::Point::new(12.0, 60.0),
+    )));
+    assert!(app.dock_drag.is_none());
+    let actions = {
+        use iced::futures::{FutureExt, StreamExt};
+        let mut stream = iced_runtime::task::into_stream(task).expect("a task");
+        let mut drags = 0;
+        while let Some(Some(action)) = stream.next().now_or_never() {
+            if let iced_runtime::Action::Window(iced_runtime::window::Action::Drag(id)) = action {
+                assert_eq!(id, window);
+                drags += 1;
+            }
+        }
+        drags
+    };
+    assert_eq!(actions, 1, "the window manager moves it");
+}
+
+/// Double-click on its title bar, or the menu's Float in main window,
+/// floats it in the main window; Dock left docks it. Either way the window
+/// closes.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_pallet_windows_bar_floats_or_docks_it() {
+    use crate::app::config::DockSide;
+    use crate::ui::dock::{DockMsg, PanelId};
+    let (mut app, window) = app_with_pallet_window();
+    let _ = app.update_root(Message::Dock(DockMsg::WindowBarPress(window)));
+    let _ = app.update_root(Message::Dock(DockMsg::WindowBarDoubleClick(window)));
+    assert!(app.dock_drag.is_none());
+    assert!(app.dock.float_rect(PanelId::QuickCalc).is_some());
+    assert!(!has_window(&app, window));
+
+    let (mut app, window) = app_with_pallet_window();
+    let _ = app.update_root(Message::Dock(DockMsg::WindowMenu(Some(window))));
+    let focus = app.update_root(Message::Dock(DockMsg::DockTo(
+        PanelId::QuickCalc,
+        DockSide::Left,
+    )));
+    assert_eq!(focus_targets(focus), vec![app.main_window.unwrap()]);
+    assert_eq!(
+        app.dock.location(PanelId::QuickCalc).map(|(s, _)| s),
+        Some(DockSide::Left)
+    );
+    assert!(!app.dock.is_separate(PanelId::QuickCalc) && !has_window(&app, window));
+    assert_eq!(app.dock_window_menu, None);
+}
+
+/// With its pin off, a pallet's window folds down to its title bar once the
+/// pointer has been away for the hover delay, keeps its full size for the
+/// next time it opens, and opens again once the pointer is back.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn an_auto_hiding_pallet_window_folds_to_its_title_bar() {
+    use crate::ui::dock::{DockMsg, PanelId};
+    let (mut app, window) = app_with_pallet_window();
+    let full = app
+        .os_windows
+        .iter()
+        .find(|w| w.id == window)
+        .unwrap()
+        .placement;
+    let folded = |app: &OpenCADStudio| {
+        app.os_windows
+            .iter()
+            .find(|w| w.id == window)
+            .unwrap()
+            .folded
+    };
+    // Pinned: leaving changes nothing.
+    let _ = app.update_root(Message::Dock(DockMsg::WindowHover(window, false)));
+    let gen = app.dock_window_fold_gen;
+    let _ = app.update_root(Message::Dock(DockMsg::WindowFoldSettled(window, true, gen)));
+    assert!(!folded(&app));
+    // Pin off.
+    let _ = app.update_root(Message::Dock(DockMsg::AutoCollapseToggle(
+        PanelId::QuickCalc,
+    )));
+    assert!(app.dock.auto_collapse(PanelId::QuickCalc));
+    let _ = app.update_root(Message::Dock(DockMsg::WindowHover(window, false)));
+    let gen = app.dock_window_fold_gen;
+    // Back before the delay ran out: it stays open.
+    let _ = app.update_root(Message::Dock(DockMsg::WindowHover(window, true)));
+    let _ = app.update_root(Message::Dock(DockMsg::WindowFoldSettled(window, true, gen)));
+    assert!(!folded(&app));
+    let _ = app.update_root(Message::Dock(DockMsg::WindowHover(window, false)));
+    let gen = app.dock_window_fold_gen;
+    let _ = app.update_root(Message::Dock(DockMsg::WindowFoldSettled(window, true, gen)));
+    assert!(folded(&app));
+    // The system reports the folded size: the window keeps its own.
+    let _ = app.update_root(Message::OsWindowResized(
+        window,
+        crate::ui::dock::DOCK_FLOAT_BAR_W,
+        full.h,
+    ));
+    assert_eq!(
+        app.dock
+            .detached
+            .get(&PanelId::QuickCalc)
+            .map(|p| (p.w, p.h)),
+        Some((full.w, full.h))
+    );
+    // Its title bar alone draws.
+    std::hint::black_box(app.os_window_view(window));
+    let _ = app.update_root(Message::Dock(DockMsg::WindowHover(window, true)));
+    let gen = app.dock_window_fold_gen;
+    let _ = app.update_root(Message::Dock(DockMsg::WindowFoldSettled(
+        window, false, gen,
+    )));
+    assert!(!folded(&app));
+    // Folded again, the pin on opens it at once.
+    let _ = app.update_root(Message::Dock(DockMsg::WindowHover(window, false)));
+    let gen = app.dock_window_fold_gen;
+    let _ = app.update_root(Message::Dock(DockMsg::WindowFoldSettled(window, true, gen)));
+    assert!(folded(&app));
+    let _ = app.update_root(Message::Dock(DockMsg::AutoCollapseToggle(
+        PanelId::QuickCalc,
+    )));
+    assert!(!folded(&app));
+}
+
+/// The pallet's window draws its title bar, with its menu when open.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_pallet_window_draws_its_title_bar_and_menu() {
+    use crate::ui::dock::DockMsg;
+    let (mut app, window) = app_with_pallet_window();
+    let view = app.os_window_view(window).expect("its view");
+    let mut ui =
+        iced_test::simulator::Simulator::with_size(iced::Settings::default(), (360.0, 500.0), view);
+    assert!(ui
+        .find(iced::widget::Id::new(
+            crate::app::dock::PALLET_WINDOW_BAR_ID
+        ))
+        .is_ok());
+    drop(ui);
+    let _ = app.update_root(Message::Dock(DockMsg::WindowMenu(Some(window))));
+    let view = app.os_window_view(window).expect("its view");
+    let mut ui =
+        iced_test::simulator::Simulator::with_size(iced::Settings::default(), (360.0, 500.0), view);
+    ui.click(crate::t!("Float in main window").into_owned())
+        .expect("the menu's entry");
+    let sent: Vec<Message> = ui.into_messages().collect();
+    assert!(sent
+        .iter()
+        .any(|m| matches!(m, Message::OsWindowReturn(w) if *w == window)));
 }

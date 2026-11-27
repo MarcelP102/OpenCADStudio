@@ -7513,6 +7513,7 @@ dock =
     .auto-hide = Automatisch verbergen
     .dock-left = Links koppelen
     .dock-right = Rechts koppelen
+    .float-in-main = Zwevend in hoofdvenster
     .new-group = Nieuwe groep
     .browser = Browser
     .node-graph = Knooppuntgrafiek

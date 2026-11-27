@@ -134,9 +134,20 @@ impl OpenCADStudio {
                 self.dock_drag = None;
                 self.dock_float_menu = None;
                 self.dock_clear_hover();
+                // From a pallet window's menu: the window closes as the
+                // update settles, and the main window gets the focus.
+                let separate = self.dock.detached.remove(&id).is_some();
                 if self.dock.dock(id, side, usize::MAX) {
                     self.save_config();
                 }
+                #[cfg(not(target_arch = "wasm32"))]
+                if separate {
+                    self.dock_window_menu = None;
+                    self.dock_reveal(id);
+                    return self.focus_main_window();
+                }
+                #[cfg(target_arch = "wasm32")]
+                let _ = separate;
             }
             DockMsg::FloatMenu(id) => {
                 self.dock_float_menu = id;
@@ -154,9 +165,12 @@ impl OpenCADStudio {
             DockMsg::Detach(_) => {}
             DockMsg::FloatDockingToggle(id) => {
                 self.dock_float_menu = None;
-                if self.dock.toggle_float_docking(id) {
-                    self.save_config();
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.dock_window_menu = None;
                 }
+                self.dock.toggle_docking(id);
+                self.save_config();
             }
             DockMsg::EdgeMenu(side) => {
                 self.dock_edge_menu = side;
@@ -195,10 +209,16 @@ impl OpenCADStudio {
             }
             DockMsg::AutoCollapseToggle(id) => {
                 // Docked: auto-hide for the whole edge; floating: this pallet.
-                if self.dock.toggle_auto_hide(id) {
+                let on = self.dock.toggle_auto_hide(id);
+                if on {
                     self.dock_peek = None;
                 }
                 self.save_config();
+                // A pallet window folded to its title bar opens again.
+                #[cfg(not(target_arch = "wasm32"))]
+                if !on {
+                    return self.unfold_pallet_windows(id);
+                }
             }
             DockMsg::Close(id) => return self.dock_set_open(id, false),
             DockMsg::Hover(_)
@@ -206,6 +226,8 @@ impl OpenCADStudio {
             | DockMsg::HoverExit
             | DockMsg::HoverStay
             | DockMsg::HoverSettled(_) => return self.dock_hover(m),
+            // A pallet window's drag has its own pointer feed.
+            DockMsg::DragMove(_) if self.dock_drag.is_some_and(|d| d.own_window().is_some()) => {}
             DockMsg::DragMove(point) => {
                 self.dock_drag_over(None);
                 self.dock_drag_move(point);
@@ -214,7 +236,34 @@ impl OpenCADStudio {
                 self.dock_drag_over(Some(window));
                 self.dock_drag_move(point);
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            DockMsg::DragRelease if self.dock_drag.is_some_and(|d| d.own_window().is_some()) => {
+                let window = self.dock_drag.and_then(|d| d.own_window()).expect("checked");
+                return self.dock_window_drag_release(window);
+            }
             DockMsg::DragRelease => self.dock_drag_release(),
+            #[cfg(not(target_arch = "wasm32"))]
+            m @ (DockMsg::WindowBarPress(_)
+            | DockMsg::WindowBarDoubleClick(_)
+            | DockMsg::WindowMenu(_)
+            | DockMsg::WindowResize(..)
+            | DockMsg::WindowPointer(..)
+            | DockMsg::WindowRelease(_)
+            | DockMsg::WindowAt(..)
+            | DockMsg::WorkspaceOrigin(_)
+            | DockMsg::WindowHover(..)
+            | DockMsg::WindowFoldSettled(..)) => return self.on_pallet_window(m),
+            #[cfg(target_arch = "wasm32")]
+            DockMsg::WindowBarPress(_)
+            | DockMsg::WindowBarDoubleClick(_)
+            | DockMsg::WindowMenu(_)
+            | DockMsg::WindowResize(..)
+            | DockMsg::WindowPointer(..)
+            | DockMsg::WindowRelease(_)
+            | DockMsg::WindowAt(..)
+            | DockMsg::WorkspaceOrigin(_)
+            | DockMsg::WindowHover(..)
+            | DockMsg::WindowFoldSettled(..) => {}
         }
         iced::Task::none()
     }
@@ -345,10 +394,7 @@ impl OpenCADStudio {
                     }
                     DropTarget::Float { x, y, bar } => {
                         let (w, h) = self.dock_float_size(panel);
-                        // A floating panel keeps its docking choice.
-                        let docking = self.dock.float_rect(panel).is_none_or(|f| f.docking);
                         self.dock.float(FloatPanel {
-                            docking,
                             bar,
                             ..FloatPanel::new(panel, x, y, w, h)
                         })
@@ -397,6 +443,7 @@ impl OpenCADStudio {
                 target,
                 grab,
                 bar,
+                source,
             } => {
                 let origin = origin.unwrap_or(point);
                 let moved = (point.x - origin.x).hypot(point.y - origin.y);
@@ -423,9 +470,10 @@ impl OpenCADStudio {
                 };
                 let target = if started {
                     // A floating panel that may not dock only floats.
-                    let found = match self.dock.float_rect(panel) {
-                        Some(f) if !f.docking => self.dock_float_target(panel, point, grab, bar),
-                        _ => self.dock_drop_target(panel, point, grab, bar),
+                    let found = if self.dock.docking(panel) {
+                        self.dock_drop_target(panel, point, grab, bar)
+                    } else {
+                        self.dock_float_target(panel, point, grab, bar)
                     };
                     // A whole group only moves between group positions: it
                     // cannot join another group or float.
@@ -453,6 +501,7 @@ impl OpenCADStudio {
                     target,
                     grab,
                     bar,
+                    source,
                 });
             }
             DockDrag::Split {
@@ -574,7 +623,7 @@ impl OpenCADStudio {
     /// Whether a popup a pallet opened is showing: a colour dropdown in the
     /// Layer Manager or Properties, one of the Properties lists, or the
     /// Select Color window.
-    fn dock_popup_open(&self) -> bool {
+    pub(super) fn dock_popup_open(&self) -> bool {
         let tab = &self.tabs[self.active_tab];
         tab.layers.color_picker_row.is_some()
             || tab.properties.color_picker_open
@@ -1303,7 +1352,7 @@ impl OpenCADStudio {
         let y = (p.y - grab.y).clamp(0.0, (wh - 30.0).max(0.0));
         let (w, _) = self.dock_float_size(panel);
         let right = x + w + crate::ui::dock::DOCK_FLOAT_BAR_W;
-        let docking = self.dock.float_rect(panel).is_none_or(|f| f.docking);
+        let docking = self.dock.docking(panel);
         // How far in from the workspace edge `side` the frame has to come to
         // touch it: the docked pallets there, else the edge itself.
         let reach = |side: DockSide| -> f32 {

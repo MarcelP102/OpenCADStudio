@@ -7498,6 +7498,7 @@ dock =
     .auto-hide = 自动隐藏
     .dock-left = 停靠到左侧
     .dock-right = 停靠到右侧
+    .float-in-main = 在主窗口中浮动
     .new-group = 新建组
     .browser = 浏览器
     .node-graph = 节点图

@@ -7503,6 +7503,7 @@ dock =
     .auto-hide = 自動的に隠す
     .dock-left = 左にドッキング
     .dock-right = 右にドッキング
+    .float-in-main = メイン ウィンドウでフローティング
     .new-group = 新しいグループ
     .browser = ブラウザー
     .node-graph = ノードグラフ

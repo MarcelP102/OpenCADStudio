@@ -8073,6 +8073,7 @@ pub(super) fn message_attribute(source: &str) -> Option<(&'static str, &'static 
         "Allow docking" => Some(("dock", "allow-docking")),
         "Dock left" => Some(("dock", "dock-left")),
         "Dock right" => Some(("dock", "dock-right")),
+        "Float in main window" => Some(("dock", "float-in-main")),
         "New group" => Some(("dock", "new-group")),
         "Browser" => Some(("dock", "browser")),
         "Node Graph" => Some(("dock", "node-graph")),

@@ -7527,6 +7527,7 @@ dock =
     .auto-hide = إخفاء تلقائي
     .dock-left = إرساء إلى اليسار
     .dock-right = إرساء إلى اليمين
+    .float-in-main = عائم في النافذة الرئيسية
     .new-group = مجموعة جديدة
     .browser = المستعرض
     .node-graph = مخطط العقد

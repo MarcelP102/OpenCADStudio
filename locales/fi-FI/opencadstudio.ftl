@@ -7512,6 +7512,7 @@ dock =
     .auto-hide = Piilota automaattisesti
     .dock-left = Telakoi vasemmalle
     .dock-right = Telakoi oikealle
+    .float-in-main = Kelluta pääikkunassa
     .new-group = Uusi ryhmä
     .browser = Selain
     .node-graph = Solmukaavio

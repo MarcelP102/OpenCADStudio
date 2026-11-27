@@ -413,13 +413,25 @@ pub fn controls<'a>(maximized: bool, pressed: bool) -> Element<'a, Message> {
 /// Without `enabled` (a maximized window) the edges are left out, but the
 /// widget tree keeps its shape, so no widget below loses its state.
 pub fn with_resize_edges<'a>(content: Element<'a, Message>, enabled: bool) -> Element<'a, Message> {
+    with_resize_edges_by(content, enabled, |dir| {
+        Message::TitleBar(TitleBarMsg::Resize(dir))
+    })
+}
+
+/// [`with_resize_edges`] for any frameless window: a press on an edge sends
+/// `resize(direction)` (a pallet's window of its own sends its own message).
+pub fn with_resize_edges_by<'a>(
+    content: Element<'a, Message>,
+    enabled: bool,
+    resize: impl Fn(Direction) -> Message,
+) -> Element<'a, Message> {
     if !enabled {
         return stack![content, Space::new().width(0).height(0)].into();
     }
     let e = metrics::RESIZE_EDGE;
     let edge = |w: Length, h: Length, dir: Direction, cursor: mouse::Interaction| {
         mouse_area(Space::new().width(w).height(h))
-            .on_press(Message::TitleBar(TitleBarMsg::Resize(dir)))
+            .on_press(resize(dir))
             .interaction(cursor)
     };
     let fixed = Length::Fixed(e);

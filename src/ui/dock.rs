@@ -99,6 +99,42 @@ pub enum DockMsg {
     HoverStay,
     /// The hover delay of the reveal / hide armed as generation `n` ran out.
     HoverSettled(u64),
+    // ── A pallet in a window of its own (desktop) ──────────────────────────
+    /// A press on the title bar of pallet window `window`: start dragging
+    /// it (back into the main window, or elsewhere on the screen).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    WindowBarPress(iced::window::Id),
+    /// Double-click on that title bar: the pallet floats in the main window.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    WindowBarDoubleClick(iced::window::Id),
+    /// Open (`Some`) the title-bar menu of a pallet window, or close it.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    WindowMenu(Option<iced::window::Id>),
+    /// A press on one of a frameless pallet window's resize edges.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    WindowResize(iced::window::Id, iced::window::Direction),
+    /// The pointer moved in a window whose drag is fed raw pointer events
+    /// (see `tool_windows::set_pointer_feed`), at this point in it
+    /// (logical, may lie outside the window while the button is held).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    WindowPointer(iced::window::Id, iced::Point),
+    /// The left button came up in that window.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    WindowRelease(iced::window::Id),
+    /// Where window `window`'s top-left corner is (logical), as asked when
+    /// a drag begins; `None` where the system does not say (Wayland).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    WindowAt(iced::window::Id, Option<iced::Point>),
+    /// Where the dock workspace's top-left corner is in the main window.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    WorkspaceOrigin(Option<iced::Point>),
+    /// The pointer entered (`true`) or left pallet window `window`.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    WindowHover(iced::window::Id, bool),
+    /// The hover delay of folding (`true`) or unfolding pallet window
+    /// `window`, armed as generation `n`, ran out.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    WindowFoldSettled(iced::window::Id, bool, u64),
 }
 
 /// An auto-hide change waiting out [`DOCK_HOVER_DELAY`].
@@ -282,6 +318,10 @@ impl PanelId {
 pub struct DockPanel {
     pub width: f32,
     pub auto_collapse: bool,
+    /// Dragging the pallet may dock it on an edge; off, it only ever floats
+    /// (in the main window or in a window of its own). Kept per pallet, so
+    /// it survives the pallet moving into a window of its own and back.
+    pub docking: bool,
 }
 
 impl Default for DockPanel {
@@ -289,6 +329,7 @@ impl Default for DockPanel {
         Self {
             width: 250.0,
             auto_collapse: false,
+            docking: true,
         }
     }
 }
@@ -297,7 +338,7 @@ impl DockPanel {
     fn for_id(id: PanelId) -> Self {
         Self {
             width: id.default_width(),
-            auto_collapse: false,
+            ..Self::default()
         }
     }
 }
@@ -422,8 +463,12 @@ pub struct FloatPanel {
     pub y: f32,
     pub w: f32,
     pub h: f32,
-    /// Dragging the panel may dock it on an edge; off, it only ever floats.
-    pub docking: bool,
+    /// Read from a config written before "Allow docking" moved to the
+    /// pallet's own settings ([`DockPanel::docking`]): `true` when that
+    /// config had it off. [`DockState::ensure_settings`] moves it over;
+    /// never written.
+    #[serde(skip)]
+    pub(crate) legacy_no_docking: bool,
     /// The side its vertical title bar is on. It starts on the side the
     /// pallet was docked on and only changes when a drag brings the panel
     /// against an edge (see `dock_float_target`).
@@ -461,7 +506,7 @@ impl TryFrom<FloatRepr> for FloatPanel {
             r.id.or(r.panels.first().copied())
                 .ok_or("floating panel without id")?;
         Ok(Self {
-            docking: r.docking,
+            legacy_no_docking: !r.docking,
             bar: r.bar.unwrap_or(DockSide::Left),
             ..Self::new(id, r.x, r.y, r.w, r.h)
         })
@@ -478,7 +523,7 @@ impl FloatPanel {
             y,
             w,
             h,
-            docking: true,
+            legacy_no_docking: false,
             bar: DockSide::Left,
         }
     }
@@ -718,6 +763,15 @@ impl DockState {
         }
         self.floating.retain(|f| seen.insert(f.id));
         self.floating.iter_mut().for_each(FloatPanel::heal);
+        // "Allow docking" used to live on the floating placement.
+        let legacy: Vec<PanelId> = self
+            .floating
+            .iter_mut()
+            .filter_map(|f| std::mem::take(&mut f.legacy_no_docking).then_some(f.id))
+            .collect();
+        for id in legacy {
+            self.set_docking(id, false);
+        }
     }
 
     /// Stack `id` under Properties in its group (or dock it at the end of
@@ -1028,15 +1082,23 @@ impl DockState {
         *self != before
     }
 
-    /// Flip whether dragging floating panel `id` may dock it.
-    pub fn toggle_float_docking(&mut self, id: PanelId) -> bool {
-        match self.floating.iter_mut().find(|f| f.id == id) {
-            Some(f) => {
-                f.docking = !f.docking;
-                true
-            }
-            None => false,
-        }
+    /// Whether dragging pallet `id` may dock it ("Allow docking").
+    pub fn docking(&self, id: PanelId) -> bool {
+        self.settings(id).docking
+    }
+
+    pub fn set_docking(&mut self, id: PanelId, on: bool) {
+        self.panels
+            .entry(id)
+            .or_insert_with(|| DockPanel::for_id(id))
+            .docking = on;
+    }
+
+    /// Flip whether dragging pallet `id` may dock it. Returns the new state.
+    pub fn toggle_docking(&mut self, id: PanelId) -> bool {
+        let on = !self.docking(id);
+        self.set_docking(id, on);
+        on
     }
 
     /// Bring a floating panel to the front.
@@ -1129,6 +1191,8 @@ pub enum DockDrag {
         /// The side a floating landing puts the title bar on (set once the
         /// drag starts).
         bar: DockSide,
+        /// Which window sees the pointer.
+        source: DragSource,
     },
     /// Sizing the width of docked `panel`'s group.
     Width(PanelId),
@@ -1165,6 +1229,44 @@ impl DockDrag {
             target: None,
             grab: iced::Vector::new(0.0, 0.0),
             bar: DockSide::Left,
+            source: DragSource::Workspace,
+        }
+    }
+
+    /// Start moving pallet `panel` by the title bar of its window of its own
+    /// `window`, which stood at `start` (physical px). With `system` the
+    /// window manager moves the window on the first motion and nothing docks
+    /// (native Wayland, macOS: see `can_drag_dock`).
+    pub fn moving_window(
+        panel: PanelId,
+        window: iced::window::Id,
+        start: iced::Point,
+        system: bool,
+    ) -> Self {
+        DockDrag::Move {
+            panel,
+            group: None,
+            origin: None,
+            target: None,
+            grab: iced::Vector::new(0.0, 0.0),
+            bar: DockSide::Left,
+            source: DragSource::OwnWindow {
+                window,
+                start,
+                grab: None,
+                system,
+            },
+        }
+    }
+
+    /// The window of its own a pallet is being dragged by, if any.
+    pub fn own_window(&self) -> Option<iced::window::Id> {
+        match *self {
+            DockDrag::Move {
+                source: DragSource::OwnWindow { window, .. },
+                ..
+            } => Some(window),
+            _ => None,
         }
     }
 
@@ -1181,6 +1283,27 @@ impl DockDrag {
             _ => None,
         }
     }
+}
+
+/// Which window sees the pointer of a pallet drag.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DragSource {
+    /// The main window's workspace (points in workspace space).
+    Workspace,
+    /// A pallet's window of its own, which follows the pointer; points come
+    /// in that window's logical space (see `dock_window_drag_move`).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    OwnWindow {
+        window: iced::window::Id,
+        /// Where the window stood when the drag began (physical px): Esc
+        /// puts it back there.
+        start: iced::Point,
+        /// The pointer's offset in the window (logical px), from its first
+        /// motion on.
+        grab: Option<iced::Vector>,
+        /// The window manager moves the window; nothing docks.
+        system: bool,
+    },
 }
 
 /// Where a dragged panel lands on release.
@@ -2146,12 +2269,41 @@ mod tests {
     #[test]
     fn floating_groups_from_an_older_build_load_as_their_first_pallet() {
         let json = r#"{"floating":[{"panels":["count","browser"],"weights":[1.0,1.0],"width":0.0,"x":1.0,"y":2.0,"w":300.0,"h":400.0,"docking":false}]}"#;
-        let state: DockState = serde_json::from_str(json).unwrap();
-        let expected = FloatPanel {
-            docking: false,
-            ..FloatPanel::new(PanelId::Count, 1.0, 2.0, 300.0, 400.0)
-        };
+        let mut state: DockState = serde_json::from_str(json).unwrap();
+        state.ensure_settings();
+        let expected = FloatPanel::new(PanelId::Count, 1.0, 2.0, 300.0, 400.0);
         assert_eq!(state.floating, vec![expected]);
+        assert!(!state.docking(PanelId::Count), "its docking choice is kept");
+    }
+
+    /// "Allow docking" moved from the floating placement to the pallet's own
+    /// settings: an older config keeps its choice, and a new one writes it
+    /// only there, so it survives the pallet going into a window of its own.
+    #[test]
+    fn allow_docking_moves_from_the_floating_place_to_the_pallet() {
+        let old = r#"{"floating":[{"id":"count","x":1.0,"y":2.0,"w":300.0,"h":400.0,"docking":false},{"id":"browser","x":1.0,"y":2.0,"w":300.0,"h":400.0}]}"#;
+        let mut state: DockState = serde_json::from_str(old).unwrap();
+        state.ensure_settings();
+        assert!(!state.docking(PanelId::Count));
+        assert!(state.docking(PanelId::Browser));
+        let json = serde_json::to_string(&state).unwrap();
+        assert!(!json.contains("legacy"));
+        let mut back: DockState = serde_json::from_str(&json).unwrap();
+        back.ensure_settings();
+        assert!(!back.docking(PanelId::Count) && back.docking(PanelId::Browser));
+        // Into a window of its own and back, the choice stays.
+        back.separate(
+            PanelId::Count,
+            crate::app::tool_windows::WindowPlacement {
+                x: 0.0,
+                y: 0.0,
+                w: 300.0,
+                h: 400.0,
+            },
+        );
+        assert!(!back.docking(PanelId::Count));
+        assert!(back.toggle_docking(PanelId::Count));
+        assert!(back.docking(PanelId::Count));
     }
 
     #[test]

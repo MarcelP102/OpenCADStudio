@@ -7515,6 +7515,7 @@ dock =
     .auto-hide = Αυτόματη απόκρυψη
     .dock-left = Πρόσδεση αριστερά
     .dock-right = Πρόσδεση δεξιά
+    .float-in-main = Αιώρηση στο κύριο παράθυρο
     .new-group = Νέα ομάδα
     .browser = Περιηγητής
     .node-graph = Γράφος κόμβων

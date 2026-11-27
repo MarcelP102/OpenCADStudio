@@ -202,7 +202,13 @@ impl OpenCADStudio {
                     _ => iced::mouse::Interaction::ResizingHorizontally,
                 });
         }
-        capture.into()
+        // Named, so a pallet window's drag can find where the workspace is
+        // in the main window (`workspace_origin`).
+        container(capture)
+            .id(iced::widget::Id::new(super::DOCK_WORKSPACE_ID))
+            .width(Fill)
+            .height(Fill)
+            .into()
     }
 
     /// The edge (+) pallet menu rows for one edge: built-ins first in their
@@ -874,7 +880,23 @@ impl OpenCADStudio {
             hidden,
         } = self.dock_float_frame(f);
         let hovered = self.dock_title_hover == Some(f.id);
-        let bar = floating_title_bar(f.id, self.dock.auto_collapse(f.id), bar_left, hovered);
+        let side = if bar_left {
+            crate::app::config::DockSide::Left
+        } else {
+            crate::app::config::DockSide::Right
+        };
+        let bar = floating_title_bar(
+            f.id,
+            self.dock.auto_collapse(f.id),
+            bar_left,
+            hovered,
+            BarActions {
+                press: Message::Dock(DockMsg::DockGrab(f.id)),
+                menu: Message::Dock(DockMsg::FloatMenu(Some(f.id))),
+                // Double-click docks it against the edge its title bar faces.
+                double_click: Message::Dock(DockMsg::DockTo(f.id, side)),
+            },
+        );
         let content: Element<'_, Message> = if hidden {
             bar
         } else {
@@ -973,7 +995,7 @@ impl OpenCADStudio {
                 t!("Allow docking"),
                 Message::Dock(DockMsg::FloatDockingToggle(id)),
             )
-            .mark(Mark::Check(f.docking)),
+            .mark(Mark::Check(self.dock.docking(id))),
             Item::Separator,
             Item::new(
                 t!("Dock left"),
@@ -1003,6 +1025,91 @@ impl OpenCADStudio {
         let menu_x = menu_x.clamp(0.0, (ww - menu_w).max(0.0));
         let menu_y = at.y.min(wh - menu_h).max(0.0);
         Some(place_at(menu::view(items), menu_x, menu_y))
+    }
+
+    /// The title bar of pallet `panel`'s window of its own `window`: the bar
+    /// a floating pallet has, on the left. A press drags the window (back
+    /// into the main window to dock or float there), a double-click floats
+    /// the pallet in the main window and a right-click opens its menu.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(in crate::app) fn pallet_window_bar(
+        &self,
+        window: iced::window::Id,
+        panel: crate::ui::dock::PanelId,
+    ) -> Element<'static, Message> {
+        use crate::ui::dock::DockMsg;
+        let bar = floating_title_bar(
+            panel,
+            self.dock.auto_collapse(panel),
+            true,
+            self.dock_title_hover == Some(panel),
+            BarActions {
+                press: Message::Dock(DockMsg::WindowBarPress(window)),
+                menu: Message::Dock(DockMsg::WindowMenu(Some(window))),
+                double_click: Message::Dock(DockMsg::WindowBarDoubleClick(window)),
+            },
+        );
+        container(bar)
+            .id(iced::widget::Id::new(super::PALLET_WINDOW_BAR_ID))
+            .height(Fill)
+            .into()
+    }
+
+    /// The open title-bar menu of pallet window `window` (sized `placement`)
+    /// over a catcher that closes it: Allow docking, Dock left, Dock right
+    /// and Float in main window. `None` while it is closed.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(in crate::app) fn pallet_window_menu(
+        &self,
+        window: iced::window::Id,
+        panel: crate::ui::dock::PanelId,
+        placement: crate::app::tool_windows::WindowPlacement,
+    ) -> Option<Element<'_, Message>> {
+        use crate::app::config::DockSide;
+        use crate::ui::dock::DockMsg;
+        use crate::ui::kit::menu::{self, Item, Mark};
+        if self.dock_window_menu != Some(window) {
+            return None;
+        }
+        let items = vec![
+            Item::new(
+                t!("Allow docking"),
+                Message::Dock(DockMsg::FloatDockingToggle(panel)),
+            )
+            .mark(Mark::Check(self.dock.docking(panel))),
+            Item::Separator,
+            Item::new(
+                t!("Dock left"),
+                Message::Dock(DockMsg::DockTo(panel, DockSide::Left)),
+            ),
+            Item::new(
+                t!("Dock right"),
+                Message::Dock(DockMsg::DockTo(panel, DockSide::Right)),
+            ),
+            Item::new(
+                t!("Float in main window"),
+                Message::OsWindowReturn(window),
+            ),
+        ];
+        // At the pointer (the bar is the window's left edge), kept inside
+        // the window.
+        let (menu_w, menu_h) = (menu::width(&items), menu::height(&items));
+        let at = self.dock_float_menu_at;
+        let x = at.x.min(placement.w - menu_w).max(0.0);
+        let y = at.y.min(placement.h - menu_h).max(0.0);
+        let close = Message::Dock(DockMsg::WindowMenu(None));
+        Some(
+            iced::widget::Stack::with_children([
+                mouse_area(Space::new().width(Fill).height(Fill))
+                    .on_press(close.clone())
+                    .on_right_press(close)
+                    .into(),
+                place_at(menu::view(items), x, y),
+            ])
+            .width(Fill)
+            .height(Fill)
+            .into(),
+        )
     }
 
     /// The live drop preview for dragged panel `id`: a tint over the target
@@ -1046,7 +1153,9 @@ impl OpenCADStudio {
         let marks_side = match target {
             DropTarget::Edge { side, .. } | DropTarget::Join { side, .. } => Some(side),
             DropTarget::Float { x, y, .. } => {
-                if self.dock.float_rect(id).is_none() {
+                // A pallet's window of its own shows itself where it lands.
+                let own_window = self.dock_drag.is_some_and(|d| d.own_window().is_some());
+                if self.dock.float_rect(id).is_none() && !own_window {
                     let (w, h) = self.dock_float_size(id);
                     layers.push(place_at(dock_ghost(id, w + DOCK_FLOAT_BAR_W, h), x, y));
                 }
@@ -1285,14 +1394,24 @@ impl FloatFrame {
     }
 }
 
+/// What a floating title bar's free area sends: a press, a right-click and
+/// a double-click.
+struct BarActions {
+    press: Message,
+    menu: Message,
+    double_click: Message,
+}
+
 /// A floating panel's vertical title bar: close then the hide (auto-collapse)
 /// pin at the top, the panel's icon at the bottom with its title reading
-/// upward above it. Pressing the bar's free area drags the panel.
+/// upward above it. Pressing the bar's free area drags the panel. A pallet in
+/// a window of its own has the same bar.
 fn floating_title_bar(
     id: crate::ui::dock::PanelId,
     auto_collapse: bool,
     on_left: bool,
     hovered: bool,
+    actions: BarActions,
 ) -> Element<'static, Message> {
     use crate::ui::dock::DockMsg;
     use crate::ui::style::{chrome, kit_metrics as km};
@@ -1358,20 +1477,12 @@ fn floating_title_bar(
         row![line, bar].into()
     };
     mouse_area(bar)
-        .on_press(Message::Dock(DockMsg::DockGrab(id)))
-        .on_right_press(Message::Dock(DockMsg::FloatMenu(Some(id))))
+        .on_press(actions.press)
+        .on_right_press(actions.menu)
         .on_enter(Message::Dock(DockMsg::TitleHover(id)))
         .on_move(|p| Message::Dock(DockMsg::FloatBarPointer(p)))
         .on_exit(Message::Dock(DockMsg::TitleHoverEnd(id)))
-        // Double-click docks it against the edge its title bar faces.
-        .on_double_click(Message::Dock(DockMsg::DockTo(
-            id,
-            if on_left {
-                crate::app::config::DockSide::Left
-            } else {
-                crate::app::config::DockSide::Right
-            },
-        )))
+        .on_double_click(actions.double_click)
         .interaction(iced::mouse::Interaction::Grab)
         .into()
 }

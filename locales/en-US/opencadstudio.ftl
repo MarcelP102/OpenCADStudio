@@ -7516,6 +7516,7 @@ dock =
     .auto-hide = Auto-hide
     .dock-left = Dock left
     .dock-right = Dock right
+    .float-in-main = Float in main window
     .new-group = New group
     .browser = Browser
     .node-graph = Node Graph

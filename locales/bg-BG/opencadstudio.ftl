@@ -7515,6 +7515,7 @@ dock =
     .auto-hide = Автоматично скриване
     .dock-left = Закачи вляво
     .dock-right = Закачи вдясно
+    .float-in-main = Плаващ в главния прозорец
     .new-group = Нова група
     .browser = Браузър
     .node-graph = Граф на възлите

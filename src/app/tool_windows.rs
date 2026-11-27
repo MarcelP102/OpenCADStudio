@@ -14,7 +14,7 @@
 
 use super::{Message, ModalKind, OpenCADStudio};
 #[cfg(not(target_arch = "wasm32"))]
-use iced::widget::{column, container, row, text};
+use iced::widget::{container, row};
 use iced::widget::{mouse_area, Space};
 use iced::{Element, Fill, Point, Size, Task, Vector};
 
@@ -159,8 +159,8 @@ pub struct WindowPlacement {
 impl WindowPlacement {
     /// The smallest window of its own (see `open_window`): a minimized
     /// window reports exactly this size.
-    const MIN_W: f32 = 240.0;
-    const MIN_H: f32 = 160.0;
+    pub(crate) const MIN_W: f32 = 240.0;
+    pub(crate) const MIN_H: f32 = 160.0;
 
     /// Whether this is where a window really was. A minimized window is
     /// parked far off screen (-32000 on Windows) and shrunk to the smallest
@@ -199,6 +199,9 @@ pub(crate) struct OsWindow {
     pub placing: bool,
     /// The window a dialog was opened from.
     pub opener: Option<iced::window::Id>,
+    /// An auto-hiding pallet's window folded down to its title bar while
+    /// the pointer is away (`placement` keeps its full size).
+    pub folded: bool,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -216,6 +219,7 @@ impl OsWindow {
             scale: crate::ui::icons::scale_factor(),
             placing: placement.x.is_finite() && placement.y.is_finite(),
             opener,
+            folded: false,
         }
     }
 }
@@ -458,6 +462,13 @@ impl OpenCADStudio {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
+            // The window whose raw pointer feeds a drag: written only when
+            // it changes, which is rare.
+            let feed = self.dock_drag.and_then(|drag| drag.own_window());
+            if feed != self.pointer_feed {
+                self.pointer_feed = feed;
+                set_pointer_feed(feed);
+            }
             let reconciled = self.reconcile_os_windows();
             match self.tool_window_to_raise.take() {
                 Some(id) => Task::batch([reconciled, iced::window::gain_focus(id)]),
@@ -833,8 +844,8 @@ impl OpenCADStudio {
             .unwrap_or(WindowPlacement {
                 x: f32::NAN,
                 y: f32::NAN,
-                w,
-                h: h + HEADER_H,
+                w: w + crate::ui::dock::DOCK_FLOAT_BAR_W,
+                h,
             });
         self.dock.separate(id, placement);
         self.dock_float_menu = None;
@@ -842,8 +853,8 @@ impl OpenCADStudio {
         Task::none()
     }
 
-    /// A pallet window's "back to the main window" button: it floats in the
-    /// main window again.
+    /// A double-click on a pallet window's title bar, or its menu's Float in
+    /// main window: it floats over the middle of the main window again.
     pub(crate) fn return_os_window(&mut self, id: iced::window::Id) -> Task<Message> {
         let Some(window) = self
             .os_windows
@@ -857,18 +868,24 @@ impl OpenCADStudio {
             return Task::none();
         };
         self.dock.detached.remove(&panel);
+        self.dock_drag = None;
+        self.dock_window_menu = None;
         let (ww, wh) = self.dock_workspace_size();
-        let (w, h) = (
-            window.placement.w,
-            (window.placement.h - HEADER_H).max(160.0),
-        );
+        let (w, h) = pallet_size_in_main(window.placement);
         let (x, y) = (((ww - w) * 0.5).max(0.0), ((wh - h) * 0.5).max(0.0));
         self.dock
             .float(crate::ui::dock::FloatPanel::new(panel, x, y, w, h));
         self.dock.raise_float(panel);
         self.os_windows.retain(|window| window.id != id);
         self.save_config();
-        iced::window::close(id)
+        Task::batch([iced::window::close(id), self.focus_main_window()])
+    }
+
+    /// Give the main window the focus (a pallet came back into it).
+    pub(crate) fn focus_main_window(&self) -> Task<Message> {
+        self.main_window
+            .map(iced::window::gain_focus)
+            .unwrap_or_else(Task::none)
     }
 
     /// The window manager's close button on a window of its own: a tool
@@ -905,6 +922,14 @@ impl OpenCADStudio {
             Some(Detached::Tool(kind)) => {
                 self.on_tool_window_msg(kind, Message::ShortcutPressed(key))
             }
+            // Esc while the pallet's window is dragged by its title bar puts
+            // the window back where the drag began.
+            Some(Detached::Panel(_))
+                if key == "ESCAPE"
+                    && self.dock_drag.and_then(|drag| drag.own_window()) == Some(id) =>
+            {
+                self.dock_window_drag_cancel()
+            }
             Some(Detached::Panel(crate::ui::dock::PanelId::ExternalReferences)) => {
                 self.xref_manager_key(&key).unwrap_or_else(Task::none)
             }
@@ -924,6 +949,15 @@ impl OpenCADStudio {
 
     pub(crate) fn os_window_resized(&mut self, id: iced::window::Id, w: f32, h: f32) {
         if let Some(window) = self.os_windows.iter_mut().find(|window| window.id == id) {
+            // Folded down to its title bar, a pallet's window keeps its size:
+            // it opens at that size again. A pallet's window is never
+            // narrower than the least width otherwise, so a late report of
+            // the fold is no size either.
+            if matches!(window.content, Detached::Panel(_))
+                && (window.folded || w < WindowPlacement::MIN_W - 0.5)
+            {
+                return;
+            }
             // Minimizing reports the smallest size: the window keeps the
             // size it had.
             let candidate = WindowPlacement { w, h, ..window.placement };
@@ -942,6 +976,7 @@ impl OpenCADStudio {
             // Minimizing parks the window off screen: keep where it was.
             if at.x > -10000.0 && at.y > -10000.0 {
                 *MAIN_WINDOW_AT.lock().unwrap_or_else(|e| e.into_inner()) = Some(at);
+                self.main_window_at = Some(at);
             }
             return;
         }
@@ -1128,6 +1163,7 @@ impl OpenCADStudio {
                 self.modal_title_for(kind),
                 true,
                 kind.fixed_size(),
+                false,
             );
             if let Some(tool) = self.tool_windows.iter_mut().find(|tool| tool.kind == kind) {
                 tool.window = Some(id);
@@ -1156,11 +1192,17 @@ impl OpenCADStudio {
                 placement = WindowPlacement {
                     x: f32::NAN,
                     y: f32::NAN,
-                    w,
-                    h: h.max(PALLET_WINDOW_MIN_H) + HEADER_H,
+                    w: w + crate::ui::dock::DOCK_FLOAT_BAR_W,
+                    h: h.max(PALLET_WINDOW_MIN_H),
                 };
             }
-            let (id, open) = open_window(placement, panel.title().to_string(), false, false);
+            let (id, open) = open_window(
+                placement,
+                panel.title().to_string(),
+                false,
+                false,
+                pallet_window_frameless(),
+            );
             self.os_windows
                 .push(OsWindow::new(id, Detached::Panel(panel), placement, None));
             tasks.push(open.chain(own_window(id, self.main_window)));
@@ -1180,23 +1222,6 @@ impl OpenCADStudio {
     /// What window `id` shows; `None` for the main window.
     pub(crate) fn os_window_view(&self, id: iced::window::Id) -> Option<Element<'_, Message>> {
         let window = self.os_windows.iter().find(|window| window.id == id)?;
-        // A pallet's window has "back to the main window"; a dialog's window
-        // is only the dialog.
-        let back = iced::widget::button(
-            row![
-                crate::ui::icons::themed_secondary(crate::ui::icons::DOCK_BACK, 12.0),
-                text(crate::t!("Back to the main window")).size(11),
-            ]
-            .spacing(5)
-            .align_y(iced::Center),
-        )
-        .on_press(Message::OsWindowReturn(id))
-        .style(iced::widget::button::text)
-        .padding([3, 8]);
-        let back = container(back).id(iced::widget::Id::new(BACK_BUTTON_ID));
-        let header = container(row![Space::new().width(Fill), back].align_y(iced::Center))
-            .width(Fill)
-            .height(iced::Length::Fixed(HEADER_H));
         let body: Element<'_, Message> = match window.content {
             Detached::Tool(kind) => {
                 let tool = self.tool_windows.iter().find(|tool| tool.kind == kind)?;
@@ -1234,13 +1259,39 @@ impl OpenCADStudio {
             }
             Detached::Panel(panel) => {
                 let tab = self.tabs.get(self.active_tab)?;
-                // The pallet lays out to the width the window really gives
-                // it: the remembered placement can be wider than the window
-                // (#3019), which hid the table's last columns with no scroll.
-                let body = iced::widget::responsive(move |size| {
-                    self.panel_body(panel, size.width, true, tab)
-                });
-                self.os_window_drag_capture(id, column![header, body].into())
+                // The same vertical title bar as a pallet floating in the
+                // main window: drag it back in, double-click or right-click.
+                let bar = self.pallet_window_bar(id, panel);
+                let content: Element<'_, Message> = if window.folded {
+                    bar
+                } else {
+                    // The pallet lays out to the width the window really
+                    // gives it: the remembered placement can be wider than
+                    // the window (#3019), which hid the table's last columns
+                    // with no scroll.
+                    let body = iced::widget::responsive(move |size| {
+                        self.panel_body(panel, size.width, true, tab)
+                    });
+                    row![bar, body].into()
+                };
+                let content = self.os_window_drag_capture(id, content);
+                // Without a system frame the window's edges are the app's.
+                let content = crate::ui::title_bar::with_resize_edges_by(
+                    content,
+                    pallet_window_frameless(),
+                    move |dir| {
+                        Message::Dock(crate::ui::dock::DockMsg::WindowResize(id, dir))
+                    },
+                );
+                // Its title-bar menu over a click catcher; always a stack,
+                // so the bar keeps its state (a double-click) as it opens.
+                let menu = self
+                    .pallet_window_menu(id, panel, window.placement)
+                    .unwrap_or_else(|| Space::new().width(0).height(0).into());
+                iced::widget::Stack::with_children([content, menu])
+                    .width(Fill)
+                    .height(Fill)
+                    .into()
             }
         };
         Some(
@@ -1291,13 +1342,51 @@ impl OpenCADStudio {
     }
 }
 
-/// A window of its own's "back to the main window" button.
+/// Whether a pallet's window opens without a system frame, with the app's
+/// title bar and edges: everywhere but macOS, which keeps its frame (its
+/// title bar and resizing) as the main window does there.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const BACK_BUTTON_ID: &str = "back-to-main-window";
+pub(crate) fn pallet_window_frameless() -> bool {
+    !cfg!(target_os = "macos")
+}
 
-/// The header strip of a window of its own.
+/// Whether dragging a pallet's window by its title bar can dock it: the
+/// app must place the windows itself and know where they are on the screen.
+/// Native Wayland tells no window where it is, and the main window keeps
+/// its frame on macOS; there the window manager moves the window instead
+/// (Dock left / right and Float in main window still work).
 #[cfg(not(target_arch = "wasm32"))]
-const HEADER_H: f32 = 26.0;
+pub(crate) fn can_drag_dock() -> bool {
+    !cfg!(target_os = "macos") && !crate::sys::winit_uses_wayland()
+}
+
+/// The size a pallet coming back from its window floats at in the main
+/// window: the window less its title bar.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn pallet_size_in_main(placement: WindowPlacement) -> (f32, f32) {
+    (
+        (placement.w - crate::ui::dock::DOCK_FLOAT_BAR_W).max(crate::ui::dock::DOCK_MIN_W),
+        placement.h.max(crate::ui::dock::FLOAT_MIN_H),
+    )
+}
+
+/// The window whose raw pointer motion and release reach the dock as
+/// `DockMsg::WindowPointer` / `WindowRelease` (a pallet's window while it is
+/// dragged by its title bar). While the button is held the system keeps
+/// sending a window its pointer even outside it, which a mouse area does
+/// not pass on.
+#[cfg(not(target_arch = "wasm32"))]
+static POINTER_FEED: std::sync::Mutex<Option<iced::window::Id>> = std::sync::Mutex::new(None);
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn set_pointer_feed(id: Option<iced::window::Id>) {
+    *POINTER_FEED.lock().unwrap_or_else(|e| e.into_inner()) = id;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn pointer_feed() -> Option<iced::window::Id> {
+    *POINTER_FEED.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// The least height a pallet's window opens at.
 #[cfg(not(target_arch = "wasm32"))]
@@ -1426,6 +1515,7 @@ fn open_window(
     _title: String,
     focus: bool,
     fixed: bool,
+    frameless: bool,
 ) -> (iced::window::Id, Task<Message>) {
     // The main window's scale is the best guess before the window exists;
     // `os_window_scale` puts it right once it knows its own.
@@ -1448,6 +1538,7 @@ fn open_window(
             Size::new(240.0, 160.0)
         }),
         resizable: true,
+        decorations: !frameless,
         exit_on_close_request: false,
         // Opened from the app, which has the focus: above the main window.
         // Windows: an owned window instead (`own_window`).
@@ -1813,14 +1904,17 @@ mod tests {
             .find(|t| t.kind == ModalKind::About)
             .unwrap();
         assert!(tool.window == Some(window.id) && !tool.in_canvas());
-        // A dialog's window is only the dialog: no way back into the main one.
+        // A dialog's window is only the dialog: no pallet title bar to dock
+        // it with.
         let view = app.os_window_view(window.id).unwrap();
         let mut ui = iced_test::simulator::Simulator::with_size(
             iced::Settings::default(),
             (428.0, 328.0),
             view,
         );
-        assert!(ui.find(iced::widget::Id::new(BACK_BUTTON_ID)).is_err());
+        assert!(ui
+            .find(iced::widget::Id::new(crate::app::dock::PALLET_WINDOW_BAR_ID))
+            .is_err());
         drop(ui);
         // Esc in its window closes it, as it closed the modal.
         let _ = app.update_root(Message::OsWindowKey(window.id, "ESCAPE".into()));

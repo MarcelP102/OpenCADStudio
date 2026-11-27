@@ -7514,6 +7514,7 @@ dock =
     .auto-hide = Nascondi automaticamente
     .dock-left = Ancora a sinistra
     .dock-right = Ancora a destra
+    .float-in-main = Mobile nella finestra principale
     .new-group = Nuovo gruppo
     .browser = Browser
     .node-graph = Grafo dei nodi

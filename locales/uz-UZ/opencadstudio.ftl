@@ -7516,6 +7516,7 @@ dock =
     .auto-hide = Avto-yaşiriş
     .dock-left = Çapga mahkamlaş
     .dock-right = Öngga mahkamlaş
+    .float-in-main = Asosiy oynada suzuvchi
     .new-group = Yangi guruh
     .browser = Brauzer
     .node-graph = Tugunlar grafi

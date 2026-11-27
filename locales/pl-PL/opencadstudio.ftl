@@ -7514,6 +7514,7 @@ dock =
     .auto-hide = Autoukrywanie
     .dock-left = Zadokuj po lewej
     .dock-right = Zadokuj po prawej
+    .float-in-main = Pływający w oknie głównym
     .new-group = Nowa grupa
     .browser = Przeglądarka
     .node-graph = Graf węzłów

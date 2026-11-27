@@ -7513,6 +7513,7 @@ dock =
     .auto-hide = Automatisch ausblenden
     .dock-left = Links andocken
     .dock-right = Rechts andocken
+    .float-in-main = Im Hauptfenster schweben lassen
     .new-group = Neue Gruppe
     .browser = Browser
     .node-graph = Knotengraph

@@ -7515,6 +7515,7 @@ dock =
     .auto-hide = Ocultar automaticamente
     .dock-left = Encaixar à esquerda
     .dock-right = Encaixar à direita
+    .float-in-main = Flutuar na janela principal
     .new-group = Novo grupo
     .browser = Navegador
     .node-graph = Grafo de nós

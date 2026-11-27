@@ -7516,6 +7516,7 @@ dock =
     .auto-hide = ເຊື່ອງອັດຕະໂນມັດ
     .dock-left = ຕິດຂອບຊ້າຍ
     .dock-right = ຕິດຂອບຂວາ
+    .float-in-main = ລອຍຢູ່ໃນໜ້າຕ່າງຫຼັກ
     .new-group = ກຸ່ມໃໝ່
     .browser = ບຣາວເຊີ
     .node-graph = ກຣາຟໂນດ

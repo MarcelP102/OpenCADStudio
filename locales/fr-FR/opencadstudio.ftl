@@ -7515,6 +7515,7 @@ dock =
     .auto-hide = Masquage automatique
     .dock-left = Ancrer à gauche
     .dock-right = Ancrer à droite
+    .float-in-main = Flotter dans la fenêtre principale
     .new-group = Nouveau groupe
     .browser = Navigateur
     .node-graph = Graphe de nœuds

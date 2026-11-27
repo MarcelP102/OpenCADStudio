@@ -7517,6 +7517,7 @@ dock =
     .auto-hide = Automaticky skrýt
     .dock-left = Ukotvit vlevo
     .dock-right = Ukotvit vpravo
+    .float-in-main = Plovoucí v hlavním okně
     .new-group = Nová skupina
     .browser = Prohlížeč
     .node-graph = Graf uzlů

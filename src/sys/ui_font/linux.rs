@@ -140,16 +140,11 @@ fn apply_text_scaling(font: &mut SystemUiFont, factor: Option<f64>) {
     let Some(factor) = factor.filter(|f| f.is_finite() && *f > 0.0) else {
         return;
     };
-    if winit_uses_wayland() {
+    if crate::sys::winit_uses_wayland() {
         font.size_px = font.size_px.map(|px| px * factor as f32);
     }
 }
 
-/// winit prefers Wayland whenever a compositor socket is advertised.
-fn winit_uses_wayland() -> bool {
-    std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
-        || std::env::var_os("WAYLAND_SOCKET").is_some_and(|v| !v.is_empty())
-}
 
 fn config_home() -> Option<PathBuf> {
     std::env::var_os("XDG_CONFIG_HOME")

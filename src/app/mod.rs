@@ -1569,6 +1569,26 @@ pub(super) struct OpenCADStudio {
     /// Desktop: the window that has the focus, main or of its own.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) focused_window: Option<window::Id>,
+    /// Desktop: the pallet window whose title-bar menu is open.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) dock_window_menu: Option<window::Id>,
+    /// Desktop: where the main window's top-left corner is (logical), as
+    /// last moved or asked; `None` until known.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) main_window_at: Option<iced::Point>,
+    /// Desktop: the dock workspace's top-left corner in the main window
+    /// (logical), asked for when a pallet window's drag begins.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) dock_workspace_origin: Option<iced::Point>,
+    /// Desktop: counts pallet-window hovers, so only the latest one's timer
+    /// folds or unfolds an auto-hiding pallet window.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) dock_window_fold_gen: u64,
+    /// Desktop: the window whose raw pointer events feed a drag (see
+    /// `tool_windows::set_pointer_feed`), as last handed to the event
+    /// subscription.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) pointer_feed: Option<window::Id>,
     /// Pointer position over a floating title bar (bar-local), and where
     /// its open menu was asked for.
     pub(crate) dock_float_pointer: iced::Point,
@@ -3311,6 +3331,16 @@ impl OpenCADStudio {
             os_windows: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             focused_window: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            dock_window_menu: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            main_window_at: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            dock_workspace_origin: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            dock_window_fold_gen: 0,
+            #[cfg(not(target_arch = "wasm32"))]
+            pointer_feed: None,
             dock_float_pointer: iced::Point::ORIGIN,
             dock_float_menu_at: iced::Point::ORIGIN,
             dock_drag: None,

@@ -7514,6 +7514,7 @@ dock =
     .auto-hide = 자동 숨기기
     .dock-left = 왼쪽에 도킹
     .dock-right = 오른쪽에 도킹
+    .float-in-main = 기본 창에서 띄우기
     .new-group = 새 그룹
     .browser = 브라우저
     .node-graph = 노드 그래프

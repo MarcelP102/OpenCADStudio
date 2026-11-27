@@ -81,9 +81,31 @@ and the one its close path closes. Tools keep that code unchanged.
   in the main window, unless a field took the Enter.
 - The colour picker a dialog opens is drawn over that dialog in its window.
 - A docked pallet's title bar, and a floating pallet's title-bar menu, have
-  "Open in its own window". The pallet's window has "Back to the main
-  window", which floats it in the main window again. A dialog's window is
-  only the dialog.
+  "Open in its own window". A dialog's window is only the dialog.
+- A pallet's window has no system frame. It has the vertical title bar a
+  pallet floating in the main window has (name, pin, close), on its left,
+  and the app draws its resize edges. macOS keeps the system frame.
+- Drag the pallet's window by its title bar and it follows the pointer:
+  - over an icon strip, an edge or a docked group of the main window the
+    usual drop preview shows; release, and the window closes and the pallet
+    docks there;
+  - over the rest of the drawing area, release and the pallet floats in the
+    main window at that spot;
+  - anywhere else (another monitor, the ribbon) it stays a window of its own,
+    where it was dropped.
+  - Esc during the drag puts the window back where the drag began.
+- With "Allow docking" off (title-bar menu) a drag never docks the pallet: it
+  only floats. The choice is the pallet's own (`docking` in its `panels`
+  entry), so it holds docked, floating or in a window of its own.
+- Double-click the window's title bar: the pallet floats in the main window.
+- Right-click the title bar: Allow docking, Dock left, Dock right, Float in
+  main window.
+- With the pin off, the window folds down to its title bar when the pointer
+  leaves it, and opens to its full size again after a moment on the bar,
+  like a floating pallet. It always opens at its full size.
+- Native Wayland tells no window where it is on the screen, and macOS keeps
+  the main window's frame: there the window manager moves a pallet's window
+  and the drag docks nothing. Double-click, the menu and folding work.
 - Closing the window from the window manager closes the dialog or hides the
   pallet.
 - The next open of either comes back where it last was. Placements are kept

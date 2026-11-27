@@ -7493,6 +7493,7 @@ dock =
     .auto-hide = Automatikus elrejtés
     .dock-left = Dokkolás balra
     .dock-right = Dokkolás jobbra
+    .float-in-main = Lebegtetés a főablakban
     .new-group = Új csoport
     .browser = Böngésző
     .node-graph = Csomópontgráf

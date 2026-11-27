@@ -7515,6 +7515,7 @@ dock =
     .auto-hide = Ocultar automáticamente
     .dock-left = Acoplar a la izquierda
     .dock-right = Acoplar a la derecha
+    .float-in-main = Flotar en la ventana principal
     .new-group = Nuevo grupo
     .browser = Explorador
     .node-graph = Grafo de nodos

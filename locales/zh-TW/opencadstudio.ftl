@@ -7510,6 +7510,7 @@ dock =
     .auto-hide = 自動隱藏
     .dock-left = 停駐到左側
     .dock-right = 停駐到右側
+    .float-in-main = 在主視窗中浮動
     .new-group = 新增群組
     .browser = 瀏覽器
     .node-graph = 節點圖

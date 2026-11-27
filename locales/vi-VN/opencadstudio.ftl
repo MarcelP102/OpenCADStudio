@@ -7522,6 +7522,7 @@ dock =
     .auto-hide = Tự động ẩn
     .dock-left = Neo bên trái
     .dock-right = Neo bên phải
+    .float-in-main = Nổi trong cửa sổ chính
     .new-group = Nhóm mới
     .browser = Trình duyệt
     .node-graph = Đồ thị nút

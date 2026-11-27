@@ -7503,6 +7503,7 @@ dock =
     .auto-hide = स्वतः छिपाएँ
     .dock-left = बाएँ डॉक करें
     .dock-right = दाएँ डॉक करें
+    .float-in-main = मुख्य विंडो में तैराएँ
     .new-group = नया समूह
     .browser = ब्राउज़र
     .node-graph = नोड ग्राफ़

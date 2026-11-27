@@ -418,7 +418,32 @@ pub(crate) fn window_event_with_context(
     #[cfg_attr(target_arch = "wasm32", allow(unused_variables))] is_main: bool,
 ) -> Option<Message> {
     use iced::event::Status;
+    // A pallet's window dragged by its title bar: its raw pointer, which the
+    // system keeps sending while the button is held, even outside it.
+    #[cfg(not(target_arch = "wasm32"))]
+    if crate::app::tool_windows::pointer_feed() == Some(win_id) {
+        use crate::ui::dock::DockMsg;
+        match ev {
+            iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+                return Some(Message::Dock(DockMsg::WindowPointer(win_id, position)));
+            }
+            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
+                return Some(Message::Dock(DockMsg::WindowRelease(win_id)));
+            }
+            _ => {}
+        }
+    }
     match ev {
+        // The pointer over a window of its own: an auto-hiding pallet's
+        // window folds while it is away.
+        #[cfg(not(target_arch = "wasm32"))]
+        iced::Event::Mouse(iced::mouse::Event::CursorEntered) if !is_main => Some(Message::Dock(
+            crate::ui::dock::DockMsg::WindowHover(win_id, true),
+        )),
+        #[cfg(not(target_arch = "wasm32"))]
+        iced::Event::Mouse(iced::mouse::Event::CursorLeft) if !is_main => Some(Message::Dock(
+            crate::ui::dock::DockMsg::WindowHover(win_id, false),
+        )),
         iced::Event::Mouse(iced::mouse::Event::ButtonPressed(_))
             if crate::ui::ribbon::keytips_active() =>
         {

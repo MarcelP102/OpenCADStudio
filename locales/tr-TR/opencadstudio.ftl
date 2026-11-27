@@ -7438,6 +7438,7 @@ dock =
     .auto-hide = Otomatik gizle
     .dock-left = Sola yerleştir
     .dock-right = Sağa yerleştir
+    .float-in-main = Ana pencerede yüzdür
     .new-group = Yeni grup
     .browser = Tarayıcı
     .node-graph = Düğüm Grafiği
