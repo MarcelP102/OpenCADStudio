@@ -6,6 +6,61 @@ pub mod clipboard_svg;
 pub mod startup_times;
 pub mod ui_font;
 
+/// Where the pointer is on the screen, in physical pixels, asked of the
+/// system itself: X11 (also XWayland) and Windows. `None` elsewhere (native
+/// Wayland and macOS tell no app where it is) or when the system does not
+/// answer.
+///
+/// A pallet window dragged by its title bar follows this rather than its own
+/// pointer events: those are relative to where the window really is, which
+/// trails the moves asked of it, and no move event tells when it caught up.
+#[cfg(all(target_os = "linux", not(target_arch = "wasm32")))]
+pub(crate) fn screen_cursor() -> Option<iced::Point> {
+    use std::sync::{Mutex, OnceLock};
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    use x11rb::rust_connection::RustConnection;
+    // Tests drive drags with their own points, whatever display is around.
+    if cfg!(test) || winit_uses_wayland() {
+        return None;
+    }
+    // One connection for the whole run: a drag asks on every motion.
+    static X: OnceLock<Option<Mutex<(RustConnection, u32)>>> = OnceLock::new();
+    let x = X.get_or_init(|| {
+        let (conn, screen) = x11rb::connect(None).ok()?;
+        let root = conn.setup().roots.get(screen)?.root;
+        Some(Mutex::new((conn, root)))
+    });
+    let x = x.as_ref()?.lock().ok()?;
+    let (conn, root) = &*x;
+    let reply = conn.query_pointer(*root).ok()?.reply().ok()?;
+    Some(iced::Point::new(
+        f32::from(reply.root_x),
+        f32::from(reply.root_y),
+    ))
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn screen_cursor() -> Option<iced::Point> {
+    if cfg!(test) {
+        return None;
+    }
+    let mut at = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
+    // SAFETY: a plain query into a local POINT. The process is per-monitor
+    // DPI aware (winit), so these are physical pixels.
+    let ok = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut at) };
+    (ok != 0).then(|| iced::Point::new(at.x as f32, at.y as f32))
+}
+
+#[cfg(not(any(
+    all(target_os = "linux", not(target_arch = "wasm32")),
+    target_os = "windows"
+)))]
+#[allow(dead_code)]
+pub(crate) fn screen_cursor() -> Option<iced::Point> {
+    None
+}
+
 /// Whether the windows are native Wayland ones: winit prefers Wayland
 /// whenever a compositor socket is advertised. Such a window cannot learn or
 /// set where it is on the screen.

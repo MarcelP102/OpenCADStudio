@@ -3497,9 +3497,23 @@ fn a_pallet_window_dropped_elsewhere_stays_a_window() {
         iced::Point::new(200.0, 300.0),
         over_workspace(iced::Point::new(800.0, -60.0)),
     ] {
+        // Back where `over_workspace` expects it.
+        let os = app.os_windows.iter_mut().find(|w| w.id == window).unwrap();
+        os.placement.x = PALLET_WINDOW_AT.x;
+        os.placement.y = PALLET_WINDOW_AT.y;
         assert_eq!(drag_window_to(&mut app, window, to), None);
         let focus = release_window(&mut app, window);
         assert!(focus_targets(focus).is_empty());
+        // It stays where it was dropped, held where its bar was pressed.
+        let placement = app.dock.detached[&PanelId::QuickCalc];
+        let s = PALLET_WINDOW_SCALE;
+        assert_eq!(
+            (placement.x, placement.y),
+            (
+                PALLET_WINDOW_AT.x + (to.x - 12.0) * s,
+                PALLET_WINDOW_AT.y + (to.y - 60.0) * s
+            )
+        );
         assert!(app.dock.is_separate(PanelId::QuickCalc) && has_window(&app, window));
     }
     // A click on the bar.

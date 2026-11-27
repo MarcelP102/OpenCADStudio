@@ -112,6 +112,10 @@ impl OpenCADStudio {
         let system = !crate::app::tool_windows::can_drag_dock();
         let start = Point::new(os.placement.x, os.placement.y);
         self.dock_drag = Some(DockDrag::moving_window(panel, window, start, system));
+        // Where it was pressed, where the system says; else its first motion.
+        if let Some(DockDrag::Move { origin, .. }) = self.dock_drag.as_mut() {
+            *origin = crate::sys::screen_cursor();
+        }
         self.dock_drag_last = None;
         self.dock_edge_menu = None;
         self.dock_float_menu = None;
@@ -170,7 +174,10 @@ impl OpenCADStudio {
         if !(at.x.is_finite() && at.y.is_finite()) {
             return Task::none();
         }
-        let screen = Point::new(at.x + local.x * scale, at.y + local.y * scale);
+        // The system's own idea of the pointer where it has one; else from
+        // the window's place, which can trail the moves asked of it.
+        let screen = crate::sys::screen_cursor()
+            .unwrap_or_else(|| Point::new(at.x + local.x * scale, at.y + local.y * scale));
         let origin = origin.unwrap_or(screen);
         let grab = match grab {
             Some(grab) => grab,
@@ -182,11 +189,9 @@ impl OpenCADStudio {
                     }
                     return Task::none();
                 }
-                // Held where it was pressed, not where the threshold ran out.
-                Vector::new(
-                    local.x - (screen.x - origin.x) / scale,
-                    local.y - (screen.y - origin.y) / scale,
-                )
+                // Held where it was pressed, not where the threshold ran out:
+                // the window has not moved yet.
+                Vector::new((origin.x - at.x) / scale, (origin.y - at.y) / scale)
             }
         };
         self.dock_title_hover = None;
@@ -216,7 +221,11 @@ impl OpenCADStudio {
         // The window's new top-left corner, in its own logical units as the
         // system takes them.
         let top_left = Point::new(screen.x - grab.x * scale, screen.y - grab.y * scale);
-        iced::window::move_to(window, Point::new(top_left.x / scale, top_left.y / scale))
+        let logical = Point::new(top_left.x / scale, top_left.y / scale);
+        // No move event reliably follows a move the app asks for (X11
+        // reports none): it is where the window is from now on.
+        self.os_window_moved(window, logical);
+        iced::window::move_to(window, logical)
     }
 
     /// Where pallet `panel`, held at `grab` in its window, lands with the
