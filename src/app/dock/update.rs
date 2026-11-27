@@ -229,6 +229,11 @@ impl OpenCADStudio {
             // A pallet window's drag has its own pointer feed.
             DockMsg::DragMove(_) if self.dock_drag.is_some_and(|d| d.own_window().is_some()) => {}
             DockMsg::DragMove(point) => {
+                // Over the workspace again: no longer dragged out.
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.dock_drag_out = None;
+                }
                 self.dock_drag_over(None);
                 self.dock_drag_move(point);
             }
@@ -240,6 +245,10 @@ impl OpenCADStudio {
             DockMsg::DragRelease if self.dock_drag.is_some_and(|d| d.own_window().is_some()) => {
                 let window = self.dock_drag.and_then(|d| d.own_window()).expect("checked");
                 return self.dock_window_drag_release(window);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            DockMsg::DragRelease if self.dock_drag_out.is_some() => {
+                return self.dock_drag_out_release();
             }
             DockMsg::DragRelease => self.dock_drag_release(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -355,7 +364,7 @@ impl OpenCADStudio {
     }
 
     /// Pointer released: land what was dragged and save a changed layout.
-    fn dock_drag_release(&mut self) {
+    pub(super) fn dock_drag_release(&mut self) {
         use crate::ui::dock::{DockDrag, DropTarget, FloatPanel};
         // A real drag rebuilds the strips under the drag's capture layer,
         // so no cell ever hears the pointer leave: drop the hover marks,
@@ -470,7 +479,9 @@ impl OpenCADStudio {
                 };
                 let target = if started {
                     // A floating panel that may not dock only floats.
-                    let found = if self.dock.docking(panel) {
+                    // Ctrl held, or docking off for the pallet: it only
+                    // floats.
+                    let found = if self.dock.docking(panel) && !self.ctrl_down {
                         self.dock_drop_target(panel, point, grab, bar)
                     } else {
                         self.dock_float_target(panel, point, grab, bar)
@@ -1352,7 +1363,7 @@ impl OpenCADStudio {
         let y = (p.y - grab.y).clamp(0.0, (wh - 30.0).max(0.0));
         let (w, _) = self.dock_float_size(panel);
         let right = x + w + crate::ui::dock::DOCK_FLOAT_BAR_W;
-        let docking = self.dock.docking(panel);
+        let docking = self.dock.docking(panel) && !self.ctrl_down;
         // How far in from the workspace edge `side` the frame has to come to
         // touch it: the docked pallets there, else the edge itself.
         let reach = |side: DockSide| -> f32 {

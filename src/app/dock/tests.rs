@@ -3724,3 +3724,144 @@ fn a_pallet_window_draws_its_title_bar_and_menu() {
         .iter()
         .any(|m| matches!(m, Message::OsWindowReturn(w) if *w == window)));
 }
+
+/// A docked pallet dragged past the main window's edge opens in a window
+/// of its own on release, held where it was grabbed; back over the
+/// workspace before the release it docks or floats as usual.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_pallet_dragged_out_of_the_main_window_opens_in_its_own() {
+    use crate::ui::dock::{DockMsg, DropTarget, PanelId};
+    if !crate::app::tool_windows::can_drag_dock() {
+        return;
+    }
+    let mut app = dock_app();
+    let main = iced::window::Id::unique();
+    app.main_window = Some(main);
+    app.main_window_at = Some(iced::Point::new(100.0, 50.0));
+    let _ = app.update_root(Message::Dock(DockMsg::DockGrab(PanelId::Properties)));
+    assert_eq!(
+        app.dock_pointer_feed(),
+        Some(main),
+        "the main window feeds the drag"
+    );
+    let _ = app.update_root(Message::Dock(DockMsg::DragMove(iced::Point::new(
+        100.0, 14.0,
+    ))));
+    let _ = app.update_root(Message::Dock(DockMsg::DragMove(iced::Point::new(
+        300.0, 300.0,
+    ))));
+    // Out past the right edge, then back in: nothing is taken out.
+    let _ = app.update_root(Message::Dock(DockMsg::WindowPointer(
+        main,
+        iced::Point::new(1700.0, 300.0),
+    )));
+    assert!(app.dock_drag_out.is_some());
+    assert!(
+        matches!(drag_target(&app), Some(DropTarget::Float { .. })),
+        "shown against the edge"
+    );
+    let _ = app.update_root(Message::Dock(DockMsg::WindowPointer(
+        main,
+        iced::Point::new(800.0, 300.0),
+    )));
+    assert!(app.dock_drag_out.is_none());
+    // Out again, and released there.
+    let _ = app.update_root(Message::Dock(DockMsg::DragMove(iced::Point::new(
+        1590.0, 300.0,
+    ))));
+    let grab = match app.dock_drag {
+        Some(crate::ui::dock::DockDrag::Move { grab, .. }) => grab,
+        _ => panic!("dragging"),
+    };
+    let _ = app.update_root(Message::Dock(DockMsg::WindowPointer(
+        main,
+        iced::Point::new(1700.0, 300.0),
+    )));
+    let _ = app.update_root(Message::Dock(DockMsg::WindowRelease(main)));
+    assert!(app.dock_drag.is_none() && app.dock_drag_out.is_none());
+    assert!(app.dock.is_separate(PanelId::Properties));
+    let placement = app.dock.detached[&PanelId::Properties];
+    let s = crate::ui::icons::scale_factor();
+    assert_eq!(
+        (placement.x, placement.y),
+        ((100.0 + 1700.0 - grab.x) * s, (50.0 + 300.0 - grab.y) * s)
+    );
+    assert!(app
+        .os_windows
+        .iter()
+        .any(|w| w.content == crate::app::tool_windows::Detached::Panel(PanelId::Properties)));
+}
+
+/// A whole group never leaves the main window, and with the main window's
+/// place unknown nothing does.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_group_or_an_unplaced_main_window_never_drags_out() {
+    use crate::app::config::DockSide;
+    use crate::ui::dock::{DockMsg, PanelId};
+    let mut app = dock_app();
+    let main = iced::window::Id::unique();
+    app.main_window = Some(main);
+    let _ = app.update_root(Message::Dock(DockMsg::DockGrab(PanelId::Properties)));
+    assert_eq!(
+        app.dock_pointer_feed(),
+        None,
+        "where the main window is is unknown"
+    );
+    let _ = app.update_root(Message::Dock(DockMsg::DragRelease));
+    app.main_window_at = Some(iced::Point::ORIGIN);
+    let _ = app.update_root(Message::Dock(DockMsg::GroupGrab(DockSide::Left, 0)));
+    assert_eq!(app.dock_pointer_feed(), None);
+    let _ = app.update_root(Message::Dock(DockMsg::DragMove(iced::Point::new(
+        10.0, 200.0,
+    ))));
+    let _ = app.update_root(Message::Dock(DockMsg::DragMove(iced::Point::new(
+        10.0, 260.0,
+    ))));
+    let _ = app.update_root(Message::Dock(DockMsg::WindowPointer(
+        main,
+        iced::Point::new(-200.0, 300.0),
+    )));
+    assert!(app.dock_drag_out.is_none());
+    let _ = app.update_root(Message::Dock(DockMsg::WindowRelease(main)));
+    assert!(!app.dock.is_separate(PanelId::Properties));
+}
+
+/// Ctrl held: no drag docks, it only floats (from the dock or from a
+/// window of its own).
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn ctrl_keeps_a_drag_from_docking() {
+    use crate::ui::dock::{DropTarget, PanelId};
+    let mut app = dock_app();
+    let _ = app.on_dock(crate::ui::dock::DockMsg::FloatOut(PanelId::BlockPalette));
+    app.ctrl_down = true;
+    let target = drag_panel(
+        &mut app,
+        PanelId::BlockPalette,
+        iced::Point::new(500.0, 300.0),
+        iced::Point::new(10.0, 60.0),
+    );
+    assert!(
+        matches!(target, Some(DropTarget::Float { .. })),
+        "{target:?}"
+    );
+    assert!(app.dock.float_rect(PanelId::BlockPalette).is_some());
+    if !crate::app::tool_windows::can_drag_dock() {
+        return;
+    }
+    let (mut app, window) = app_with_pallet_window();
+    app.ctrl_down = true;
+    let target = drag_window_to(
+        &mut app,
+        window,
+        over_workspace(iced::Point::new(10.0, 400.0)),
+    );
+    assert!(
+        matches!(target, Some(DropTarget::Float { .. })),
+        "{target:?}"
+    );
+    let _ = release_window(&mut app, window);
+    assert!(app.dock.float_rect(PanelId::QuickCalc).is_some());
+}

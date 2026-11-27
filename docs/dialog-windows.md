@@ -94,6 +94,12 @@ and the one its close path closes. Tools keep that code unchanged.
   - anywhere else (another monitor, the ribbon) it stays a window of its own,
     where it was dropped.
   - Esc during the drag puts the window back where the drag began.
+- Drag a docked or floating pallet past the edge of the main window and
+  release it there: it opens in a window of its own at the pointer, and that
+  window gets the focus. Inside the main window nothing changes. A whole
+  group (dragged by its strip band) stays in the main window.
+- Hold Ctrl during either drag and nothing docks: the pallet only floats or
+  moves.
 - With "Allow docking" off (title-bar menu) a drag never docks the pallet: it
   only floats. The choice is the pallet's own (`docking` in its `panels`
   entry), so it holds docked, floating or in a window of its own.
@@ -105,7 +111,8 @@ and the one its close path closes. Tools keep that code unchanged.
   like a floating pallet. It always opens at its full size.
 - Native Wayland tells no window where it is on the screen, and macOS keeps
   the main window's frame: there the window manager moves a pallet's window
-  and the drag docks nothing. Double-click, the menu and folding work.
+  and the drag docks nothing, and a pallet dragged to the main window's edge
+  stays inside it. Double-click, the menu and folding work.
 - Closing the window from the window manager closes the dialog or hides the
   pallet.
 - The next open of either comes back where it last was. Placements are kept

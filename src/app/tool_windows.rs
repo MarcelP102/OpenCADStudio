@@ -464,7 +464,7 @@ impl OpenCADStudio {
         {
             // The window whose raw pointer feeds a drag: written only when
             // it changes, which is rare.
-            let feed = self.dock_drag.and_then(|drag| drag.own_window());
+            let feed = self.dock_pointer_feed();
             if feed != self.pointer_feed {
                 self.pointer_feed = feed;
                 set_pointer_feed(feed);
@@ -853,6 +853,20 @@ impl OpenCADStudio {
         Task::none()
     }
 
+    /// Dock pallet `id` dragged out past the main window's edge: it opens
+    /// in a window of its own with its top-left corner at `at` (physical
+    /// px), at the size it last had as a window, and that window gets the
+    /// focus.
+    pub(crate) fn detach_panel_at(&mut self, id: crate::ui::dock::PanelId, at: Point) {
+        let _ = self.detach_panel(id);
+        if let Some(placement) = self.dock.detached.get_mut(&id) {
+            placement.x = at.x;
+            placement.y = at.y;
+        }
+        self.pallet_window_focus = Some(id);
+        self.save_config();
+    }
+
     /// A double-click on a pallet window's title bar, or its menu's Float in
     /// main window: it floats over the middle of the main window again.
     pub(crate) fn return_os_window(&mut self, id: iced::window::Id) -> Task<Message> {
@@ -1196,10 +1210,12 @@ impl OpenCADStudio {
                     h: h.max(PALLET_WINDOW_MIN_H),
                 };
             }
+            // Dragged out of the main window, it takes the focus with it.
+            let focus = self.pallet_window_focus.take() == Some(panel);
             let (id, open) = open_window(
                 placement,
                 panel.title().to_string(),
-                false,
+                focus,
                 false,
                 pallet_window_frameless(),
             );

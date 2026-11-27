@@ -428,6 +428,7 @@ pub(crate) fn window_event_with_context(
                 return Some(Message::Dock(DockMsg::WindowPointer(win_id, position)));
             }
             iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
+                crate::ui::ribbon::keytip_pointer_pressed();
                 return Some(Message::Dock(DockMsg::WindowRelease(win_id)));
             }
             _ => {}

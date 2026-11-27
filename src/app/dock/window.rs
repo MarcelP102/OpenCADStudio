@@ -60,6 +60,13 @@ impl OpenCADStudio {
             DockMsg::WindowResize(window, direction) => {
                 iced::window::drag_resize(window, direction)
             }
+            DockMsg::WindowPointer(window, point) if Some(window) == self.main_window => {
+                self.dock_main_pointer(point);
+                Task::none()
+            }
+            DockMsg::WindowRelease(window) if Some(window) == self.main_window => {
+                self.dock_main_release()
+            }
             DockMsg::WindowPointer(window, point) => self.dock_window_drag_move(window, point),
             DockMsg::WindowRelease(window) => self.dock_window_drag_release(window),
             DockMsg::WindowAt(window, at) => {
@@ -215,8 +222,8 @@ impl OpenCADStudio {
     /// Where pallet `panel`, held at `grab` in its window, lands with the
     /// pointer at screen point `screen` (physical px): a drop target of the
     /// main window's workspace when it is over that, `None` anywhere else
-    /// (it stays a window of its own). With docking off for the pallet it
-    /// only floats there.
+    /// (it stays a window of its own). With docking off for the pallet, or
+    /// Ctrl held, it only floats there.
     pub(crate) fn dock_window_target(
         &mut self,
         panel: PanelId,
@@ -243,7 +250,7 @@ impl OpenCADStudio {
         }
         // The icon that follows the pointer over a strip.
         self.dock_drag_last = Some(p);
-        Some(if self.dock.docking(panel) {
+        Some(if self.dock.docking(panel) && !self.ctrl_down {
             self.dock_drop_target(panel, p, grab, bar)
         } else {
             self.dock_float_target(panel, p, grab, bar)
@@ -419,6 +426,126 @@ impl OpenCADStudio {
                 .map(|w| self.fold_pallet_window(w, false)),
         )
     }
+}
+
+// ── Dragging a pallet out of the main window ────────────────────────────────
+
+impl OpenCADStudio {
+    /// The window whose raw pointer feeds the dock: a pallet's window while
+    /// its title bar is held, the main window while a single pallet is
+    /// dragged in it (to see the pointer leave it).
+    pub(crate) fn dock_pointer_feed(&self) -> Option<iced::window::Id> {
+        let drag = self.dock_drag?;
+        if let Some(window) = drag.own_window() {
+            return Some(window);
+        }
+        self.dock_drag_out_possible().then_some(self.main_window?)
+    }
+
+    /// Whether the drag in the main window can take its pallet out of it:
+    /// one pallet (a whole group cannot go into a window), where the app
+    /// knows where the main window is on the screen.
+    fn dock_drag_out_possible(&self) -> bool {
+        matches!(
+            self.dock_drag,
+            Some(DockDrag::Move {
+                group: None,
+                source: DragSource::Workspace,
+                ..
+            })
+        ) && self.main_window_at.is_some()
+            && crate::app::tool_windows::can_drag_dock()
+    }
+
+    /// The main window's raw pointer at `p` (its logical space) while a
+    /// pallet is dragged in it: past its edge by more than the drag
+    /// threshold, the pallet will open in a window of its own. Its frame
+    /// stays shown floating against the edge meanwhile.
+    fn dock_main_pointer(&mut self, p: Point) {
+        if !self.dock_drag_out_possible() {
+            return;
+        }
+        let (ww, wh) = self.win_size;
+        let t = WINDOW_DRAG_THRESHOLD;
+        let out = p.x < -t || p.y < -t || p.x > ww + t || p.y > wh + t;
+        if !out {
+            self.dock_drag_out = None;
+            return;
+        }
+        let Some(DockDrag::Move {
+            panel,
+            target: Some(_),
+            grab,
+            bar,
+            ..
+        }) = self.dock_drag
+        else {
+            // Not past the threshold yet: no drag to take out.
+            return;
+        };
+        self.dock_drag_out = Some(p);
+        // The last place over the workspace, kept inside it.
+        if let Some(last) = self.dock_drag_last {
+            let target = self.dock_float_target(panel, last, grab, bar);
+            if let Some(DockDrag::Move { target: t, .. }) = self.dock_drag.as_mut() {
+                *t = Some(target);
+            }
+        }
+    }
+
+    /// The button came up in the main window (maybe outside it) while a
+    /// pallet was dragged there.
+    fn dock_main_release(&mut self) -> Task<Message> {
+        if self.dock_drag_out.is_some() {
+            return self.dock_drag_out_release();
+        }
+        // Over the workspace the capture layer hears the release too;
+        // whichever comes first lands the pallet.
+        if matches!(self.dock_drag, Some(DockDrag::Move { .. })) {
+            self.dock_drag_release();
+        }
+        Task::none()
+    }
+
+    /// Released past the main window's edge: the pallet opens in a window
+    /// of its own, held where it was grabbed.
+    pub(crate) fn dock_drag_out_release(&mut self) -> Task<Message> {
+        let Some(p) = self.dock_drag_out.take() else {
+            return Task::none();
+        };
+        let Some(DockDrag::Move { panel, grab, .. }) = self.dock_drag else {
+            return Task::none();
+        };
+        self.dock_drag = None;
+        self.dock_drag_last = None;
+        self.dock_drag_window = None;
+        self.dock_fold_on_release = None;
+        self.dock_icon_hover = None;
+        self.dock_grip_hover = None;
+        self.dock_grip_lit = None;
+        let Some(main_at) = self.main_window_at else {
+            return Task::none();
+        };
+        let at = window_place_for_pointer(p, grab, main_at, crate::ui::icons::scale_factor());
+        self.detach_panel_at(panel, at);
+        Task::none()
+    }
+}
+
+/// Where a pallet's window opens (top-left, physical px) for a pointer at
+/// `p` in the main window (logical), held at `grab` from the pallet's
+/// top-left corner, with the main window at `main_at` (logical) on a screen
+/// of scale `scale`.
+pub(crate) fn window_place_for_pointer(
+    p: Point,
+    grab: Vector,
+    main_at: Point,
+    scale: f32,
+) -> Point {
+    Point::new(
+        (main_at.x + p.x - grab.x) * scale,
+        (main_at.y + p.y - grab.y) * scale,
+    )
 }
 
 /// Where the dock workspace's top-left corner is in the main window.
