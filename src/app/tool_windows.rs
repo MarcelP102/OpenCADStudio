@@ -1301,6 +1301,26 @@ impl OpenCADStudio {
                     row![bar, body].into()
                 };
                 let content = self.os_window_drag_capture(id, content);
+                // Without a system frame it gets the 1 px border in the
+                // ribbon's dark hairline colour that the main window has
+                // when not maximized, so it stands apart from what lies
+                // behind it.
+                let line = if pallet_window_frameless() {
+                    crate::ui::icons::hairline()
+                } else {
+                    0.0
+                };
+                let content: Element<'_, Message> = container(content)
+                    .padding(line)
+                    .style(move |theme: &iced::Theme| container::Style {
+                        border: iced::Border {
+                            color: crate::ui::style::chrome::edge(theme),
+                            width: line,
+                            radius: 0.0.into(),
+                        },
+                        ..Default::default()
+                    })
+                    .into();
                 // Without a system frame the window's edges are the app's;
                 // folded down to its title bar it is not resized.
                 let content = crate::ui::title_bar::with_resize_edges_by(
