@@ -161,7 +161,10 @@ ashpd = { version = "0.14.3", default-features = false, features = ["async-io", 
 objc2 = "0.5"
 # The `NSEvent`/`block2` features are for the trackpad pinch monitor in
 # `src/input/trackpad.rs` — see that file for why the gesture is read there.
-objc2-app-kit = { version = "0.2", features = ["NSApplication", "NSFont", "NSResponder", "NSRunningApplication", "NSEvent", "block2"] }
+# `NSScreen` (with `NSEvent`) reads the pointer on the screen while a pallet's
+# window is dragged; `NSView`/`NSWindow`/`NSButton`/`NSControl` hide that
+# window's traffic lights (`src/app/tool_windows.rs`).
+objc2-app-kit = { version = "0.2", features = ["NSApplication", "NSFont", "NSResponder", "NSRunningApplication", "NSEvent", "block2", "NSScreen", "NSView", "NSWindow", "NSButton", "NSControl"] }
 block2 = "0.5"
 objc2-foundation = { version = "0.2", features = ["NSArray", "NSURL", "NSString", "NSObject", "NSNotification", "NSThread", "NSEnumerator"] }
 

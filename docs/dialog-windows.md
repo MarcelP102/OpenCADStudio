@@ -84,7 +84,9 @@ and the one its close path closes. Tools keep that code unchanged.
   "Open in its own window". A dialog's window is only the dialog.
 - A pallet's window has no system frame. It has the vertical title bar a
   pallet floating in the main window has (name, pin, close), on its left,
-  and the app draws its resize edges. macOS keeps the system frame.
+  and the app draws its resize edges. On macOS the window keeps its frame
+  for the system's resizing, as the main window does, but hides the frame's
+  title and buttons and draws its own title bar there.
 - Drag the pallet's window by its title bar and it follows the pointer:
   - over an icon strip, an edge or a docked group of the main window the
     usual drop preview shows; release, and the window closes and the pallet
@@ -109,10 +111,12 @@ and the one its close path closes. Tools keep that code unchanged.
 - With the pin off, the window folds down to its title bar when the pointer
   leaves it, and opens to its full size again after a moment on the bar,
   like a floating pallet. It always opens at its full size.
-- Native Wayland tells no window where it is on the screen, and macOS keeps
-  the main window's frame: there the window manager moves a pallet's window
-  and the drag docks nothing, and a pallet dragged to the main window's edge
-  stays inside it. Double-click, the menu and folding work.
+- On macOS screen places are counted in points, so a drag between screens of
+  different scales lands where the pointer is.
+- Native Wayland tells no window where it is on the screen: there the
+  compositor moves a pallet's window and the drag docks nothing, and a pallet
+  dragged to the main window's edge stays inside it. Double-click, the menu
+  and folding work.
 - Closing the window from the window manager closes the dialog or hides the
   pallet.
 - The next open of either comes back where it last was. Placements are kept

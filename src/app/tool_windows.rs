@@ -1225,16 +1225,13 @@ impl OpenCADStudio {
             }
             // Dragged out of the main window, it takes the focus with it.
             let focus = self.pallet_window_focus.take() == Some(panel);
-            let (id, open) = open_window(
-                placement,
-                panel.title().to_string(),
-                focus,
-                false,
-                pallet_window_frameless(),
-            );
+            let (id, open) = open_window(placement, panel.title().to_string(), focus, false, true);
             self.os_windows
                 .push(OsWindow::new(id, Detached::Panel(panel), placement, None));
-            tasks.push(open.chain(own_window(id, self.main_window)));
+            tasks.push(
+                open.chain(own_window(id, self.main_window))
+                    .chain(hide_titlebar_buttons(id)),
+            );
         }
         Task::batch(tasks)
     }
@@ -1371,8 +1368,10 @@ impl OpenCADStudio {
 }
 
 /// Whether a pallet's window opens without a system frame, with the app's
-/// title bar and edges: everywhere but macOS, which keeps its frame (its
-/// title bar and resizing) as the main window does there.
+/// title bar and edges: everywhere but macOS. There it keeps its frame for
+/// the system's resizing, as the main window does, but hides the frame's
+/// title and buttons and draws under its title bar (`open_window`,
+/// `hide_titlebar_buttons`): it looks the same.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn pallet_window_frameless() -> bool {
     !cfg!(target_os = "macos")
@@ -1380,12 +1379,12 @@ pub(crate) fn pallet_window_frameless() -> bool {
 
 /// Whether dragging a pallet's window by its title bar can dock it: the
 /// app must place the windows itself and know where they are on the screen.
-/// Native Wayland tells no window where it is, and the main window keeps
-/// its frame on macOS; there the window manager moves the window instead
-/// (Dock left / right and Float in main window still work).
+/// Native Wayland tells no window where it is; there the compositor moves
+/// the window instead (Dock left / right and Float in main window still
+/// work).
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn can_drag_dock() -> bool {
-    !cfg!(target_os = "macos") && !crate::sys::winit_uses_wayland()
+    !crate::sys::winit_uses_wayland()
 }
 
 /// The size a pallet coming back from its window floats at in the main
@@ -1536,6 +1535,45 @@ fn own_window(_id: iced::window::Id, _owner: Option<iced::window::Id>) -> Task<M
     Task::none()
 }
 
+/// macOS: hide the close, minimize and zoom buttons of pallet window `id`.
+/// Its own title bar has a close button, and the system's would sit over
+/// it. (winit can do this at creation, `with_titlebar_buttons_hidden`, but
+/// iced's settings do not pass it on.)
+#[cfg(target_os = "macos")]
+fn hide_titlebar_buttons(id: iced::window::Id) -> Task<Message> {
+    use iced::window::raw_window_handle::RawWindowHandle;
+    use objc2_app_kit::{NSView, NSWindowButton};
+    iced::window::run(id, |window| {
+        let Ok(handle) = window.window_handle() else {
+            return;
+        };
+        let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+            return;
+        };
+        // SAFETY: the handle's view is this live window's content view, and
+        // window tasks run on the main thread.
+        let view: &NSView = unsafe { handle.ns_view.cast::<NSView>().as_ref() };
+        let Some(ns_window) = view.window() else {
+            return;
+        };
+        for button in [
+            NSWindowButton::NSWindowCloseButton,
+            NSWindowButton::NSWindowMiniaturizeButton,
+            NSWindowButton::NSWindowZoomButton,
+        ] {
+            if let Some(button) = ns_window.standardWindowButton(button) {
+                button.setHidden(true);
+            }
+        }
+    })
+    .discard()
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "macos")))]
+fn hide_titlebar_buttons(_id: iced::window::Id) -> Task<Message> {
+    Task::none()
+}
+
 /// Open a window of its own at `placement` (centred when it has no place).
 #[cfg(not(target_arch = "wasm32"))]
 fn open_window(
@@ -1543,7 +1581,7 @@ fn open_window(
     _title: String,
     focus: bool,
     fixed: bool,
-    frameless: bool,
+    own_title_bar: bool,
 ) -> (iced::window::Id, Task<Message>) {
     // The main window's scale is the best guess before the window exists;
     // `os_window_scale` puts it right once it knows its own.
@@ -1566,7 +1604,9 @@ fn open_window(
             Size::new(240.0, 160.0)
         }),
         resizable: true,
-        decorations: !frameless,
+        // A pallet's window draws its own title bar (see
+        // `pallet_window_frameless`).
+        decorations: !(own_title_bar && pallet_window_frameless()),
         exit_on_close_request: false,
         // Opened from the app, which has the focus: above the main window.
         // Windows: an owned window instead (`own_window`).
@@ -1583,6 +1623,14 @@ fn open_window(
         platform_specific: iced::window::settings::PlatformSpecific {
             application_id: crate::io::file_association::APP_ID.to_string(),
             ..Default::default()
+        },
+        // macOS: the pallet's own title bar where the frame's was, as the
+        // main window draws its own (its buttons go in `hide_titlebar_buttons`).
+        #[cfg(target_os = "macos")]
+        platform_specific: iced::window::settings::PlatformSpecific {
+            title_hidden: own_title_bar,
+            titlebar_transparent: own_title_bar,
+            fullsize_content_view: own_title_bar,
         },
         ..iced::window::Settings::default()
     });

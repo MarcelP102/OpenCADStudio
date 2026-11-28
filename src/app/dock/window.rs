@@ -13,13 +13,17 @@
 //! the usual drop targets apply:
 //!
 //! ```text
-//! screen_px  = pallet_window_at_px + local * pallet_scale
-//! main_local = (screen_px - main_window_at_px) / main_scale
+//! screen     = pallet_window_at + local * unit(pallet_scale)
+//! main_local = (screen - main_window_at * unit(main_scale)) / unit(main_scale)
 //! workspace  = main_local - workspace_origin
 //! ```
 //!
-//! Native Wayland and macOS leave the move to the window manager: no window
-//! learns where it is there (see `tool_windows::can_drag_dock`).
+//! The screen's unit is the physical pixel on Windows and X11, and the point
+//! on macOS, whose screens share one space in points whatever their scale
+//! (`unit`, `SCREEN_IN_POINTS`).
+//!
+//! Native Wayland leaves the move to the compositor: no window learns where
+//! it is there (see `tool_windows::can_drag_dock`).
 
 use crate::app::tool_windows::{Detached, WindowPlacement};
 use crate::app::{Message, OpenCADStudio};
@@ -30,13 +34,41 @@ use iced::{Point, Size, Task, Vector};
 /// moves the window, so a click (or the first of a double-click) never does.
 const WINDOW_DRAG_THRESHOLD: f32 = 5.0;
 
-/// The point of the main window under screen point `screen` (physical px),
+/// Whether the screen is measured in points (macOS) rather than physical
+/// pixels (Windows, X11). macOS lays its screens out in points: a window's
+/// physical pixels (points × its own scale) mean different places on screens
+/// of different scales.
+pub(crate) const SCREEN_IN_POINTS: bool = cfg!(target_os = "macos");
+
+/// Screen units per logical pixel of a window on a screen of `scale`.
+pub(crate) fn unit(scale: f32, points: bool) -> f32 {
+    if points {
+        1.0
+    } else {
+        scale
+    }
+}
+
+/// A window's place in screen units, from its placement (physical px, see
+/// `WindowPlacement`) on a screen of `scale`.
+pub(crate) fn placement_on_screen(px: Point, scale: f32, points: bool) -> Point {
+    let k = unit(scale, points) / scale;
+    Point::new(px.x * k, px.y * k)
+}
+
+/// The point of the main window under screen point `screen` (screen units),
 /// with the main window's top-left corner at `main_at` (logical) on a screen
 /// of scale `main_scale`.
-pub(crate) fn screen_to_main(screen: Point, main_at: Point, main_scale: f32) -> Point {
+pub(crate) fn screen_to_main(
+    screen: Point,
+    main_at: Point,
+    main_scale: f32,
+    points: bool,
+) -> Point {
+    let u = unit(main_scale, points);
     Point::new(
-        (screen.x - main_at.x * main_scale) / main_scale,
-        (screen.y - main_at.y * main_scale) / main_scale,
+        (screen.x - main_at.x * u) / u,
+        (screen.y - main_at.y * u) / u,
     )
 }
 
@@ -171,19 +203,25 @@ impl OpenCADStudio {
             return iced::window::drag(window);
         }
         let scale = os.scale;
-        let at = Point::new(os.placement.x, os.placement.y);
+        // Screen units per logical pixel of this window.
+        let u = unit(scale, SCREEN_IN_POINTS);
+        let at = placement_on_screen(
+            Point::new(os.placement.x, os.placement.y),
+            scale,
+            SCREEN_IN_POINTS,
+        );
         if !(at.x.is_finite() && at.y.is_finite()) {
             return Task::none();
         }
         // The system's own idea of the pointer where it has one; else from
         // the window's place, which can trail the moves asked of it.
         let screen = crate::sys::screen_cursor()
-            .unwrap_or_else(|| Point::new(at.x + local.x * scale, at.y + local.y * scale));
+            .unwrap_or_else(|| Point::new(at.x + local.x * u, at.y + local.y * u));
         let origin = origin.unwrap_or(screen);
         let grab = match grab {
             Some(grab) => grab,
             None => {
-                let moved = (screen.x - origin.x).hypot(screen.y - origin.y) / scale;
+                let moved = (screen.x - origin.x).hypot(screen.y - origin.y) / u;
                 if moved < WINDOW_DRAG_THRESHOLD {
                     if let Some(DockDrag::Move { origin: o, .. }) = self.dock_drag.as_mut() {
                         *o = Some(origin);
@@ -192,7 +230,7 @@ impl OpenCADStudio {
                 }
                 // Held where it was pressed, not where the threshold ran out:
                 // the window has not moved yet.
-                Vector::new((origin.x - at.x) / scale, (origin.y - at.y) / scale)
+                Vector::new((origin.x - at.x) / u, (origin.y - at.y) / u)
             }
         };
         self.dock_title_hover = None;
@@ -219,22 +257,22 @@ impl OpenCADStudio {
                 system,
             },
         });
-        // The window's new top-left corner, in its own logical units as the
-        // system takes them.
-        let top_left = Point::new(screen.x - grab.x * scale, screen.y - grab.y * scale);
-        let logical = Point::new(top_left.x / scale, top_left.y / scale);
+        // The window's new top-left corner on the screen, and in its own
+        // logical units as the system takes them.
+        let top_left = Point::new(screen.x - grab.x * u, screen.y - grab.y * u);
+        let logical = Point::new(top_left.x / u, top_left.y / u);
         // No move event reliably follows a move the app asks for (X11
         // reports none): it is where the window is from now on. Kept for the
         // next open once the drag ends (`dock_window_drag_release`).
         if let Some(os) = self.os_windows.iter_mut().find(|w| w.id == window) {
-            os.placement.x = top_left.x;
-            os.placement.y = top_left.y;
+            os.placement.x = logical.x * scale;
+            os.placement.y = logical.y * scale;
         }
         iced::window::move_to(window, logical)
     }
 
     /// Where pallet `panel`, held at `grab` in its window, lands with the
-    /// pointer at screen point `screen` (physical px): a drop target of the
+    /// pointer at screen point `screen` (screen units): a drop target of the
     /// main window's workspace when it is over that, `None` anywhere else
     /// (it stays a window of its own). With docking off for the pallet, or
     /// Ctrl held, it only floats there.
@@ -249,6 +287,7 @@ impl OpenCADStudio {
             screen,
             self.main_window_at?,
             crate::ui::icons::scale_factor(),
+            SCREEN_IN_POINTS,
         );
         let (ww, wh) = self.win_size;
         if !(main.x >= 0.0 && main.y >= 0.0 && main.x < ww && main.y < wh) {
@@ -623,4 +662,46 @@ fn workspace_origin() -> Task<Option<Point>> {
         id: Id::new(super::DOCK_WORKSPACE_ID),
         found: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Windows / X11: physical pixels. A pallet window at (2000, 100) px on
+    /// a screen of scale 1.5, the main window at the origin at scale 1.
+    #[test]
+    fn a_pointer_in_a_pallet_window_maps_into_the_main_window_in_pixels() {
+        let at = placement_on_screen(Point::new(2000.0, 100.0), 1.5, false);
+        assert_eq!(at, Point::new(2000.0, 100.0));
+        let local = Point::new(-1000.0, 20.0);
+        let u = unit(1.5, false);
+        let screen = Point::new(at.x + local.x * u, at.y + local.y * u);
+        assert_eq!(
+            screen_to_main(screen, Point::ORIGIN, 1.0, false),
+            Point::new(500.0, 130.0)
+        );
+    }
+
+    /// macOS: points. A pallet window on a Retina screen (scale 2) at
+    /// (1500, 100) points, stored as (3000, 200) px, and the main window on
+    /// a scale 1 screen: the same point of the screen is found in both,
+    /// which pixels would place twice as far.
+    #[test]
+    fn a_pointer_in_a_pallet_window_maps_into_the_main_window_in_points() {
+        let at = placement_on_screen(Point::new(3000.0, 200.0), 2.0, true);
+        assert_eq!(at, Point::new(1500.0, 100.0));
+        let local = Point::new(-1000.0, 20.0);
+        let u = unit(2.0, true);
+        let screen = Point::new(at.x + local.x * u, at.y + local.y * u);
+        assert_eq!(
+            screen_to_main(screen, Point::new(100.0, 0.0), 1.0, true),
+            Point::new(400.0, 120.0)
+        );
+        // A main window on the Retina screen too: still points.
+        assert_eq!(
+            screen_to_main(screen, Point::new(100.0, 0.0), 2.0, true),
+            Point::new(400.0, 120.0)
+        );
+    }
 }

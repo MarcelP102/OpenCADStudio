@@ -6,9 +6,10 @@ pub mod clipboard_svg;
 pub mod startup_times;
 pub mod ui_font;
 
-/// Where the pointer is on the screen, in physical pixels, asked of the
-/// system itself: X11 (also XWayland) and Windows. `None` elsewhere (native
-/// Wayland and macOS tell no app where it is) or when the system does not
+/// Where the pointer is on the screen, asked of the system itself: in
+/// physical pixels on X11 (also XWayland) and Windows, in points on macOS
+/// (top-left origin, as winit places windows there). `None` on native
+/// Wayland, which tells no app where it is, or when the system does not
 /// answer.
 ///
 /// A pallet window dragged by its title bar follows this rather than its own
@@ -52,9 +53,27 @@ pub(crate) fn screen_cursor() -> Option<iced::Point> {
     (ok != 0).then(|| iced::Point::new(at.x as f32, at.y as f32))
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn screen_cursor() -> Option<iced::Point> {
+    use objc2_app_kit::{NSEvent, NSScreen};
+    use objc2_foundation::MainThreadMarker;
+    if cfg!(test) {
+        return None;
+    }
+    // The update runs on the main thread, as AppKit wants.
+    let mtm = MainThreadMarker::new()?;
+    // AppKit counts up from the bottom of the main screen (the first one,
+    // with the menu bar); winit counts down from its top.
+    let main_height = NSScreen::screens(mtm).first()?.frame().size.height;
+    // SAFETY: a class method that only reads where the pointer is.
+    let at = unsafe { NSEvent::mouseLocation() };
+    Some(iced::Point::new(at.x as f32, (main_height - at.y) as f32))
+}
+
 #[cfg(not(any(
     all(target_os = "linux", not(target_arch = "wasm32")),
-    target_os = "windows"
+    target_os = "windows",
+    target_os = "macos"
 )))]
 #[allow(dead_code)]
 pub(crate) fn screen_cursor() -> Option<iced::Point> {
