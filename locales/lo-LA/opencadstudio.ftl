@@ -9423,7 +9423,6 @@ block-flip-frame-feedback =
 
 tool-windows =
     .detach = Open in its own window
-    .back = ກັບໄປໜ້າຕ່າງຫຼັກ
     .command-history = Command History
 
 ifccad-ui =

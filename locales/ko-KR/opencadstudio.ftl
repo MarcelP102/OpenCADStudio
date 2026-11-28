@@ -9421,7 +9421,6 @@ block-flip-frame-feedback =
 
 tool-windows =
     .detach = Open in its own window
-    .back = 기본 창으로 돌아가기
     .command-history = Command History
 
 ifccad-ui =

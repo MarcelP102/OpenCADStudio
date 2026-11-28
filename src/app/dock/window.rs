@@ -112,6 +112,7 @@ impl OpenCADStudio {
         let system = !crate::app::tool_windows::can_drag_dock();
         let start = Point::new(os.placement.x, os.placement.y);
         self.dock_drag = Some(DockDrag::moving_window(panel, window, start, system));
+        self.dock_drag_out = None;
         // Where it was pressed, where the system says; else its first motion.
         if let Some(DockDrag::Move { origin, .. }) = self.dock_drag.as_mut() {
             *origin = crate::sys::screen_cursor();
@@ -223,8 +224,12 @@ impl OpenCADStudio {
         let top_left = Point::new(screen.x - grab.x * scale, screen.y - grab.y * scale);
         let logical = Point::new(top_left.x / scale, top_left.y / scale);
         // No move event reliably follows a move the app asks for (X11
-        // reports none): it is where the window is from now on.
-        self.os_window_moved(window, logical);
+        // reports none): it is where the window is from now on. Kept for the
+        // next open once the drag ends (`dock_window_drag_release`).
+        if let Some(os) = self.os_windows.iter_mut().find(|w| w.id == window) {
+            os.placement.x = top_left.x;
+            os.placement.y = top_left.y;
+        }
         iced::window::move_to(window, logical)
     }
 
@@ -297,7 +302,8 @@ impl OpenCADStudio {
             return Task::none();
         }
         let Some(target) = target else {
-            // Stays where it is (its Moved events kept the place).
+            // Stays a window where it was dropped: remembered for next time.
+            self.keep_pallet_window_at(window, Point::new(os.placement.x, os.placement.y));
             self.save_config();
             return Task::none();
         };
@@ -345,22 +351,57 @@ impl OpenCADStudio {
         if !(start.x.is_finite() && start.y.is_finite()) {
             return Task::none();
         }
+        self.keep_pallet_window_at(window, start);
         iced::window::move_to(window, Point::new(start.x / os.scale, start.y / os.scale))
+    }
+
+    /// Pallet window `window` stands at `at` (physical px) now, and opens
+    /// there next time. Its own move events may not say so (none follows a
+    /// move the app asks for on X11), nor count while it is being placed.
+    fn keep_pallet_window_at(&mut self, window: iced::window::Id, at: Point) {
+        let Some(os) = self.os_windows.iter_mut().find(|w| w.id == window) else {
+            return;
+        };
+        os.placement.x = at.x;
+        os.placement.y = at.y;
+        os.placing = false;
+        let (content, placement) = (os.content, os.placement);
+        self.remember_placement(Some(content), placement);
+    }
+
+    /// Where the main window stands, asked when a pallet drag begins in it
+    /// while that is not known yet (no move event since it opened): a drag
+    /// past its edge needs it.
+    pub(crate) fn ask_main_window_at(&self) -> Task<Message> {
+        match self.main_window {
+            Some(main)
+                if self.main_window_at.is_none() && crate::app::tool_windows::can_drag_dock() =>
+            {
+                iced::window::position(main)
+                    .map(move |at| Message::Dock(DockMsg::WindowAt(main, at)))
+            }
+            _ => Task::none(),
+        }
     }
 
     /// The pointer entered or left pallet window `window`: where the pallet
     /// auto-hides, after the hover delay the window unfolds or folds down to
     /// its title bar.
     fn dock_window_hover(&mut self, window: iced::window::Id, inside: bool) -> Task<Message> {
-        let Some((panel, os)) = self.pallet_window(window) else {
+        let Some((panel, _)) = self.pallet_window(window) else {
             return Task::none();
         };
-        // A newer hover always wins over a pending one.
-        self.dock_window_fold_gen = self.dock_window_fold_gen.wrapping_add(1);
-        if !self.dock.auto_collapse(panel) || os.folded != inside {
+        let auto_hides = self.dock.auto_collapse(panel);
+        let Some(os) = self.os_windows.iter_mut().find(|w| w.id == window) else {
+            return Task::none();
+        };
+        // A newer hover of this window always wins over a pending one; other
+        // windows' hovers leave it be.
+        os.fold_gen = os.fold_gen.wrapping_add(1);
+        if !auto_hides || os.folded != inside {
             return Task::none();
         }
-        let gen = self.dock_window_fold_gen;
+        let gen = os.fold_gen;
         let fold = !inside;
         Task::perform(
             crate::app::update::rest(crate::ui::dock::DOCK_HOVER_DELAY),
@@ -374,12 +415,12 @@ impl OpenCADStudio {
         fold: bool,
         gen: u64,
     ) -> Task<Message> {
-        if gen != self.dock_window_fold_gen {
-            return Task::none();
-        }
-        let Some((panel, _)) = self.pallet_window(window) else {
+        let Some((panel, os)) = self.pallet_window(window) else {
             return Task::none();
         };
+        if gen != os.fold_gen {
+            return Task::none();
+        }
         if fold {
             if !self.dock.auto_collapse(panel) || self.dock_drag.is_some() {
                 return Task::none();
@@ -505,7 +546,7 @@ impl OpenCADStudio {
     /// The button came up in the main window (maybe outside it) while a
     /// pallet was dragged there.
     fn dock_main_release(&mut self) -> Task<Message> {
-        if self.dock_drag_out.is_some() {
+        if self.dock_drag_out.is_some() && matches!(self.dock_drag, Some(DockDrag::Move { .. })) {
             return self.dock_drag_out_release();
         }
         // Over the workspace the capture layer hears the release too;

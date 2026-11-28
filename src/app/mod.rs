@@ -1580,10 +1580,6 @@ pub(super) struct OpenCADStudio {
     /// (logical), asked for when a pallet window's drag begins.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) dock_workspace_origin: Option<iced::Point>,
-    /// Desktop: counts pallet-window hovers, so only the latest one's timer
-    /// folds or unfolds an auto-hiding pallet window.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) dock_window_fold_gen: u64,
     /// Desktop: the window whose raw pointer events feed a drag (see
     /// `tool_windows::set_pointer_feed`), as last handed to the event
     /// subscription.
@@ -3346,8 +3342,6 @@ impl OpenCADStudio {
             main_window_at: None,
             #[cfg(not(target_arch = "wasm32"))]
             dock_workspace_origin: None,
-            #[cfg(not(target_arch = "wasm32"))]
-            dock_window_fold_gen: 0,
             #[cfg(not(target_arch = "wasm32"))]
             pointer_feed: None,
             #[cfg(not(target_arch = "wasm32"))]

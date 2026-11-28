@@ -3350,22 +3350,8 @@ fn release_window(app: &mut OpenCADStudio, window: iced::window::Id) -> Task {
 #[cfg(not(target_arch = "wasm32"))]
 type Task = iced::Task<Message>;
 
-/// The windows `task` gives the focus to.
 #[cfg(not(target_arch = "wasm32"))]
-fn focus_targets(task: Task) -> Vec<iced::window::Id> {
-    use iced::futures::{FutureExt, StreamExt};
-    use iced_runtime::{window::Action as Window, Action};
-    let Some(mut stream) = iced_runtime::task::into_stream(task) else {
-        return Vec::new();
-    };
-    let mut targets = Vec::new();
-    while let Some(Some(action)) = stream.next().now_or_never() {
-        if let Action::Window(Window::GainFocus(id)) = action {
-            targets.push(id);
-        }
-    }
-    targets
-}
+use crate::app::tool_windows::tests::focus_targets;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn has_window(app: &OpenCADStudio, window: iced::window::Id) -> bool {
@@ -3662,7 +3648,12 @@ fn an_auto_hiding_pallet_window_folds_to_its_title_bar() {
     };
     // Pinned: leaving changes nothing.
     let _ = app.update_root(Message::Dock(DockMsg::WindowHover(window, false)));
-    let gen = app.dock_window_fold_gen;
+    let gen = app
+        .os_windows
+        .iter()
+        .find(|w| w.id == window)
+        .unwrap()
+        .fold_gen;
     let _ = app.update_root(Message::Dock(DockMsg::WindowFoldSettled(window, true, gen)));
     assert!(!folded(&app));
     // Pin off.
@@ -3671,13 +3662,23 @@ fn an_auto_hiding_pallet_window_folds_to_its_title_bar() {
     )));
     assert!(app.dock.auto_collapse(PanelId::QuickCalc));
     let _ = app.update_root(Message::Dock(DockMsg::WindowHover(window, false)));
-    let gen = app.dock_window_fold_gen;
+    let gen = app
+        .os_windows
+        .iter()
+        .find(|w| w.id == window)
+        .unwrap()
+        .fold_gen;
     // Back before the delay ran out: it stays open.
     let _ = app.update_root(Message::Dock(DockMsg::WindowHover(window, true)));
     let _ = app.update_root(Message::Dock(DockMsg::WindowFoldSettled(window, true, gen)));
     assert!(!folded(&app));
     let _ = app.update_root(Message::Dock(DockMsg::WindowHover(window, false)));
-    let gen = app.dock_window_fold_gen;
+    let gen = app
+        .os_windows
+        .iter()
+        .find(|w| w.id == window)
+        .unwrap()
+        .fold_gen;
     let _ = app.update_root(Message::Dock(DockMsg::WindowFoldSettled(window, true, gen)));
     assert!(folded(&app));
     // The system reports the folded size: the window keeps its own.
@@ -3696,14 +3697,24 @@ fn an_auto_hiding_pallet_window_folds_to_its_title_bar() {
     // Its title bar alone draws.
     std::hint::black_box(app.os_window_view(window));
     let _ = app.update_root(Message::Dock(DockMsg::WindowHover(window, true)));
-    let gen = app.dock_window_fold_gen;
+    let gen = app
+        .os_windows
+        .iter()
+        .find(|w| w.id == window)
+        .unwrap()
+        .fold_gen;
     let _ = app.update_root(Message::Dock(DockMsg::WindowFoldSettled(
         window, false, gen,
     )));
     assert!(!folded(&app));
     // Folded again, the pin on opens it at once.
     let _ = app.update_root(Message::Dock(DockMsg::WindowHover(window, false)));
-    let gen = app.dock_window_fold_gen;
+    let gen = app
+        .os_windows
+        .iter()
+        .find(|w| w.id == window)
+        .unwrap()
+        .fold_gen;
     let _ = app.update_root(Message::Dock(DockMsg::WindowFoldSettled(window, true, gen)));
     assert!(folded(&app));
     let _ = app.update_root(Message::Dock(DockMsg::AutoCollapseToggle(
@@ -3878,4 +3889,87 @@ fn ctrl_keeps_a_drag_from_docking() {
     );
     let _ = release_window(&mut app, window);
     assert!(app.dock.float_rect(PanelId::QuickCalc).is_some());
+}
+
+/// A drag past the main window's edge that ends without a release (its
+/// pallet closed) leaves nothing behind: a later drag lands as usual.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_drag_out_that_never_released_does_not_take_the_next_drag() {
+    use crate::ui::dock::{DockMsg, PanelId};
+    if !crate::app::tool_windows::can_drag_dock() {
+        return;
+    }
+    let mut app = dock_app();
+    let main = iced::window::Id::unique();
+    app.main_window = Some(main);
+    app.main_window_at = Some(iced::Point::ORIGIN);
+    let _ = app.update_root(Message::Dock(DockMsg::DockGrab(PanelId::Properties)));
+    let _ = app.update_root(Message::Dock(DockMsg::DragMove(iced::Point::new(
+        100.0, 14.0,
+    ))));
+    let _ = app.update_root(Message::Dock(DockMsg::DragMove(iced::Point::new(
+        300.0, 300.0,
+    ))));
+    let _ = app.update_root(Message::Dock(DockMsg::WindowPointer(
+        main,
+        iced::Point::new(1700.0, 300.0),
+    )));
+    assert!(app.dock_drag_out.is_some());
+    let _ = app.update_root(Message::Dock(DockMsg::Close(PanelId::Properties)));
+    assert!(app.dock_drag.is_none() && app.dock_drag_out.is_none());
+    // Even one left over does not take a width drag's release.
+    app.dock_drag_out = Some(iced::Point::new(1700.0, 300.0));
+    let _ = app.on_dock(DockMsg::ResizeGrab(PanelId::BlockPalette));
+    assert!(app.dock_drag_out.is_none(), "a new drag starts clean");
+    app.dock_drag_out = Some(iced::Point::new(1700.0, 300.0));
+    let _ = app.on_dock(DockMsg::DragRelease);
+    assert!(app.dock_drag.is_none(), "the width drag ended");
+    assert!(!app.dock.is_separate(PanelId::BlockPalette));
+}
+
+/// Two pallet windows side by side: passing from one into the other within
+/// the hover delay still folds the one that was left.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn leaving_one_pallet_window_for_another_still_folds_it() {
+    use crate::ui::dock::{DockMsg, PanelId};
+    let (mut app, left) = app_with_pallet_window();
+    let _ = app.dock_set_open(PanelId::Count, true);
+    let _ = app.update_root(Message::Dock(DockMsg::Detach(PanelId::Count)));
+    let other = app
+        .os_windows
+        .iter()
+        .find(|w| w.content == crate::app::tool_windows::Detached::Panel(PanelId::Count))
+        .expect("its own window")
+        .id;
+    let _ = app.update_root(Message::Dock(DockMsg::AutoCollapseToggle(
+        PanelId::QuickCalc,
+    )));
+    let window = |app: &OpenCADStudio, id| *app.os_windows.iter().find(|w| w.id == id).unwrap();
+    let _ = app.update_root(Message::Dock(DockMsg::WindowHover(left, false)));
+    let gen = window(&app, left).fold_gen;
+    let _ = app.update_root(Message::Dock(DockMsg::WindowHover(other, true)));
+    let _ = app.update_root(Message::Dock(DockMsg::WindowFoldSettled(left, true, gen)));
+    assert!(window(&app, left).folded);
+    assert!(!window(&app, other).folded);
+}
+
+/// Dropped over the drawing, a pallet from a window of its own floats at
+/// that window's size less its title bar, which the preview already shows.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_pallet_windows_float_preview_has_its_landing_size() {
+    use crate::ui::dock::PanelId;
+    let (app, window) = app_with_pallet_window();
+    let placement = app
+        .os_windows
+        .iter()
+        .find(|w| w.id == window)
+        .unwrap()
+        .placement;
+    assert_eq!(
+        app.dock_float_size(PanelId::QuickCalc),
+        crate::app::tool_windows::pallet_size_in_main(placement)
+    );
 }

@@ -9431,7 +9431,6 @@ block-flip-frame-feedback =
 
 tool-windows =
     .detach = Öz oynasida oçiş
-    .back = Asosiy oynaga qaytiş
     .command-history = Buyruqlar tarixi
 
 ifccad-ui =

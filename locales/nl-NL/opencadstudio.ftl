@@ -9430,7 +9430,6 @@ block-flip-frame-feedback =
 
 tool-windows =
     .detach = Open in its own window
-    .back = Terug naar het hoofdvenster
     .command-history = Command History
 
 ifccad-ui =

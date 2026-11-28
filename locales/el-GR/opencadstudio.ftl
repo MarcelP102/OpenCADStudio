@@ -9432,7 +9432,6 @@ block-flip-frame-feedback =
 
 tool-windows =
     .detach = Open in its own window
-    .back = Επιστροφή στο κύριο παράθυρο
     .command-history = Command History
 
 ifccad-ui =

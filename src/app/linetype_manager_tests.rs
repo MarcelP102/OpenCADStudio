@@ -198,6 +198,7 @@ fn only_a_window_of_its_own_is_raised() {
         placing: false,
         opener: None,
         folded: false,
+        fold_gen: 0,
     });
     assert!(app.raise_tool_window(kind).is_some());
     assert!(app.raise_tool_window(ModalKind::MlStyle).is_none());

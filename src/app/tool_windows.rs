@@ -202,6 +202,9 @@ pub(crate) struct OsWindow {
     /// An auto-hiding pallet's window folded down to its title bar while
     /// the pointer is away (`placement` keeps its full size).
     pub folded: bool,
+    /// Counts the pointer entering and leaving this window, so only the
+    /// latest one's timer folds or unfolds it.
+    pub fold_gen: u64,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -220,6 +223,7 @@ impl OsWindow {
             placing: placement.x.is_finite() && placement.y.is_finite(),
             opener,
             folded: false,
+            fold_gen: 0,
         }
     }
 }
@@ -464,6 +468,11 @@ impl OpenCADStudio {
         {
             // The window whose raw pointer feeds a drag: written only when
             // it changes, which is rare.
+            // A drag that ended without a release (its pallet closed) leaves
+            // nothing past the edge behind.
+            if self.dock_drag.is_none() {
+                self.dock_drag_out = None;
+            }
             let feed = self.dock_pointer_feed();
             if feed != self.pointer_feed {
                 self.pointer_feed = feed;
@@ -1034,7 +1043,11 @@ impl OpenCADStudio {
         iced::window::move_to(id, at)
     }
 
-    fn remember_placement(&mut self, content: Option<Detached>, placement: WindowPlacement) {
+    pub(crate) fn remember_placement(
+        &mut self,
+        content: Option<Detached>,
+        placement: WindowPlacement,
+    ) {
         // A minimized window's rectangle is not where it was.
         if !placement.is_usable() {
             return;
@@ -1291,13 +1304,12 @@ impl OpenCADStudio {
                     row![bar, body].into()
                 };
                 let content = self.os_window_drag_capture(id, content);
-                // Without a system frame the window's edges are the app's.
+                // Without a system frame the window's edges are the app's;
+                // folded down to its title bar it is not resized.
                 let content = crate::ui::title_bar::with_resize_edges_by(
                     content,
-                    pallet_window_frameless(),
-                    move |dir| {
-                        Message::Dock(crate::ui::dock::DockMsg::WindowResize(id, dir))
-                    },
+                    pallet_window_frameless() && !window.folded,
+                    move |dir| Message::Dock(crate::ui::dock::DockMsg::WindowResize(id, dir)),
                 );
                 // Its title-bar menu over a click catcher; always a stack,
                 // so the bar keeps its state (a double-click) as it opens.
@@ -1583,7 +1595,7 @@ fn open_window(
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::app) mod tests {
     use super::*;
 
     /// A prompt opens over the main window on whichever monitor it is, not
@@ -1929,7 +1941,9 @@ mod tests {
             view,
         );
         assert!(ui
-            .find(iced::widget::Id::new(crate::app::dock::PALLET_WINDOW_BAR_ID))
+            .find(iced::widget::Id::new(
+                crate::app::dock::PALLET_WINDOW_BAR_ID
+            ))
             .is_err());
         drop(ui);
         // Esc in its window closes it, as it closed the modal.
@@ -2021,7 +2035,7 @@ mod tests {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn focus_targets(task: Task<Message>) -> Vec<iced::window::Id> {
+    pub(in crate::app) fn focus_targets(task: Task<Message>) -> Vec<iced::window::Id> {
         drain(task).0
     }
 

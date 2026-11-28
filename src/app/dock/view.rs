@@ -1086,10 +1086,7 @@ impl OpenCADStudio {
                 t!("Dock right"),
                 Message::Dock(DockMsg::DockTo(panel, DockSide::Right)),
             ),
-            Item::new(
-                t!("Float in main window"),
-                Message::OsWindowReturn(window),
-            ),
+            Item::new(t!("Float in main window"), Message::OsWindowReturn(window)),
         ];
         // At the pointer (the bar is the window's left edge), kept inside
         // the window.

@@ -9419,7 +9419,6 @@ block-flip-frame-feedback =
 
 tool-windows =
     .detach = 在獨立視窗中開啟
-    .back = 返回主視窗
     .command-history = 指令記錄
 
 ifccad-ui =

@@ -145,7 +145,6 @@ fn apply_text_scaling(font: &mut SystemUiFont, factor: Option<f64>) {
     }
 }
 
-
 fn config_home() -> Option<PathBuf> {
     std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)

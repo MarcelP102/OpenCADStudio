@@ -1293,7 +1293,6 @@ pub(super) fn message_attribute(source: &str) -> Option<(&'static str, &'static 
         "{found} found ({known} duplicate), {groups}, {total} total" => Some(("selection-report", "found-duplicate-groups-total")),
         "No object found" => Some(("selection-report", "no-object")),
         "Open in its own window" => Some(("tool-windows", "detach")),
-        "Back to the main window" => Some(("tool-windows", "back")),
         "Command History" => Some(("tool-windows", "command-history")),
         "*Invalid selection*" => Some(("selection-report", "invalid-selection")),
         "Expects a point or Window/Last/Crossing/BOX/ALL/Fence/WPolygon/CPolygon/Group/Named/Add/Remove/Multiple/Previous/Undo/AUto/SIngle/SUbobject/Object" => Some(("selection-report", "selection-methods")),

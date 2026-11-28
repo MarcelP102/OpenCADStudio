@@ -14,7 +14,11 @@ impl OpenCADStudio {
         use crate::app::config::DockSide;
         use crate::ui::dock::{DockDrag, DockMsg, FloatPanel};
         match m {
-            DockMsg::DockGrab(id) => self.dock_begin(DockDrag::moving(id, None), Some(id)),
+            DockMsg::DockGrab(id) => {
+                self.dock_begin(DockDrag::moving(id, None), Some(id));
+                #[cfg(not(target_arch = "wasm32"))]
+                return self.ask_main_window_at();
+            }
             DockMsg::IconPress(id) => {
                 // An icon press shows the icon's group and may also start
                 // dragging the pallet; a plain click never passes the drag
@@ -36,6 +40,8 @@ impl OpenCADStudio {
                     self.save_config();
                 }
                 self.dock_begin(DockDrag::moving(id, None), Some(id));
+                #[cfg(not(target_arch = "wasm32"))]
+                return self.ask_main_window_at();
             }
             DockMsg::GroupGrab(side, gi) => {
                 // The strips are rebuilt under the drag's capture layer, so
@@ -241,16 +247,21 @@ impl OpenCADStudio {
                 self.dock_drag_over(Some(window));
                 self.dock_drag_move(point);
             }
-            #[cfg(not(target_arch = "wasm32"))]
-            DockMsg::DragRelease if self.dock_drag.is_some_and(|d| d.own_window().is_some()) => {
-                let window = self.dock_drag.and_then(|d| d.own_window()).expect("checked");
-                return self.dock_window_drag_release(window);
+            DockMsg::DragRelease => {
+                // A pallet's window of its own, or a pallet dragged past
+                // the main window's edge, lands its own way.
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(window) = self.dock_drag.and_then(|d| d.own_window()) {
+                    return self.dock_window_drag_release(window);
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                if self.dock_drag_out.is_some()
+                    && matches!(self.dock_drag, Some(DockDrag::Move { .. }))
+                {
+                    return self.dock_drag_out_release();
+                }
+                self.dock_drag_release();
             }
-            #[cfg(not(target_arch = "wasm32"))]
-            DockMsg::DragRelease if self.dock_drag_out.is_some() => {
-                return self.dock_drag_out_release();
-            }
-            DockMsg::DragRelease => self.dock_drag_release(),
             #[cfg(not(target_arch = "wasm32"))]
             m @ (DockMsg::WindowBarPress(_)
             | DockMsg::WindowBarDoubleClick(_)
@@ -612,6 +623,11 @@ impl OpenCADStudio {
         }
         self.dock_drag = Some(drag);
         self.dock_drag_last = None;
+        // Whatever an earlier drag left behind past the window's edge.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.dock_drag_out = None;
+        }
         self.dock_edge_menu = None;
         self.dock_float_menu = None;
         if peek.is_some() {
@@ -1257,6 +1273,16 @@ impl OpenCADStudio {
     pub(crate) fn dock_float_size(&self, id: crate::ui::dock::PanelId) -> (f32, f32) {
         if let Some(f) = self.dock.float_rect(id) {
             return (f.w, f.h);
+        }
+        // In a window of its own: that window less its title bar, the size
+        // it floats at once it comes back (the drop preview places that).
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(window) = self
+            .os_windows
+            .iter()
+            .find(|w| w.content == crate::app::tool_windows::Detached::Panel(id))
+        {
+            return crate::app::tool_windows::pallet_size_in_main(window.placement);
         }
         let (_, avail) = self.dock_workspace_size();
         let mut h = (avail * 0.6).clamp(crate::ui::dock::FLOAT_MIN_H, 520.0);

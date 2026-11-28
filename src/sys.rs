@@ -64,10 +64,14 @@ pub(crate) fn screen_cursor() -> Option<iced::Point> {
 /// Whether the windows are native Wayland ones: winit prefers Wayland
 /// whenever a compositor socket is advertised. Such a window cannot learn or
 /// set where it is on the screen.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn winit_uses_wayland() -> bool {
-    cfg!(all(unix, not(target_os = "macos"), not(target_arch = "wasm32")))
-        && (std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
-            || std::env::var_os("WAYLAND_SOCKET").is_some_and(|v| !v.is_empty()))
+    cfg!(all(
+        unix,
+        not(target_os = "macos"),
+        not(target_arch = "wasm32")
+    )) && (std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
+        || std::env::var_os("WAYLAND_SOCKET").is_some_and(|v| !v.is_empty()))
 }
 
 /// Drawing hyperlinks may open web pages, never local files or custom handlers.

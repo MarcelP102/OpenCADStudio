@@ -9410,7 +9410,6 @@ block-flip-frame-feedback =
 
 tool-windows =
     .detach = Megnyitás külön ablakban
-    .back = Vissza a főablakba
     .command-history = Parancselőzmények
 
 ifccad-ui =

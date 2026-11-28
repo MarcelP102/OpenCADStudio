@@ -9351,7 +9351,6 @@ block-flip-frame-feedback =
 
 tool-windows =
     .detach = Kendi penceresinde aç
-    .back = Ana pencereye geri al
     .command-history = Komut Geçmişi
 
 ifccad-ui =
