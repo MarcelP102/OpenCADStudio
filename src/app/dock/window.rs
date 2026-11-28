@@ -45,16 +45,23 @@ fn hand_move_to_system() -> bool {
 }
 
 /// Windows: hand pallet window `window`, just torn out of the main window,
-/// to the system's move loop, but only while the left button is still held.
-/// Released while the window was opening, the drag already ended (the main
-/// window saw the release); a move loop started then would follow the
+/// to the system's move loop, but only while the primary button is still
+/// held. Released while the window was opening, the drag already ended (the
+/// main window saw the release); a move loop started then would follow the
 /// pointer with no button down until the next click.
 #[cfg(target_os = "windows")]
 fn hand_over_if_pressed(window: iced::window::Id) -> Task<Message> {
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SWAPBUTTON};
     iced::window::run(window, |_| {
-        // SAFETY: a plain query of the button's state.
-        (unsafe { GetAsyncKeyState(i32::from(VK_LBUTTON)) } as u16 & 0x8000) != 0
+        // The key state reads the physical buttons: with the buttons swapped
+        // (left-handed), the primary one is the physical right button.
+        // SAFETY: plain queries of a system setting and a button's state.
+        let swapped = unsafe { GetSystemMetrics(SM_SWAPBUTTON) } != 0;
+        let primary = if swapped { VK_RBUTTON } else { VK_LBUTTON };
+        (unsafe { GetAsyncKeyState(i32::from(primary)) } as u16 & 0x8000) != 0
     })
     .then(move |pressed| {
         if pressed {
@@ -164,10 +171,15 @@ impl OpenCADStudio {
             DockMsg::SystemMoveStarted(window) => {
                 // From now on the system moves it, reports its moves, and
                 // posts the release to it: it feeds the drag.
+                let now = self
+                    .pallet_window(window)
+                    .map(|(_, os)| (Point::new(os.placement.x, os.placement.y), os.scale));
                 if let Some(DockDrag::Move {
                     source:
                         DragSource::OwnWindow {
                             window: dragged,
+                            start,
+                            start_scale,
                             torn_out: true,
                             os_moved,
                             ..
@@ -177,6 +189,11 @@ impl OpenCADStudio {
                 {
                     if *dragged == window {
                         *os_moved = true;
+                        // It followed the pointer since it was torn out: Esc
+                        // in the system's loop puts it back here.
+                        if let Some((at, scale)) = now {
+                            (*start, *start_scale) = (at, scale);
+                        }
                     }
                 }
                 Task::none()
@@ -207,7 +224,9 @@ impl OpenCADStudio {
         self.dock_window_menu = None;
         let system = !crate::app::tool_windows::can_drag_dock();
         let start = Point::new(os.placement.x, os.placement.y);
-        self.dock_drag = Some(DockDrag::moving_window(panel, window, start, system));
+        self.dock_drag = Some(DockDrag::moving_window(
+            panel, window, start, os.scale, system,
+        ));
         self.dock_tear_undo = None;
         // Where it was pressed, where the system says; else its first motion.
         if let Some(DockDrag::Move { origin, .. }) = self.dock_drag.as_mut() {
@@ -292,6 +311,7 @@ impl OpenCADStudio {
                 DragSource::OwnWindow {
                     window: dragged,
                     start,
+                    start_scale,
                     grab,
                     system,
                     torn_out,
@@ -357,6 +377,7 @@ impl OpenCADStudio {
             source: DragSource::OwnWindow {
                 window,
                 start,
+                start_scale,
                 grab: Some(grab),
                 system,
                 torn_out,
@@ -441,6 +462,7 @@ impl OpenCADStudio {
                 DragSource::OwnWindow {
                     window: dragged,
                     start,
+                    start_scale,
                     grab,
                     torn_out,
                     os_moved,
@@ -467,9 +489,13 @@ impl OpenCADStudio {
         // Esc in the system's move loop puts the window back where it was
         // and ends the loop: it is where the drag began, whatever lies under
         // the pointer. Nothing lands.
-        let cancelled = os_moved
-            && (os.placement.x - start.x).abs() < 1.0
-            && (os.placement.y - start.y).abs() < 1.0;
+        let now = placement_on_screen(
+            Point::new(os.placement.x, os.placement.y),
+            os.scale,
+            SCREEN_IN_POINTS,
+        );
+        let began = placement_on_screen(start, start_scale, SCREEN_IN_POINTS);
+        let cancelled = os_moved && (now.x - began.x).abs() < 1.0 && (now.y - began.y).abs() < 1.0;
         // Torn out of the main window and then cancelled: it goes back where
         // it was (its window closes as the update settles).
         if cancelled && torn_out {
@@ -520,7 +546,13 @@ impl OpenCADStudio {
     /// drag began, and stays a window of its own.
     pub(crate) fn dock_window_drag_cancel(&mut self) -> Task<Message> {
         let Some(DockDrag::Move {
-            source: DragSource::OwnWindow { window, start, .. },
+            source:
+                DragSource::OwnWindow {
+                    window,
+                    start,
+                    start_scale,
+                    ..
+                },
             ..
         }) = self.dock_drag
         else {
@@ -534,8 +566,17 @@ impl OpenCADStudio {
         if !(start.x.is_finite() && start.y.is_finite()) {
             return Task::none();
         }
-        self.keep_pallet_window_at(window, start);
-        iced::window::move_to(window, Point::new(start.x / os.scale, start.y / os.scale))
+        // Where it began, in its own logical units as the system takes them
+        // now: on macOS the drag may have taken it to a screen of another
+        // scale since.
+        let began = placement_on_screen(start, start_scale, SCREEN_IN_POINTS);
+        let u = unit(os.scale, SCREEN_IN_POINTS);
+        let logical = Point::new(began.x / u, began.y / u);
+        self.keep_pallet_window_at(
+            window,
+            Point::new(logical.x * os.scale, logical.y * os.scale),
+        );
+        iced::window::move_to(window, logical)
     }
 
     /// Pallet window `window` was moved to `at` (logical) while the system's
@@ -681,7 +722,14 @@ impl OpenCADStudio {
         }
         os.folded = fold;
         let (w, h) = (os.placement.w, os.placement.h);
-        let bar = crate::ui::dock::DOCK_FLOAT_BAR_W;
+        // Its title bar and the outline round it, as a pallet folded in the
+        // main window shows.
+        let outline = if crate::app::tool_windows::pallet_window_frameless() {
+            2.0 * crate::ui::icons::hairline()
+        } else {
+            0.0
+        };
+        let bar = crate::ui::dock::DOCK_FLOAT_BAR_W + outline;
         let least = Size::new(WindowPlacement::MIN_W, WindowPlacement::MIN_H);
         if fold {
             iced::window::set_min_size(window, Some(Size::new(bar, least.height)))
@@ -817,6 +865,7 @@ impl OpenCADStudio {
             source: DragSource::OwnWindow {
                 window,
                 start: at,
+                start_scale: main_scale,
                 grab: Some(grab),
                 system: false,
                 torn_out: true,
@@ -885,6 +934,9 @@ impl OpenCADStudio {
                 self.dock_drag = None;
                 self.dock_drag_last = None;
                 self.dock_fold_on_release = None;
+                // The strips were rebuilt under the drag's capture layer:
+                // no cell heard the pointer leave.
+                self.dock_clear_hover();
                 Task::none()
             }
             _ => Task::none(),

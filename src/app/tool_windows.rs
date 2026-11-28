@@ -949,7 +949,7 @@ impl OpenCADStudio {
                 if key == "ESCAPE"
                     && self.dock_drag.and_then(|drag| drag.own_window()) == Some(id) =>
             {
-                self.dock_window_drag_cancel()
+                self.dock_drag_cancel()
             }
             Some(Detached::Panel(crate::ui::dock::PanelId::ExternalReferences)) => {
                 self.xref_manager_key(&key).unwrap_or_else(Task::none)

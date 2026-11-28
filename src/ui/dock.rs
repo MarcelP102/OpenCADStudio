@@ -1248,6 +1248,7 @@ impl DockDrag {
         panel: PanelId,
         window: iced::window::Id,
         start: iced::Point,
+        start_scale: f32,
         system: bool,
     ) -> Self {
         DockDrag::Move {
@@ -1260,6 +1261,7 @@ impl DockDrag {
             source: DragSource::OwnWindow {
                 window,
                 start,
+                start_scale,
                 grab: None,
                 system,
                 torn_out: false,
@@ -1307,6 +1309,9 @@ pub enum DragSource {
         /// Where the window stood when the drag began (physical px): Esc
         /// puts it back there.
         start: iced::Point,
+        /// The scale of the window's screen then: on macOS, whose screens
+        /// share one space in points, `start` means points × this scale.
+        start_scale: f32,
         /// The pointer's offset in the window (logical px), from its first
         /// motion on.
         grab: Option<iced::Vector>,

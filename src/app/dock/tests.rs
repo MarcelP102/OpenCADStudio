@@ -3573,6 +3573,7 @@ fn a_system_moved_pallet_window_hands_the_drag_over() {
         PanelId::QuickCalc,
         window,
         PALLET_WINDOW_AT,
+        PALLET_WINDOW_SCALE,
         true,
     ));
     let task = app.update_root(Message::Dock(DockMsg::WindowPointer(
@@ -4138,6 +4139,7 @@ fn system_moving(app: &mut OpenCADStudio, window: iced::window::Id) {
         source: DragSource::OwnWindow {
             window,
             start: PALLET_WINDOW_AT,
+            start_scale: PALLET_WINDOW_SCALE,
             grab: Some(SYSTEM_GRAB),
             system: false,
             torn_out: false,
@@ -4237,4 +4239,97 @@ fn a_cancelled_system_move_after_a_tear_out_puts_the_pallet_back() {
     let _ = release_window(&mut app, window);
     assert_eq!(app.dock.location(PanelId::Properties), before);
     assert!(!app.dock.is_separate(PanelId::Properties) && !has_window(&app, window));
+}
+
+/// Windows: the torn-out window followed the pointer for a moment before the
+/// system's loop took it over; Esc in that loop puts it back where it was
+/// handed over, which still reads as cancelled: the pallet goes back.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn esc_after_a_moved_hand_over_still_puts_the_pallet_back() {
+    use crate::ui::dock::{DockMsg, PanelId};
+    if !crate::app::tool_windows::can_drag_dock() {
+        return;
+    }
+    let (mut app, main) = app_for_tear_out();
+    let before = app.dock.location(PanelId::Properties);
+    let grab = drag_to_the_edge(&mut app);
+    let _ = app.update_root(pointer(main, 1700.0, 300.0));
+    let window = torn_window(&app).expect("torn out");
+    // It follows the pointer until the system takes it over.
+    let _ = app.update_root(pointer(main, 1760.0, 330.0));
+    let _ = app.update_root(Message::Dock(DockMsg::SystemMoveStarted(window)));
+    app.dock_workspace_origin = Some(iced::Point::ORIGIN);
+    let away = iced::Point::new(100.0 + 10.0 - grab.x, 50.0 + 400.0 - grab.y);
+    let _ = app.update_root(Message::OsWindowMoved(window, away));
+    // Esc: back where it was handed over, then the release.
+    let handed_at = iced::Point::new(100.0 + 1760.0 - grab.x, 50.0 + 330.0 - grab.y);
+    let _ = app.update_root(Message::OsWindowMoved(window, handed_at));
+    let _ = release_window(&mut app, window);
+    assert_eq!(app.dock.location(PanelId::Properties), before);
+    assert!(!app.dock.is_separate(PanelId::Properties) && !has_window(&app, window));
+}
+
+/// Esc with the keyboard in the torn-out window (a window manager gave it
+/// the focus) does what Esc in the main window does: the pallet goes back.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn esc_in_a_torn_out_window_puts_the_pallet_back() {
+    use crate::ui::dock::PanelId;
+    if !crate::app::tool_windows::can_drag_dock() {
+        return;
+    }
+    let (mut app, main) = app_for_tear_out();
+    let before = app.dock.location(PanelId::Properties);
+    let _ = drag_to_the_edge(&mut app);
+    let _ = app.update_root(pointer(main, 1700.0, 300.0));
+    let window = torn_window(&app).expect("torn out");
+    let _ = app.update_root(Message::OsWindowKey(window, "ESCAPE".into()));
+    assert!(app.dock_drag.is_none() && app.dock_tear_undo.is_none());
+    assert_eq!(app.dock.location(PanelId::Properties), before);
+    assert!(!has_window(&app, window));
+}
+
+/// Esc during a drag in the main window ends it, changing nothing, and
+/// leaves no strip cell lit (they never heard the pointer leave).
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn esc_ends_a_dock_drag_and_unlights_the_strip() {
+    use crate::ui::dock::{DockMsg, PanelId};
+    let mut app = dock_app();
+    let before = app.dock.clone();
+    let _ = app.update_root(Message::Dock(DockMsg::Hover(PanelId::Properties)));
+    let _ = app.update_root(Message::Dock(DockMsg::IconPress(PanelId::Properties)));
+    for x in [20.0, 400.0] {
+        let _ = app.update_root(Message::Dock(DockMsg::DragMove(iced::Point::new(x, 300.0))));
+    }
+    assert!(drag_target(&app).is_some());
+    let _ = app.update_root(Message::Dock(DockMsg::DragCancel));
+    assert!(app.dock_drag.is_none() && app.dock_icon_hover.is_none());
+    assert_eq!(app.dock, before, "nothing moved");
+}
+
+/// Folded, a pallet's window is as wide as a pallet folded in the main
+/// window: its title bar with the outline round it.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_folded_pallet_window_is_as_wide_as_a_folded_floating_pallet() {
+    use iced::futures::{FutureExt, StreamExt};
+    let (mut app, window) = app_with_pallet_window();
+    let task = app.fold_pallet_window(window, true);
+    let mut stream = iced_runtime::task::into_stream(task).expect("a task");
+    let mut width = None;
+    while let Some(Some(action)) = stream.next().now_or_never() {
+        if let iced_runtime::Action::Window(iced_runtime::window::Action::Resize(id, size)) = action
+        {
+            assert_eq!(id, window);
+            width = Some(size.width);
+        }
+    }
+    let outline = if crate::app::tool_windows::pallet_window_frameless() {
+        2.0 * crate::ui::icons::hairline()
+    } else {
+        0.0
+    };
+    assert_eq!(width, Some(crate::ui::dock::DOCK_FLOAT_BAR_W + outline));
 }

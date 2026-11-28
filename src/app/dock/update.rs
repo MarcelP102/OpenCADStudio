@@ -350,7 +350,7 @@ impl OpenCADStudio {
 
     /// Forget which strip cell and group grip are hovered, after the strips
     /// were rebuilt without the pointer leaving them.
-    fn dock_clear_hover(&mut self) {
+    pub(super) fn dock_clear_hover(&mut self) {
         self.dock_icon_hover = None;
         self.dock_grip_hover = None;
         self.dock_grip_lit = None;
