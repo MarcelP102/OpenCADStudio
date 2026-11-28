@@ -235,11 +235,6 @@ impl OpenCADStudio {
             // A pallet window's drag has its own pointer feed.
             DockMsg::DragMove(_) if self.dock_drag.is_some_and(|d| d.own_window().is_some()) => {}
             DockMsg::DragMove(point) => {
-                // Over the workspace again: no longer dragged out.
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    self.dock_drag_out = None;
-                }
                 self.dock_drag_over(None);
                 self.dock_drag_move(point);
             }
@@ -248,17 +243,11 @@ impl OpenCADStudio {
                 self.dock_drag_move(point);
             }
             DockMsg::DragRelease => {
-                // A pallet's window of its own, or a pallet dragged past
-                // the main window's edge, lands its own way.
+                // A pallet's window of its own (also one just torn out of
+                // the main window) lands its own way.
                 #[cfg(not(target_arch = "wasm32"))]
                 if let Some(window) = self.dock_drag.and_then(|d| d.own_window()) {
                     return self.dock_window_drag_release(window);
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                if self.dock_drag_out.is_some()
-                    && matches!(self.dock_drag, Some(DockDrag::Move { .. }))
-                {
-                    return self.dock_drag_out_release();
                 }
                 self.dock_drag_release();
             }
@@ -272,7 +261,8 @@ impl OpenCADStudio {
             | DockMsg::WindowAt(..)
             | DockMsg::WorkspaceOrigin(_)
             | DockMsg::WindowHover(..)
-            | DockMsg::WindowFoldSettled(..)) => return self.on_pallet_window(m),
+            | DockMsg::WindowFoldSettled(..)
+            | DockMsg::DragCancel) => return self.on_pallet_window(m),
             #[cfg(target_arch = "wasm32")]
             DockMsg::WindowBarPress(_)
             | DockMsg::WindowBarDoubleClick(_)
@@ -283,7 +273,8 @@ impl OpenCADStudio {
             | DockMsg::WindowAt(..)
             | DockMsg::WorkspaceOrigin(_)
             | DockMsg::WindowHover(..)
-            | DockMsg::WindowFoldSettled(..) => {}
+            | DockMsg::WindowFoldSettled(..)
+            | DockMsg::DragCancel => {}
         }
         iced::Task::none()
     }
@@ -623,10 +614,10 @@ impl OpenCADStudio {
         }
         self.dock_drag = Some(drag);
         self.dock_drag_last = None;
-        // Whatever an earlier drag left behind past the window's edge.
+        // Whatever an earlier drag left to undo.
         #[cfg(not(target_arch = "wasm32"))]
         {
-            self.dock_drag_out = None;
+            self.dock_tear_undo = None;
         }
         self.dock_edge_menu = None;
         self.dock_float_menu = None;

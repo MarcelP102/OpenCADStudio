@@ -469,9 +469,9 @@ impl OpenCADStudio {
             // The window whose raw pointer feeds a drag: written only when
             // it changes, which is rare.
             // A drag that ended without a release (its pallet closed) leaves
-            // nothing past the edge behind.
+            // nothing to undo behind.
             if self.dock_drag.is_none() {
-                self.dock_drag_out = None;
+                self.dock_tear_undo = None;
             }
             let feed = self.dock_pointer_feed();
             if feed != self.pointer_feed {
@@ -864,16 +864,14 @@ impl OpenCADStudio {
 
     /// Dock pallet `id` dragged out past the main window's edge: it opens
     /// in a window of its own with its top-left corner at `at` (physical
-    /// px), at the size it last had as a window, and that window gets the
-    /// focus.
+    /// px), at the size it last had as a window. The drag goes on: the
+    /// window gets the focus once it is released.
     pub(crate) fn detach_panel_at(&mut self, id: crate::ui::dock::PanelId, at: Point) {
         let _ = self.detach_panel(id);
         if let Some(placement) = self.dock.detached.get_mut(&id) {
             placement.x = at.x;
             placement.y = at.y;
         }
-        self.pallet_window_focus = Some(id);
-        self.save_config();
     }
 
     /// A double-click on a pallet window's title bar, or its menu's Float in
@@ -1069,7 +1067,7 @@ impl OpenCADStudio {
     /// Open the windows that should be up and close the ones that should not:
     /// a tool asked into a window, a detached pallet that is open; a window
     /// whose tool closed or whose pallet hid or came back into the dock.
-    fn reconcile_os_windows(&mut self) -> Task<Message> {
+    pub(crate) fn reconcile_os_windows(&mut self) -> Task<Message> {
         let mut tasks = Vec::new();
         // Close what lost its reason to be open.
         let stale: Vec<iced::window::Id> = self
@@ -1223,9 +1221,7 @@ impl OpenCADStudio {
                     h: h.max(PALLET_WINDOW_MIN_H),
                 };
             }
-            // Dragged out of the main window, it takes the focus with it.
-            let focus = self.pallet_window_focus.take() == Some(panel);
-            let (id, open) = open_window(placement, panel.title().to_string(), focus, false, true);
+            let (id, open) = open_window(placement, panel.title().to_string(), false, false, true);
             self.os_windows
                 .push(OsWindow::new(id, Detached::Panel(panel), placement, None));
             tasks.push(

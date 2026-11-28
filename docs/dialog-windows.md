@@ -96,10 +96,14 @@ and the one its close path closes. Tools keep that code unchanged.
   - anywhere else (another monitor, the ribbon) it stays a window of its own,
     where it was dropped.
   - Esc during the drag puts the window back where the drag began.
-- Drag a docked or floating pallet past the edge of the main window and
-  release it there: it opens in a window of its own at the pointer, and that
-  window gets the focus. Inside the main window nothing changes. A whole
-  group (dragged by its strip band) stays in the main window.
+- Drag a docked or floating pallet past the edge of the main window (a few
+  pixels past it, so a drag along the edge does nothing): it is torn out at
+  once and opens in a window of its own under the pointer, which follows the
+  pointer from then on. Released outside the main window it stays there and
+  gets the focus; brought back over the main window it docks or floats as a
+  pallet window dragged there does. Esc puts the pallet back where it was.
+  Inside the main window nothing changes. A whole group (dragged by its strip
+  band) stays in the main window.
 - Hold Ctrl during either drag and nothing docks: the pallet only floats or
   moves.
 - With "Allow docking" off (title-bar menu) a drag never docks the pallet: it

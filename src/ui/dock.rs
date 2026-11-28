@@ -135,6 +135,9 @@ pub enum DockMsg {
     /// `window`, armed as generation `n`, ran out.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     WindowFoldSettled(iced::window::Id, bool, u64),
+    /// Esc in the window that feeds a pallet drag: the drag is undone.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    DragCancel,
 }
 
 /// An auto-hide change waiting out [`DOCK_HOVER_DELAY`].
@@ -1255,6 +1258,7 @@ impl DockDrag {
                 start,
                 grab: None,
                 system,
+                torn_out: false,
             },
         }
     }
@@ -1303,6 +1307,9 @@ pub enum DragSource {
         grab: Option<iced::Vector>,
         /// The window manager moves the window; nothing docks.
         system: bool,
+        /// Torn out of the main window by a drag that began there: the main
+        /// window still has the pointer, and feeds it.
+        torn_out: bool,
     },
 }
 

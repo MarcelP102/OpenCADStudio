@@ -3750,72 +3750,165 @@ fn a_pallet_window_draws_its_title_bar_and_menu() {
         .any(|m| matches!(m, Message::OsWindowReturn(w) if *w == window)));
 }
 
-/// A docked pallet dragged past the main window's edge opens in a window
-/// of its own on release, held where it was grabbed; back over the
-/// workspace before the release it docks or floats as usual.
+/// A docked pallet dragged past the main window's edge is torn out there
+/// and then: it opens in a window of its own under the pointer, held where
+/// it was grabbed, which follows the pointer (the main window still feeds
+/// it). Released outside it stays there and gets the focus.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn a_pallet_dragged_out_of_the_main_window_opens_in_its_own() {
+fn a_pallet_dragged_past_the_main_windows_edge_tears_out_at_once() {
+    use crate::ui::dock::{DockDrag, DockMsg, PanelId};
+    if !crate::app::tool_windows::can_drag_dock() {
+        return;
+    }
+    let (mut app, main) = app_for_tear_out();
+    let grab = drag_to_the_edge(&mut app);
+    // Just past the edge, within the margin: still in the main window.
+    let _ = app.update_root(pointer(main, 1605.0, 300.0));
+    assert!(!app.dock.is_separate(PanelId::Properties));
+    // Past the margin: torn out, its window open under the pointer.
+    let _ = app.update_root(pointer(main, 1700.0, 300.0));
+    assert!(app.dock.is_separate(PanelId::Properties));
+    let window = torn_window(&app).expect("its window opened at once");
+    assert!(matches!(
+        app.dock_drag,
+        Some(DockDrag::Move { .. }) if app.dock_drag.and_then(|d| d.own_window()) == Some(window)
+    ));
+    assert_eq!(
+        app.dock_pointer_feed(),
+        Some(main),
+        "the main window still feeds it"
+    );
+    let s = crate::ui::icons::scale_factor();
+    let placement = |app: &OpenCADStudio| {
+        let w = app.os_windows.iter().find(|w| w.id == window).unwrap();
+        (w.placement.x, w.placement.y)
+    };
+    assert_eq!(
+        placement(&app),
+        ((100.0 + 1700.0 - grab.x) * s, (50.0 + 300.0 - grab.y) * s)
+    );
+    // It follows the pointer.
+    let _ = app.update_root(pointer(main, 1800.0, 320.0));
+    let (x, y) = placement(&app);
+    assert!((x - (100.0 + 1800.0 - grab.x) * s).abs() < 0.01);
+    assert!((y - (50.0 + 320.0 - grab.y) * s).abs() < 0.01);
+    // Released there: it stays, and takes the focus.
+    let focus = app.update_root(Message::Dock(DockMsg::WindowRelease(main)));
+    assert_eq!(focus_targets(focus), vec![window]);
+    assert!(app.dock_drag.is_none() && app.dock_tear_undo.is_none());
+    assert!(app.dock.is_separate(PanelId::Properties) && has_window(&app, window));
+}
+
+/// Torn out and brought back over the left strip before the release: it
+/// docks there and its window closes, as a pallet window dragged there.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_torn_out_pallet_brought_back_docks() {
+    use crate::app::config::DockSide;
     use crate::ui::dock::{DockMsg, DropTarget, PanelId};
     if !crate::app::tool_windows::can_drag_dock() {
         return;
     }
+    let (mut app, main) = app_for_tear_out();
+    let _ = drag_to_the_edge(&mut app);
+    let _ = app.update_root(pointer(main, 1700.0, 300.0));
+    let window = torn_window(&app).expect("torn out");
+    // The workspace starts at the main window's top-left here.
+    app.dock_workspace_origin = Some(iced::Point::ORIGIN);
+    let _ = app.update_root(pointer(main, 10.0, 400.0));
+    assert!(
+        matches!(
+            drag_target(&app),
+            Some(
+                DropTarget::Edge {
+                    side: DockSide::Left,
+                    ..
+                } | DropTarget::Join {
+                    side: DockSide::Left,
+                    ..
+                }
+            )
+        ),
+        "{:?}",
+        drag_target(&app)
+    );
+    let _ = app.update_root(Message::Dock(DockMsg::WindowRelease(main)));
+    assert!(!app.dock.is_separate(PanelId::Properties));
+    assert_eq!(
+        app.dock.location(PanelId::Properties).map(|(s, _)| s),
+        Some(DockSide::Left)
+    );
+    assert!(!has_window(&app, window));
+}
+
+/// Esc after a tear-out: the pallet is back where it was, its window gone.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn esc_puts_a_torn_out_pallet_back() {
+    use crate::ui::dock::{DockMsg, PanelId};
+    if !crate::app::tool_windows::can_drag_dock() {
+        return;
+    }
+    let (mut app, main) = app_for_tear_out();
+    let before = app.dock.location(PanelId::Properties);
+    let _ = drag_to_the_edge(&mut app);
+    let _ = app.update_root(pointer(main, 1700.0, 300.0));
+    let window = torn_window(&app).expect("torn out");
+    let _ = app.update_root(Message::Dock(DockMsg::DragCancel));
+    assert!(app.dock_drag.is_none());
+    assert!(!app.dock.is_separate(PanelId::Properties));
+    assert_eq!(app.dock.location(PanelId::Properties), before);
+    assert!(!has_window(&app, window));
+}
+
+/// A dock app whose main window stands at (100, 50), Properties docked.
+#[cfg(not(target_arch = "wasm32"))]
+fn app_for_tear_out() -> (OpenCADStudio, iced::window::Id) {
     let mut app = dock_app();
     let main = iced::window::Id::unique();
     app.main_window = Some(main);
     app.main_window_at = Some(iced::Point::new(100.0, 50.0));
+    (app, main)
+}
+
+/// Press Properties' title bar and drag it towards the right edge; the
+/// grab offset the drag holds it at.
+#[cfg(not(target_arch = "wasm32"))]
+fn drag_to_the_edge(app: &mut OpenCADStudio) -> iced::Vector {
+    use crate::ui::dock::{DockDrag, DockMsg, PanelId};
     let _ = app.update_root(Message::Dock(DockMsg::DockGrab(PanelId::Properties)));
     assert_eq!(
         app.dock_pointer_feed(),
-        Some(main),
+        app.main_window,
         "the main window feeds the drag"
     );
-    let _ = app.update_root(Message::Dock(DockMsg::DragMove(iced::Point::new(
-        100.0, 14.0,
-    ))));
-    let _ = app.update_root(Message::Dock(DockMsg::DragMove(iced::Point::new(
-        300.0, 300.0,
-    ))));
-    // Out past the right edge, then back in: nothing is taken out.
-    let _ = app.update_root(Message::Dock(DockMsg::WindowPointer(
-        main,
-        iced::Point::new(1700.0, 300.0),
-    )));
-    assert!(app.dock_drag_out.is_some());
-    assert!(
-        matches!(drag_target(&app), Some(DropTarget::Float { .. })),
-        "shown against the edge"
-    );
-    let _ = app.update_root(Message::Dock(DockMsg::WindowPointer(
-        main,
-        iced::Point::new(800.0, 300.0),
-    )));
-    assert!(app.dock_drag_out.is_none());
-    // Out again, and released there.
-    let _ = app.update_root(Message::Dock(DockMsg::DragMove(iced::Point::new(
-        1590.0, 300.0,
-    ))));
-    let grab = match app.dock_drag {
-        Some(crate::ui::dock::DockDrag::Move { grab, .. }) => grab,
+    for x in [100.0, 300.0, 1590.0] {
+        let _ = app.update_root(Message::Dock(DockMsg::DragMove(iced::Point::new(x, 300.0))));
+    }
+    match app.dock_drag {
+        Some(DockDrag::Move { grab, .. }) => grab,
         _ => panic!("dragging"),
-    };
-    let _ = app.update_root(Message::Dock(DockMsg::WindowPointer(
-        main,
-        iced::Point::new(1700.0, 300.0),
-    )));
-    let _ = app.update_root(Message::Dock(DockMsg::WindowRelease(main)));
-    assert!(app.dock_drag.is_none() && app.dock_drag_out.is_none());
-    assert!(app.dock.is_separate(PanelId::Properties));
-    let placement = app.dock.detached[&PanelId::Properties];
-    let s = crate::ui::icons::scale_factor();
-    assert_eq!(
-        (placement.x, placement.y),
-        ((100.0 + 1700.0 - grab.x) * s, (50.0 + 300.0 - grab.y) * s)
-    );
-    assert!(app
-        .os_windows
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn pointer(window: iced::window::Id, x: f32, y: f32) -> Message {
+    Message::Dock(crate::ui::dock::DockMsg::WindowPointer(
+        window,
+        iced::Point::new(x, y),
+    ))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn torn_window(app: &OpenCADStudio) -> Option<iced::window::Id> {
+    app.os_windows
         .iter()
-        .any(|w| w.content == crate::app::tool_windows::Detached::Panel(PanelId::Properties)));
+        .find(|w| {
+            w.content
+                == crate::app::tool_windows::Detached::Panel(crate::ui::dock::PanelId::Properties)
+        })
+        .map(|w| w.id)
 }
 
 /// A whole group never leaves the main window, and with the main window's
@@ -3848,7 +3941,7 @@ fn a_group_or_an_unplaced_main_window_never_drags_out() {
         main,
         iced::Point::new(-200.0, 300.0),
     )));
-    assert!(app.dock_drag_out.is_none());
+    assert!(!app.dock.is_separate(PanelId::Properties), "not torn out");
     let _ = app.update_root(Message::Dock(DockMsg::WindowRelease(main)));
     assert!(!app.dock.is_separate(PanelId::Properties));
 }
@@ -3891,38 +3984,23 @@ fn ctrl_keeps_a_drag_from_docking() {
     assert!(app.dock.float_rect(PanelId::QuickCalc).is_some());
 }
 
-/// A drag past the main window's edge that ends without a release (its
-/// pallet closed) leaves nothing behind: a later drag lands as usual.
+/// A tear-out whose drag ends without a release (its pallet closed) leaves
+/// nothing to undo behind, and a later drag lands as usual.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn a_drag_out_that_never_released_does_not_take_the_next_drag() {
+fn a_tear_out_that_never_released_leaves_nothing_behind() {
     use crate::ui::dock::{DockMsg, PanelId};
     if !crate::app::tool_windows::can_drag_dock() {
         return;
     }
-    let mut app = dock_app();
-    let main = iced::window::Id::unique();
-    app.main_window = Some(main);
-    app.main_window_at = Some(iced::Point::ORIGIN);
-    let _ = app.update_root(Message::Dock(DockMsg::DockGrab(PanelId::Properties)));
-    let _ = app.update_root(Message::Dock(DockMsg::DragMove(iced::Point::new(
-        100.0, 14.0,
-    ))));
-    let _ = app.update_root(Message::Dock(DockMsg::DragMove(iced::Point::new(
-        300.0, 300.0,
-    ))));
-    let _ = app.update_root(Message::Dock(DockMsg::WindowPointer(
-        main,
-        iced::Point::new(1700.0, 300.0),
-    )));
-    assert!(app.dock_drag_out.is_some());
+    let (mut app, main) = app_for_tear_out();
+    let _ = drag_to_the_edge(&mut app);
+    let _ = app.update_root(pointer(main, 1700.0, 300.0));
+    assert!(app.dock_tear_undo.is_some());
     let _ = app.update_root(Message::Dock(DockMsg::Close(PanelId::Properties)));
-    assert!(app.dock_drag.is_none() && app.dock_drag_out.is_none());
-    // Even one left over does not take a width drag's release.
-    app.dock_drag_out = Some(iced::Point::new(1700.0, 300.0));
+    assert!(app.dock_drag.is_none() && app.dock_tear_undo.is_none());
+    // A width drag after it starts clean and ends on its release.
     let _ = app.on_dock(DockMsg::ResizeGrab(PanelId::BlockPalette));
-    assert!(app.dock_drag_out.is_none(), "a new drag starts clean");
-    app.dock_drag_out = Some(iced::Point::new(1700.0, 300.0));
     let _ = app.on_dock(DockMsg::DragRelease);
     assert!(app.dock_drag.is_none(), "the width drag ended");
     assert!(!app.dock.is_separate(PanelId::BlockPalette));

@@ -1585,15 +1585,10 @@ pub(super) struct OpenCADStudio {
     /// subscription.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) pointer_feed: Option<window::Id>,
-    /// Desktop: a docked or floating pallet dragged past the main window's
-    /// edge, where the pointer is (main window logical); a release there
-    /// opens it in a window of its own.
+    /// Desktop: the dock layout from before a pallet was torn out of the
+    /// main window into a window of its own mid-drag; Esc puts it back.
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) dock_drag_out: Option<iced::Point>,
-    /// Desktop: the pallet whose window of its own opens with the focus
-    /// (it was just dragged out of the main window).
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) pallet_window_focus: Option<crate::ui::dock::PanelId>,
+    pub(crate) dock_tear_undo: Option<Box<crate::ui::dock::DockState>>,
     /// Pointer position over a floating title bar (bar-local), and where
     /// its open menu was asked for.
     pub(crate) dock_float_pointer: iced::Point,
@@ -3345,9 +3340,7 @@ impl OpenCADStudio {
             #[cfg(not(target_arch = "wasm32"))]
             pointer_feed: None,
             #[cfg(not(target_arch = "wasm32"))]
-            dock_drag_out: None,
-            #[cfg(not(target_arch = "wasm32"))]
-            pallet_window_focus: None,
+            dock_tear_undo: None,
             dock_float_pointer: iced::Point::ORIGIN,
             dock_float_menu_at: iced::Point::ORIGIN,
             dock_drag: None,

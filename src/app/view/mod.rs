@@ -431,6 +431,10 @@ pub(crate) fn window_event_with_context(
                 crate::ui::ribbon::keytip_pointer_pressed();
                 return Some(Message::Dock(DockMsg::WindowRelease(win_id)));
             }
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                ..
+            }) => return Some(Message::Dock(DockMsg::DragCancel)),
             _ => {}
         }
     }
