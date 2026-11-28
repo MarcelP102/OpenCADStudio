@@ -4051,3 +4051,190 @@ fn a_pallet_windows_float_preview_has_its_landing_size() {
         crate::app::tool_windows::pallet_size_in_main(placement)
     );
 }
+
+/// Windows: the system's move loop moves the pallet window (it snaps).
+/// Each of its moves reports where the window is: with the pointer there
+/// over the main window's left strip the dock preview shows, and the
+/// release the loop posts docks the pallet.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_pallet_window_moved_by_the_system_still_docks() {
+    use crate::app::config::DockSide;
+    use crate::ui::dock::{DropTarget, PanelId};
+    if !crate::app::tool_windows::can_drag_dock() {
+        return;
+    }
+    let (mut app, window) = app_with_pallet_window();
+    system_moving(&mut app, window);
+    let _ = app.update_root(Message::OsWindowMoved(
+        window,
+        window_at_for(iced::Point::new(10.0, 400.0)),
+    ));
+    assert!(
+        matches!(
+            drag_target(&app),
+            Some(
+                DropTarget::Edge {
+                    side: DockSide::Left,
+                    ..
+                } | DropTarget::Join {
+                    side: DockSide::Left,
+                    ..
+                }
+            )
+        ),
+        "{:?}",
+        drag_target(&app)
+    );
+    let _ = release_window(&mut app, window);
+    assert_eq!(
+        app.dock.location(PanelId::QuickCalc).map(|(s, _)| s),
+        Some(DockSide::Left)
+    );
+    assert!(!has_window(&app, window));
+}
+
+/// Esc in the system's move loop puts the window back where the drag began
+/// before the loop posts its release: nothing lands, it stays a window.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_system_move_cancelled_with_esc_lands_nothing() {
+    use crate::ui::dock::PanelId;
+    if !crate::app::tool_windows::can_drag_dock() {
+        return;
+    }
+    let (mut app, window) = app_with_pallet_window();
+    system_moving(&mut app, window);
+    let _ = app.update_root(Message::OsWindowMoved(
+        window,
+        window_at_for(iced::Point::new(10.0, 400.0)),
+    ));
+    assert!(drag_target(&app).is_some());
+    let s = PALLET_WINDOW_SCALE;
+    let _ = app.update_root(Message::OsWindowMoved(
+        window,
+        iced::Point::new(PALLET_WINDOW_AT.x / s, PALLET_WINDOW_AT.y / s),
+    ));
+    let _ = release_window(&mut app, window);
+    assert!(app.dock.is_separate(PanelId::QuickCalc) && has_window(&app, window));
+}
+
+/// The grab of a system-moved pallet window drag in these tests.
+#[cfg(not(target_arch = "wasm32"))]
+const SYSTEM_GRAB: iced::Vector = iced::Vector::new(12.0, 60.0);
+
+/// Quick Calc's window as the system's move loop moves it (Windows).
+#[cfg(not(target_arch = "wasm32"))]
+fn system_moving(app: &mut OpenCADStudio, window: iced::window::Id) {
+    use crate::ui::dock::{DockDrag, DragSource, PanelId};
+    app.main_window_at = Some(iced::Point::ORIGIN);
+    app.dock_drag = Some(DockDrag::Move {
+        panel: PanelId::QuickCalc,
+        group: None,
+        origin: None,
+        target: None,
+        grab: SYSTEM_GRAB,
+        bar: crate::app::config::DockSide::Left,
+        source: DragSource::OwnWindow {
+            window,
+            start: PALLET_WINDOW_AT,
+            grab: Some(SYSTEM_GRAB),
+            system: false,
+            torn_out: false,
+            os_moved: true,
+        },
+    });
+}
+
+/// Where (logical) the system moves Quick Calc's window to have the pointer
+/// over the main window's workspace point `p`.
+#[cfg(not(target_arch = "wasm32"))]
+fn window_at_for(p: iced::Point) -> iced::Point {
+    let main = crate::ui::icons::scale_factor();
+    let s = PALLET_WINDOW_SCALE;
+    iced::Point::new(
+        p.x * main / s - SYSTEM_GRAB.x,
+        (p.y + WORKSPACE_TOP) * main / s - SYSTEM_GRAB.y,
+    )
+}
+
+/// Windows, one drag: torn out of the main window, then handed to the
+/// system's move loop while the button is still held. From then on the new
+/// window feeds the drag; the loop's moves drive the dock preview and the
+/// release it posts docks the pallet back.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_torn_out_pallet_handed_to_the_system_still_docks() {
+    use crate::app::config::DockSide;
+    use crate::ui::dock::{DockMsg, DropTarget, PanelId};
+    if !crate::app::tool_windows::can_drag_dock() {
+        return;
+    }
+    let (mut app, main) = app_for_tear_out();
+    let grab = drag_to_the_edge(&mut app);
+    let _ = app.update_root(pointer(main, 1700.0, 300.0));
+    let window = torn_window(&app).expect("torn out");
+    assert_eq!(app.dock_pointer_feed(), Some(main));
+    // A hand-off for some other window changes nothing.
+    let _ = app.update_root(Message::Dock(DockMsg::SystemMoveStarted(main)));
+    assert_eq!(app.dock_pointer_feed(), Some(main));
+    let _ = app.update_root(Message::Dock(DockMsg::SystemMoveStarted(window)));
+    assert_eq!(
+        app.dock_pointer_feed(),
+        Some(window),
+        "the system's loop feeds it now"
+    );
+    app.dock_workspace_origin = Some(iced::Point::ORIGIN);
+    // The system moved the window so that the pointer is over the left strip.
+    let at = iced::Point::new(100.0 + 10.0 - grab.x, 50.0 + 400.0 - grab.y);
+    let _ = app.update_root(Message::OsWindowMoved(window, at));
+    assert!(
+        matches!(
+            drag_target(&app),
+            Some(
+                DropTarget::Edge {
+                    side: DockSide::Left,
+                    ..
+                } | DropTarget::Join {
+                    side: DockSide::Left,
+                    ..
+                }
+            )
+        ),
+        "{:?}",
+        drag_target(&app)
+    );
+    let _ = release_window(&mut app, window);
+    assert_eq!(
+        app.dock.location(PanelId::Properties).map(|(s, _)| s),
+        Some(DockSide::Left)
+    );
+    assert!(!app.dock.is_separate(PanelId::Properties) && !has_window(&app, window));
+}
+
+/// Windows, one drag: Esc in the system's move loop after a tear-out puts
+/// the window back where it was torn out; the pallet goes back where it was
+/// before the drag and its window closes.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_cancelled_system_move_after_a_tear_out_puts_the_pallet_back() {
+    use crate::ui::dock::{DockMsg, PanelId};
+    if !crate::app::tool_windows::can_drag_dock() {
+        return;
+    }
+    let (mut app, main) = app_for_tear_out();
+    let before = app.dock.location(PanelId::Properties);
+    let grab = drag_to_the_edge(&mut app);
+    let _ = app.update_root(pointer(main, 1700.0, 300.0));
+    let window = torn_window(&app).expect("torn out");
+    let _ = app.update_root(Message::Dock(DockMsg::SystemMoveStarted(window)));
+    app.dock_workspace_origin = Some(iced::Point::ORIGIN);
+    let away = iced::Point::new(100.0 + 10.0 - grab.x, 50.0 + 400.0 - grab.y);
+    let _ = app.update_root(Message::OsWindowMoved(window, away));
+    // Esc: the loop puts it back where it was torn out, then releases.
+    let torn_at = iced::Point::new(100.0 + 1700.0 - grab.x, 50.0 + 300.0 - grab.y);
+    let _ = app.update_root(Message::OsWindowMoved(window, torn_at));
+    let _ = release_window(&mut app, window);
+    assert_eq!(app.dock.location(PanelId::Properties), before);
+    assert!(!app.dock.is_separate(PanelId::Properties) && !has_window(&app, window));
+}

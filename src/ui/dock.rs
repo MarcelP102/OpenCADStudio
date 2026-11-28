@@ -138,6 +138,10 @@ pub enum DockMsg {
     /// Esc in the window that feeds a pallet drag: the drag is undone.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     DragCancel,
+    /// Windows: the system's move loop took over pallet window `window`,
+    /// just torn out of the main window, with the button still held.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    SystemMoveStarted(iced::window::Id),
 }
 
 /// An auto-hide change waiting out [`DOCK_HOVER_DELAY`].
@@ -1259,6 +1263,7 @@ impl DockDrag {
                 grab: None,
                 system,
                 torn_out: false,
+                os_moved: false,
             },
         }
     }
@@ -1310,6 +1315,10 @@ pub enum DragSource {
         /// Torn out of the main window by a drag that began there: the main
         /// window still has the pointer, and feeds it.
         torn_out: bool,
+        /// Windows: the system's move loop moves the window (with its
+        /// snapping and Snap Layouts); its move events drive the drop
+        /// target, and the release it posts lands it.
+        os_moved: bool,
     },
 }
 

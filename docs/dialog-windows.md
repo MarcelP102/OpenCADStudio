@@ -87,6 +87,12 @@ and the one its close path closes. Tools keep that code unchanged.
   and the app draws its resize edges. On macOS the window keeps its frame
   for the system's resizing, as the main window does, but hides the frame's
   title and buttons and draws its own title bar there.
+- On Windows, dragging a pallet's window by its title bar hands the move
+  to the system, so it snaps to the screen's edges and shows Snap Layouts
+  like every window; the drop preview and docking below still work. A
+  pallet torn out of the main window is handed over the same way within the
+  same drag, as soon as its window is up and only while the button is still
+  held.
 - Drag the pallet's window by its title bar and it follows the pointer:
   - over an icon strip, an edge or a docked group of the main window the
     usual drop preview shows; release, and the window closes and the pallet

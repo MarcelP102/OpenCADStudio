@@ -34,6 +34,45 @@ use iced::{Point, Size, Task, Vector};
 /// moves the window, so a click (or the first of a double-click) never does.
 const WINDOW_DRAG_THRESHOLD: f32 = 5.0;
 
+/// Whether a pallet window's drag hands the move to the system once it
+/// starts: Windows, whose move loop snaps windows to the screen's edges and
+/// shows Snap Layouts, and reports every move (and the release) to the app,
+/// so the drop target still follows. Elsewhere the app moves the window
+/// itself: X11 reports no end to a window manager's move, macOS has no
+/// snapping.
+fn hand_move_to_system() -> bool {
+    cfg!(target_os = "windows")
+}
+
+/// Windows: hand pallet window `window`, just torn out of the main window,
+/// to the system's move loop, but only while the left button is still held.
+/// Released while the window was opening, the drag already ended (the main
+/// window saw the release); a move loop started then would follow the
+/// pointer with no button down until the next click.
+#[cfg(target_os = "windows")]
+fn hand_over_if_pressed(window: iced::window::Id) -> Task<Message> {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+    iced::window::run(window, |_| {
+        // SAFETY: a plain query of the button's state.
+        (unsafe { GetAsyncKeyState(i32::from(VK_LBUTTON)) } as u16 & 0x8000) != 0
+    })
+    .then(move |pressed| {
+        if pressed {
+            // The message first: it makes this window feed the drag before
+            // the move loop runs and posts its release here.
+            Task::done(Message::Dock(DockMsg::SystemMoveStarted(window)))
+                .chain(iced::window::drag(window))
+        } else {
+            Task::none()
+        }
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn hand_over_if_pressed(_window: iced::window::Id) -> Task<Message> {
+    Task::none()
+}
+
 /// How far past the main window's edge (logical px) a dragged pallet has to
 /// be before it is torn out into a window of its own, so a drag along the
 /// edge does not open and close windows.
@@ -122,6 +161,26 @@ impl OpenCADStudio {
                 self.dock_window_fold_settled(window, fold, gen)
             }
             DockMsg::DragCancel => self.dock_drag_cancel(),
+            DockMsg::SystemMoveStarted(window) => {
+                // From now on the system moves it, reports its moves, and
+                // posts the release to it: it feeds the drag.
+                if let Some(DockDrag::Move {
+                    source:
+                        DragSource::OwnWindow {
+                            window: dragged,
+                            torn_out: true,
+                            os_moved,
+                            ..
+                        },
+                    ..
+                }) = self.dock_drag.as_mut()
+                {
+                    if *dragged == window {
+                        *os_moved = true;
+                    }
+                }
+                Task::none()
+            }
             _ => Task::none(),
         }
     }
@@ -236,13 +295,15 @@ impl OpenCADStudio {
                     grab,
                     system,
                     torn_out,
+                    os_moved,
                 },
             ..
         }) = self.dock_drag
         else {
             return Task::none();
         };
-        if dragged != window || system {
+        // The system moves it (and its own moves report where it is).
+        if dragged != window || system || os_moved {
             return Task::none();
         }
         let Some((_, os)) = self.pallet_window(window) else {
@@ -260,6 +321,7 @@ impl OpenCADStudio {
             return Task::none();
         }
         let origin = origin.unwrap_or(screen);
+        let starting = grab.is_none();
         let grab = match grab {
             Some(grab) => grab,
             None => {
@@ -298,8 +360,23 @@ impl OpenCADStudio {
                 grab: Some(grab),
                 system,
                 torn_out,
+                os_moved: false,
             },
         });
+        // Windows: from here on the system's move loop moves the window, so it
+        // snaps (and shows Snap Layouts) as every window does. A pallet just
+        // torn out keeps following the pointer: its window may not be up yet
+        // to take the move over.
+        if starting && !torn_out && hand_move_to_system() {
+            if let Some(DockDrag::Move {
+                source: DragSource::OwnWindow { os_moved, .. },
+                ..
+            }) = self.dock_drag.as_mut()
+            {
+                *os_moved = true;
+            }
+            return iced::window::drag(window);
+        }
         // The window's new top-left corner on the screen, and in its own
         // logical units as the system takes them.
         let top_left = Point::new(screen.x - grab.x * u, screen.y - grab.y * u);
@@ -363,8 +440,10 @@ impl OpenCADStudio {
             source:
                 DragSource::OwnWindow {
                     window: dragged,
+                    start,
                     grab,
                     torn_out,
+                    os_moved,
                     ..
                 },
             ..
@@ -377,7 +456,7 @@ impl OpenCADStudio {
         }
         self.dock_drag = None;
         self.dock_drag_last = None;
-        self.dock_tear_undo = None;
+        let undo = self.dock_tear_undo.take();
         let Some((_, os)) = self.pallet_window(window) else {
             return Task::none();
         };
@@ -385,6 +464,21 @@ impl OpenCADStudio {
         if grab.is_none() {
             return Task::none();
         }
+        // Esc in the system's move loop puts the window back where it was
+        // and ends the loop: it is where the drag began, whatever lies under
+        // the pointer. Nothing lands.
+        let cancelled = os_moved
+            && (os.placement.x - start.x).abs() < 1.0
+            && (os.placement.y - start.y).abs() < 1.0;
+        // Torn out of the main window and then cancelled: it goes back where
+        // it was (its window closes as the update settles).
+        if cancelled && torn_out {
+            if let Some(undo) = undo {
+                self.dock = *undo;
+                return self.focus_main_window();
+            }
+        }
+        let target = if cancelled { None } else { target };
         let Some(target) = target else {
             // Stays a window where it was dropped: remembered for next time.
             self.keep_pallet_window_at(window, Point::new(os.placement.x, os.placement.y));
@@ -442,6 +536,54 @@ impl OpenCADStudio {
         }
         self.keep_pallet_window_at(window, start);
         iced::window::move_to(window, Point::new(start.x / os.scale, start.y / os.scale))
+    }
+
+    /// Pallet window `window` was moved to `at` (logical) while the system's
+    /// move loop moves it (Windows): where the pointer is now decides where
+    /// it would land, and the preview in the main window shows that.
+    pub(crate) fn dock_window_os_moved(&mut self, window: iced::window::Id, at: Point) {
+        let Some(DockDrag::Move {
+            panel,
+            grab,
+            bar,
+            source:
+                DragSource::OwnWindow {
+                    window: dragged,
+                    os_moved: true,
+                    ..
+                },
+            ..
+        }) = self.dock_drag
+        else {
+            return;
+        };
+        if dragged != window {
+            return;
+        }
+        let Some(os) = self.os_windows.iter_mut().find(|w| w.id == window) else {
+            return;
+        };
+        // Where it is, while it may still count as being placed.
+        os.placement.x = at.x * os.scale;
+        os.placement.y = at.y * os.scale;
+        let u = unit(os.scale, SCREEN_IN_POINTS);
+        let screen = crate::sys::screen_cursor()
+            .unwrap_or_else(|| Point::new((at.x + grab.x) * u, (at.y + grab.y) * u));
+        let target = self.dock_window_target(panel, screen, grab, bar);
+        if let Some(DockDrag::Move {
+            target: t, bar: b, ..
+        }) = self.dock_drag.as_mut()
+        {
+            *t = target;
+            if let Some(
+                DropTarget::Edge { side, .. }
+                | DropTarget::Join { side, .. }
+                | DropTarget::Float { bar: side, .. },
+            ) = target
+            {
+                *b = side;
+            }
+        }
     }
 
     /// Pallet window `window` stands at `at` (physical px) now, and opens
@@ -575,8 +717,14 @@ impl OpenCADStudio {
     /// dragged in it (to see the pointer leave it) or was torn out of it.
     pub(crate) fn dock_pointer_feed(&self) -> Option<iced::window::Id> {
         match self.dock_drag? {
+            // Torn out, until the system's move loop takes it over.
             DockDrag::Move {
-                source: DragSource::OwnWindow { torn_out: true, .. },
+                source:
+                    DragSource::OwnWindow {
+                        torn_out: true,
+                        os_moved: false,
+                        ..
+                    },
                 ..
             } => self.main_window,
             drag if drag.own_window().is_some() => drag.own_window(),
@@ -672,6 +820,7 @@ impl OpenCADStudio {
                 grab: Some(grab),
                 system: false,
                 torn_out: true,
+                os_moved: false,
             },
         });
         self.dock_drag_last = None;
@@ -681,6 +830,13 @@ impl OpenCADStudio {
         self.dock_icon_hover = None;
         self.dock_grip_hover = None;
         self.dock_grip_lit = None;
+        // Windows: once its window is up, the system's move loop takes it
+        // over in the same drag, so it snaps (see `hand_move_to_system`).
+        let opened = if hand_move_to_system() {
+            opened.chain(hand_over_if_pressed(window))
+        } else {
+            opened
+        };
         // Back over the main window it docks or floats as a pallet window
         // would: the workspace's place is needed for that.
         Task::batch([

@@ -262,7 +262,8 @@ impl OpenCADStudio {
             | DockMsg::WorkspaceOrigin(_)
             | DockMsg::WindowHover(..)
             | DockMsg::WindowFoldSettled(..)
-            | DockMsg::DragCancel) => return self.on_pallet_window(m),
+            | DockMsg::DragCancel
+            | DockMsg::SystemMoveStarted(_)) => return self.on_pallet_window(m),
             #[cfg(target_arch = "wasm32")]
             DockMsg::WindowBarPress(_)
             | DockMsg::WindowBarDoubleClick(_)
@@ -274,7 +275,8 @@ impl OpenCADStudio {
             | DockMsg::WorkspaceOrigin(_)
             | DockMsg::WindowHover(..)
             | DockMsg::WindowFoldSettled(..)
-            | DockMsg::DragCancel => {}
+            | DockMsg::DragCancel
+            | DockMsg::SystemMoveStarted(_) => {}
         }
         iced::Task::none()
     }

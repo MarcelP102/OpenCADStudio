@@ -993,6 +993,8 @@ impl OpenCADStudio {
     }
 
     pub(crate) fn os_window_moved(&mut self, id: iced::window::Id, at: Point) {
+        // A pallet window the system moves during its drag (Windows).
+        self.dock_window_os_moved(id, at);
         if self.main_window == Some(id) {
             // Minimizing parks the window off screen: keep where it was.
             if at.x > -10000.0 && at.y > -10000.0 {
